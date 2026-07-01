@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, text
+from sqlalchemy import DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,5 +28,40 @@ class Player(Base):
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )
     last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+
+class AuthToken(Base):
+    __tablename__ = "auth_tokens"
+    __table_args__ = {"schema": "users"}
+
+    token: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    player_uuid: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.players.uuid"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    issued_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exchanged_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+
+class JwtRevocation(Base):
+    __tablename__ = "jwt_revocations"
+    __table_args__ = {"schema": "users"}
+
+    jti: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    player_uuid: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.players.uuid"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )
