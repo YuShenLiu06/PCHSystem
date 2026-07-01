@@ -1,7 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 
-// F3 will populate real routes (/auth, /me). F1 only needs the export to satisfy main.ts import.
 export const router = createRouter({
   history: createWebHistory(),
-  routes: [{ path: '/', component: { template: '<div>placeholder</div>' } }],
+  routes: [
+    { path: '/auth', component: () => import('../views/AuthExchange.vue'), meta: { public: true } },
+    { path: '/me', component: () => import('../views/Me.vue') },
+    { path: '/', redirect: '/me' },
+  ],
+})
+
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+  if (!to.meta.public && !auth.isAuthenticated) return '/auth'
 })
