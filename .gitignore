@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Node
+node_modules/
+.vite/
+
+# Env & secrets
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
