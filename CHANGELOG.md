@@ -47,6 +47,22 @@
 - `Backend/.env` 的 `POSTGRES_PASSWORD=pw`（B5 时 pch-pg 容器密码）与 docker compose 启动的 `pchsystem-postgres-1`（用根 `.env` 的 `change_me_strong_random` 初始化）不一致，导致本地 venv alembic 与 B10+ 测试 fixture 认证失败；改为 `change_me_strong_random` 对齐容器。`fc9596a`
 - B10 spec 的 async `_truncate` autouse fixture 在 pytest-asyncio 1.4 + 同步测试混合跑时触发 `RuntimeError: Event loop is closed`（autouse async fixture 在同步测试周围也会创建/关闭 loop，asyncpg 池内连接泄漏到已关闭 loop）；控制器级修复改为同步 fixture 用独立 sync engine + 每次 dispose；同时 `app.core.db` 的 async engine 改用 `NullPool` 防止 async 测试跨 loop 复用池内连接。`fc9596a`
 
+### McdrPlugin
+
+#### Added
+
+- MCDR 插件骨架：`mcdreforged.plugin.json`（id `htcmc_auth`、版本 `0.1.0`、依赖 `mcdreforged>=2.14.0` + `uuid_api_remake`）+ `requirements.txt`（`requests>=2.31`）+ `htcmc_auth/{__init__.py, config.py}`（`HtcmcAuthConfig` 4 字段：`api_url` / `service_token` / `http_timeout_seconds` / `http_retries`，`on_load` 加载配置 + 注册 `!!login` 占位命令）。`7a2bc88`
+- `!!login` 实现链路：`htcmc_auth/client.py`（HTTP 客户端，超时 + 重试 + 429/403 哨兵字符串）+ `htcmc_auth/__init__.py` 完整 `_login`（`PlayerCommandSource` 校验 → `uuid_api_remake.get_uuid` 推导 → `server.schedule_task` 内异步调后端 → `RText.c(RAction.open_url, url)` 可点击链接回显；红线 R-12 落实，红线 S-1 API 经 HANDOFF 联网核实）。`1d14082`
+
+### Frontend
+
+#### Added
+
+- Vue3 + TypeScript + Vite 脚手架：`Frontend/`（npm 模板 + 自定义 `vite.config.ts` 含 `/api` 代理到后端 8000 与 jsdom 测试环境；`src/main.ts` 注册 Pinia + Element Plus + 路由；`src/router/index.ts` stub 等 F3 替换）；依赖 `element-plus / pinia / vue-router / axios` + dev `vitest / @vue/test-utils / jsdom`。`9259afa`
+- axios 拦截器与 auth store：`src/utils/http.ts`（请求拦截注入 `Authorization: Bearer`、响应拦截 401 时 `auth.clear()` + hash 跳 `#/auth` 兜底）+ `src/stores/auth.ts`（Pinia store，`accessToken` / `refreshToken` / `player` 持久化到 localStorage、`isAuthenticated` getter、`set/clear` actions）+ `src/utils/qty.ts`（Phase 2 占位）。`ca016f6`
+- 路由守卫与 token 兑换页：`src/router/index.ts` 3 路由（`/auth` `meta.public` / `/me` / `/` redirect `/me`）+ `beforeEach` 守卫未认证跳 `/auth`；`src/views/AuthExchange.vue` `onMounted` 读 query token → POST `/auth/exchange` → `auth.set` → `router.replace('/me')`，错误用 `el-result` + 后端 `detail`；`src/views/Me.vue` stub（F4 替换）。`da78fa3`
+- `/me` 身份页：`src/views/Me.vue` 完整实现（`onMounted` 调 `http.get<Me>('/me')`，`el-card` 展示 UUID / 名称 / 角色；401 由 F2 拦截器统一处理跳 `/auth`）。`6b66c47`
+
 - `Player.uuid` 字段名遮蔽 `uuid` 模块导致 SQLAlchemy 2.0 延迟解析 `Mapped[...]` 注解时抛 `AttributeError: 'MappedColumn' object has no attribute 'UUID'`。改为 `from uuid import UUID` + `from sqlalchemy.dialects.postgresql import UUID as PG_UUID`，注解用 `Mapped[UUID]`、列定义用 `PG_UUID(as_uuid=True)`。`b324e50`
 
 ### 文档与计划

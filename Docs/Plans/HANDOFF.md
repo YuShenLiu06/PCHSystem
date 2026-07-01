@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-分支 `main`（本地；远程默认分支仍是 `origin/feat/backend-phase0-foundation`，本地 `main` 未设 upstream）。本地领先 `origin/feat/backend-phase0-foundation` **16 个提交**（B5 代码 / B6 代码 + B7-B16 代码 + 4 docs），未 push：
+分支 `main`（本地；远程默认分支仍是 `origin/feat/backend-phase0-foundation`，本地 `main` 未设 upstream）。本地领先 `origin/feat/backend-phase0-foundation` **22 个提交**（B5 代码 / B6 代码 + B7-B16 代码 + M1-M2 代码 + F1-F4 代码 + 5 docs），未 push：
 
 | Task | 状态 | Commit |
 |---|---|---|
@@ -25,9 +25,15 @@
 | B14 Pydantic schemas + `POST /auth/token`（MCDR 入口） | ✅ | `d3741cc` |
 | B15 `POST /auth/exchange` + `POST /auth/refresh` + `GET /me` + `get_current_player`/`require_role` | ✅ | `ba8b1ff` |
 | B16 OpenAPI 契约冻结（5 端点测试 + `openapi.json` 工件导出） | ✅ | `48bc1f3` |
-| M1-M2 / F1-F4 / V1 | 待做 | — |
+| M1 MCDR 插件骨架（`mcdreforged.plugin.json` + `htcmc_auth/{__init__,config}.py` + `requirements.txt`） | ✅ | `7a2bc88` |
+| M2 `!!login` 实现（UUID → 后端 → 可点击 RText URL，R-12 + S-1 落实） | ✅ | `1d14082` |
+| F1 前端脚手架（Vue3 + Vite + TS + Element Plus + Pinia + Router + axios） | ✅ | `9259afa` |
+| F2 axios 拦截器 + auth store（Bearer 注入 + 401 跳 `/auth` + localStorage 持久化） | ✅ | `ca016f6` |
+| F3 路由守卫 + `/auth` token 兑换页（AuthExchange.vue + 真 router + Me.vue stub） | ✅ | `da78fa3` |
+| F4 `/me` 身份页（el-card 展示 UUID/名称/角色） | ✅ | `6b66c47` |
+| V1 端到端联调验收 | 部分（后端 curl 链路 + 前端 build 通过；MC 游戏内 + 浏览器流待手测） | — |
 
-**下一步**：**M1 MCDR 插件骨架** + **F1 前端脚手架** 可并行启动（B16 OpenAPI 契约已冻结，前端/MCDR 可基于 `Backend/openapi.json` 桩测）。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 1877 行起（M1）/ 第 2087 行起（F1）。
+**下一步**：**V1 端到端验收**（MCDR + MC 服务端 + 浏览器流，需部署环境）→ **首次发版**（`backend-v0.1.0` / `mcdr-plugin-v0.1.0` / `frontend-v0.1.0` 三个独立 tag）。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 2358 行起（V1）。
 
 ## 计划与参考文件
 
@@ -54,6 +60,8 @@
 | 数据库迁移 | ✅ 已 `alembic upgrade head`（`0002_auth_jwt` head；3 表：players / auth_tokens / jwt_revocations） | `cd Backend && .venv/bin/alembic current` |
 | 测试套件 | ✅ 21 个测试全绿（`JWT_SECRET=test_secret_for_pytest .venv/bin/pytest -v`） | `cd Backend && JWT_SECRET=test_secret_for_pytest .venv/bin/pytest -v` |
 | OpenAPI 工件 | ✅ `Backend/openapi.json` 已导出（5 端点：`/healthz` `/auth/token` `/auth/exchange` `/auth/refresh` `/me`） | `.venv/bin/python -c "import json; print(list(json.load(open('Backend/openapi.json'))['paths'].keys()))"` |
+| 前端构建 | ✅ `npm run build` 通过（~310ms，仅第三方 @vueuse PURE 注解警告） | `cd Frontend && npm run build` |
+| MCDR 插件语法 | ✅ 4 文件 `py_compile` + JSON parse 通过（mcdreforged/uuid_api_remake 为运行时依赖，本地未装） | `cd McdrPlugin && python3 -m py_compile htcmc_auth/*.py && python3 -c "import json; json.load(open('mcdreforged.plugin.json'))"` |
 
 > **若换机器**：按下方"继续方式"段重建 venv + 起 pch-pg + 配 `.env` + 跑 `alembic upgrade head`。
 
@@ -77,14 +85,12 @@ git checkout feat/backend-phase0-foundation
 ```
 
 然后：
-1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5/B6/B7-B16 段已标 ✅，可直接看 M1/F1）
+1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5/B6/B7-B16/M1-M2/F1-F4 段已标 ✅，可直接看 V1）
 2. 重建 venv（可选）：`cd Backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`（走 docker 可跳过）
-3. 起完整栈（B6 产出）：根目录 `cp .env.example .env` → 编辑真实密码 → `docker compose up -d` → `docker compose exec backend alembic upgrade head`（卷持久化，首次或换机器才需要）→ `curl http://localhost:8000/healthz` 应返回 `{"status":"ok"}`
-4. **后端 B16 OpenAPI 契约已冻结**，可并行启动：
-   - **M1 MCDR 插件骨架**（计划 1877 行起）：`mcdreforged.plugin.json` + `htcmc_auth/` 包；需联网核实 MCDR API（红线 S-1，本文件已核实部分 API，详见上表）
-   - **F1 前端脚手架**（计划 2087 行起）：Vue3 + Vite + Element Plus
-   - 执行方式 `superpowers:subagent-driven-development`
-5. M/F 完成后进入 V1 端到端联调验收（计划 2358 行起）
+3. 起完整栈（B6 产出，**B7-B16 后需重建镜像**）：根目录 `cp .env.example .env` → 编辑真实密码 → `docker compose build backend` → `docker compose up -d` → `docker compose exec backend alembic upgrade head`（卷持久化，首次或换机器才需要）→ `curl http://localhost:8000/healthz` 应返回 `{"status":"ok"}`
+4. 起前端：`cd Frontend && npm install && npm run dev` → 访问 `http://localhost:5173`
+5. **V1 端到端验收**（计划 2358 行起）：需 MC + MCDR + 浏览器联合手测；本地可做后端 curl 链路 + 前端 build
+6. V1 通过后进入首次发版（3 个独立 tag）
 
 ## review 策略（已采用）
 
