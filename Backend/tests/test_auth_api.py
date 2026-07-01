@@ -49,3 +49,39 @@ async def test_auth_token_blocked_for_removed(client):
         headers={"X-Service-Token": "svc"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_exchange_returns_jwt_and_me(client):
+    u = uuid.uuid4()
+    issue_resp = await client.post(
+        "/auth/token", json={"uuid": str(u), "name": "alice"}, headers={"X-Service-Token": "svc"}
+    )
+    token = issue_resp.json()["login_url"].split("token=")[-1]
+
+    ex = await client.post("/auth/exchange", json={"token": token})
+    assert ex.status_code == 200
+    body = ex.json()
+    assert body["token_type"] == "Bearer"
+    assert body["player"]["uuid"] == str(u)
+
+    me = await client.get("/me", headers={"Authorization": f"Bearer {body['access_token']}"})
+    assert me.status_code == 200
+    assert me.json()["name"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_exchange_one_time(client):
+    u = uuid.uuid4()
+    token = (await client.post(
+        "/auth/token", json={"uuid": str(u), "name": "a"}, headers={"X-Service-Token": "svc"}
+    )).json()["login_url"].split("token=")[-1]
+    first = await client.post("/auth/exchange", json={"token": token})
+    second = await client.post("/auth/exchange", json={"token": token})
+    assert first.status_code == 200
+    assert second.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_me_requires_jwt(client):
+    assert (await client.get("/me")).status_code == 401
