@@ -13,11 +13,10 @@
 | B3 数据库连接层（async engine + session） | ✅ | `ee8f889` |
 | B4 FastAPI 入口 + `/healthz` | ✅ | `f646d3a` |
 | B5 Step1：Player 模型 `Backend/app/models/user.py`（初版含 UUID 命名冲突 bug） | ✅（已在 B5 Step2 修复） | `b313e40` |
-| B5 Step2-6：alembic.ini + env.py + 0001 迁移 + docker PG 验证（含 Player 模型 UUID 修复） | ✅ | `b324e50` |
-| B6 Docker Compose（`Backend/Dockerfile` + `Backend/.dockerignore` + 根 `docker-compose.yml` + 根 `.env.example`） | ✅ | `bce60ce` |
-| B7–B16 / M1-M2 / F1-F4 / V1 | 待做 | — |
+| B5 Step2-6：alembic.ini + env.py + 0001 迁移 + docker PG 验证（含 Player 模型 UUID 修复） | ✅（本次） | `b324e50` |
+| B6–B16 / M1-M2 / F1-F4 / V1 | 待做 | — |
 
-**下一步**：**B7 Service Token 鉴权依赖**（`X-Service-Token` 头校验，FastAPI 依赖注入）。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 753 行起。
+**下一步**：**B6 Docker Compose**（postgres + backend）+ `Backend/Dockerfile`。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 620 行起。
 
 ## 计划与参考文件
 
@@ -32,6 +31,17 @@
 - 根 `.env`（gitignored）从 `.env.example` 拷贝，提供 `POSTGRES_USER/PASSWORD/DB` + `JWT_SECRET` + `MCDR_SERVICE_TOKEN` + `WEB_BASE_URL` 真实值。`Backend/.env`（也 gitignored）仅本地裸跑 uvicorn 时用，与根 `.env` 字段重叠但 `POSTGRES_HOST=localhost` / `POSTGRES_PORT=5433`（宿主视角）。
 - 旧的独立容器 `pch-pg`（B5 时手起）已 `docker stop` 未删除；如需彻底清理 `docker rm pch-pg`，或继续用也行（与 compose 项目互不干扰，但占 5433 端口会与 compose 冲突，故保持停止状态）。
 - 旧 Windows 宿主已弃用（docker daemon 500、无裸机 PG、`psql` 未装）。
+
+### 本机已就绪状态（同机器新会话直接复用，不要重建）
+
+| 资源 | 状态 | 验证命令 |
+|---|---|---|
+| `Backend/.venv/` | ✅ 已装 `pip install -e ".[dev]"`，alembic 1.18.5 | `Backend/.venv/bin/alembic --version` |
+| docker 容器 `pch-pg` | ✅ 运行中，端口 5433 | `docker ps --filter name=pch-pg` |
+| `Backend/.env` | ✅ 已配（`POSTGRES_PORT=5433` 等，gitignored） | `grep POSTGRES_PORT Backend/.env` |
+| 数据库迁移 | ✅ 已 `alembic upgrade head`（`users.players` 表存在） | `docker exec pch-pg psql -U pch -d pchsystem -c "\dt users.*"` |
+
+> **若换机器**：按下方"继续方式"段重建 venv + 起 pch-pg + 配 `.env` + 跑 `alembic upgrade head`。
 
 ## 已联网核实（红线 S-1，无需重复核实）
 
