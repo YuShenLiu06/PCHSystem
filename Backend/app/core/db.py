@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 
@@ -15,7 +16,12 @@ class Base(DeclarativeBase):
 
 
 _settings = get_settings()
-engine = create_async_engine(_settings.postgres_dsn, pool_pre_ping=True, future=True)
+engine = create_async_engine(
+    _settings.postgres_dsn,
+    poolclass=NullPool,
+    pool_pre_ping=True,
+    future=True,
+)
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine, expire_on_commit=False
 )
