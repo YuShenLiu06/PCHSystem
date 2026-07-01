@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-分支 `feat/backend-phase0-foundation`（本地领先 origin 1 个提交，未 push）：
+分支 `main`（本地；远程默认分支仍是 `origin/feat/backend-phase0-foundation`，本地 `main` 未设 upstream）。本地领先 `origin/feat/backend-phase0-foundation` **5 个提交**（B5 代码 / B6 代码 + 3 docs），未 push：
 
 | Task | 状态 | Commit |
 |---|---|---|
@@ -13,10 +13,11 @@
 | B3 数据库连接层（async engine + session） | ✅ | `ee8f889` |
 | B4 FastAPI 入口 + `/healthz` | ✅ | `f646d3a` |
 | B5 Step1：Player 模型 `Backend/app/models/user.py`（初版含 UUID 命名冲突 bug） | ✅（已在 B5 Step2 修复） | `b313e40` |
-| B5 Step2-6：alembic.ini + env.py + 0001 迁移 + docker PG 验证（含 Player 模型 UUID 修复） | ✅（本次） | `b324e50` |
-| B6–B16 / M1-M2 / F1-F4 / V1 | 待做 | — |
+| B5 Step2-6：alembic.ini + env.py + 0001 迁移 + docker PG 验证（含 Player 模型 UUID 修复） | ✅ | `b324e50` |
+| B6 Docker Compose（`Backend/Dockerfile` + `Backend/.dockerignore` + 根 `docker-compose.yml` + 根 `.env.example`） | ✅ | `bce60ce` |
+| B7–B16 / M1-M2 / F1-F4 / V1 | 待做 | — |
 
-**下一步**：**B6 Docker Compose**（postgres + backend）+ `Backend/Dockerfile`。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 620 行起。
+**下一步**：**B7 Service Token 鉴权依赖**（`X-Service-Token` 头校验，FastAPI 依赖注入）。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 753 行起。
 
 ## 计划与参考文件
 
@@ -27,8 +28,9 @@
 ## 环境
 
 - **当前虚拟器（Linux 6.17.0-35-generic）**：docker 29.1.3 可用、Python 3.12.3、bash。后端 venv 路径 `Backend/.venv/bin/`（**非 Windows 的 `.venv/Scripts/`**），命令一律 `.venv/bin/python -m pytest` / `.venv/bin/alembic ...`。
-- 已起 docker 容器 `pch-pg`（postgres:16）映射宿主端口 **5433**（5432 被别项目 `pf-postgres` 占用），PG 用户 `pch` / 密码 `pw` / 库 `pchsystem`。`Backend/.env` 已配 `POSTGRES_PORT=5433`（gitignored）。
-- B6 写 docker-compose 时 PG 主机名内部网络仍用 `postgres` + 5432，不受宿主端口冲突影响。
+- B6 后：根目录 `docker compose up -d` 即起 `pchsystem-postgres-1`（postgres:16，宿主端口 `127.0.0.1:5433`）+ `pchsystem-backend-1`（uvicorn :8000）。卷 `pchsystem_pgdata` 持久化（B5 跑过的 `users.players` 表已保留，无需重跑迁移；如换机器需 `docker compose exec backend alembic upgrade head`）。compose 内部网络 backend 走 `postgres:5432`；宿主端口 5433 仅本机调试用（5432 被别项目 `pf-postgres` 占用）。
+- 根 `.env`（gitignored）从 `.env.example` 拷贝，提供 `POSTGRES_USER/PASSWORD/DB` + `JWT_SECRET` + `MCDR_SERVICE_TOKEN` + `WEB_BASE_URL` 真实值。`Backend/.env`（也 gitignored）仅本地裸跑 uvicorn 时用，与根 `.env` 字段重叠但 `POSTGRES_HOST=localhost` / `POSTGRES_PORT=5433`（宿主视角）。
+- 旧的独立容器 `pch-pg`（B5 时手起）已 `docker stop` 未删除；如需彻底清理 `docker rm pch-pg`，或继续用也行（与 compose 项目互不干扰，但占 5433 端口会与 compose 冲突，故保持停止状态）。
 - 旧 Windows 宿主已弃用（docker daemon 500、无裸机 PG、`psql` 未装）。
 
 ## 已联网核实（红线 S-1，无需重复核实）
@@ -51,11 +53,11 @@ git checkout feat/backend-phase0-foundation
 ```
 
 然后：
-1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5 段已标 ✅，可直接看 B6）
-2. 重建 venv：`cd Backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
-3. 起 PG（若 pch-pg 容器不在）：见上方"环境"段；记得 5432 占用时改 5433
-4. 从 **B6**（docker-compose + Dockerfile）继续；执行方式 `superpowers:subagent-driven-development`
-5. 后端 B6-B16 串行跑完冻结 OpenAPI 契约（B16）后，MCDR(M1-M2) + 前端(F1-F4) 可并行
+1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5/B6 段已标 ✅，可直接看 B7）
+2. 重建 venv：`cd Backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`（仅本地裸跑 uvicorn 时需要；走 docker 可跳过）
+3. 起完整栈（B6 产出）：根目录 `cp .env.example .env` → 编辑真实密码 → `docker compose up -d` → `docker compose exec backend alembic upgrade head`（卷持久化，首次或换机器才需要）→ `curl http://localhost:8000/healthz` 应返回 `{"status":"ok"}`
+4. 从 **B7**（Service Token 鉴权依赖）继续；执行方式 `superpowers:subagent-driven-development`
+5. 后端 B7-B16 串行跑完冻结 OpenAPI 契约（B16）后，MCDR(M1-M2) + 前端(F1-F4) 可并行
 
 ## review 策略（已采用）
 

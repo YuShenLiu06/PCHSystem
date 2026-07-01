@@ -22,6 +22,10 @@
 - `Player` 模型（`users.players` 表）：UUID 主键 + `current_name` · `role` · `whitelist_state` + `first_seen_at` / `last_seen_at`（含时区与 `now()` 默认值）。`b313e40`
 - Alembic 配置：`alembic.ini` + `alembic/env.py`（同步走 psycopg2，从 `Settings.postgres_dsn_sync` 注入 DSN，`compare_type=True` 为 B9 autogenerate 铺路）。`b324e50`
 - 首个迁移 `0001_users_players`：`CREATE SCHEMA users` + `CREATE TABLE users.players`，可逆（downgrade 删除表与 schema）。`b324e50`
+- `Backend/Dockerfile`：`python:3.11-slim` 基础镜像，setuptools 打包 `app` 包 + uvicorn 启动；COPY 拆 4 条（`pyproject.toml` / `app/` / `alembic.ini` / `alembic/`）避免文件与目录混拷到同一路径非法；MVP 不做 multi-stage / 非 root user。`bce60ce`
+- `Backend/.dockerignore`：11 条目（`.env` / `.env.local` / `.venv/` / `__pycache__/` / `*.pyc` / `.pytest_cache/` / `*.egg-info/` / `build/` / `dist/` / `tests/` / `.git/`），关键挡 `.env` 防止 secrets 进镜像 layer（R-11）。`bce60ce`
+- 根 `docker-compose.yml`：`postgres:16` + `backend`；显式 `environment:` + `${VAR}` 插值（非 `env_file:`，文档化后端实际依赖变量且防意外注入）；`POSTGRES_HOST=postgres` / `POSTGRES_PORT=5432` 硬编码为容器网络视角；PG 端口 `127.0.0.1:5433:5432`（宿主 5432 被 `pf-postgres` 占用 + 绑 loopback 防公网暴露）；`pgdata` named volume 持久化；PG healthcheck `pg_isready` + backend `depends_on: service_healthy`；MVP 不加 backend 自身 healthcheck、不进 alembic entrypoint。`bce60ce`
+- 根 `.env.example`：compose 模板（`POSTGRES_HOST=postgres` / `POSTGRES_PORT=5432` 锁定容器视角），用户拷贝为真实 `.env`（gitignored，不进库）。`bce60ce`
 
 #### Fixed
 
