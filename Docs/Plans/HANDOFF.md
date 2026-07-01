@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-分支 `feat/backend-phase0-foundation`（已 push 至 `origin`）：
+分支 `feat/backend-phase0-foundation`（本地领先 origin 1 个提交，未 push）：
 
 | Task | 状态 | Commit |
 |---|---|---|
@@ -12,11 +12,11 @@
 | B2 Settings（pydantic-settings） | ✅ | `7c58671` |
 | B3 数据库连接层（async engine + session） | ✅ | `ee8f889` |
 | B4 FastAPI 入口 + `/healthz` | ✅ | `f646d3a` |
-| B5 Step1：Player 模型 `Backend/app/models/user.py` | ✅（本次提交） | — |
-| B5 Step2-7（alembic + 001 迁移 + PG 验证） | ⏳ 下一步 | — |
+| B5 Step1：Player 模型 `Backend/app/models/user.py`（初版含 UUID 命名冲突 bug） | ✅（已在 B5 Step2 修复） | `b313e40` |
+| B5 Step2-6：alembic.ini + env.py + 0001 迁移 + docker PG 验证（含 Player 模型 UUID 修复） | ✅（本次） | `b324e50` |
 | B6–B16 / M1-M2 / F1-F4 / V1 | 待做 | — |
 
-**下一步**：B5 Step2-7 —— `alembic.ini` + `env.py` + `script.py.mako` + `001_users_schema_players.py` 迁移，用 docker PG 验证 `alembic upgrade head`。
+**下一步**：**B6 Docker Compose**（postgres + backend）+ `Backend/Dockerfile`。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 620 行起。
 
 ## 计划与参考文件
 
@@ -26,10 +26,10 @@
 
 ## 环境
 
-- **新虚拟器：docker 可用** → B5/B6 按原计划走（`docker-compose` 起 postgres + backend）。
+- **当前虚拟器（Linux 6.17.0-35-generic）**：docker 29.1.3 可用、Python 3.12.3、bash。后端 venv 路径 `Backend/.venv/bin/`（**非 Windows 的 `.venv/Scripts/`**），命令一律 `.venv/bin/python -m pytest` / `.venv/bin/alembic ...`。
+- 已起 docker 容器 `pch-pg`（postgres:16）映射宿主端口 **5433**（5432 被别项目 `pf-postgres` 占用），PG 用户 `pch` / 密码 `pw` / 库 `pchsystem`。`Backend/.env` 已配 `POSTGRES_PORT=5433`（gitignored）。
+- B6 写 docker-compose 时 PG 主机名内部网络仍用 `postgres` + 5432，不受宿主端口冲突影响。
 - 旧 Windows 宿主已弃用（docker daemon 500、无裸机 PG、`psql` 未装）。
-- Python 3.13（满足 `>=3.11`）；后端用 `Backend/.venv` 隔离，命令一律 `.venv/Scripts/python.exe -m pytest` / `-m alembic`。
-- 旧机器 venv 含 VeighNa 全局污染风险；新机器重建 venv 即可（`cd Backend && python -m venv .venv && .venv/Scripts/python.exe -m pip install -e ".[dev]"`）。
 
 ## 已联网核实（红线 S-1，无需重复核实）
 
@@ -51,10 +51,11 @@ git checkout feat/backend-phase0-foundation
 ```
 
 然后：
-1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`
-2. 重建 venv（见上）
-3. 从 **B5 Step2** 继续，执行方式已定为 `superpowers:subagent-driven-development`
-4. 后端 B5-B16 串行跑完冻结 OpenAPI 契约（B16）后，MCDR(M1-M2) + 前端(F1-F4) 可并行
+1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5 段已标 ✅，可直接看 B6）
+2. 重建 venv：`cd Backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
+3. 起 PG（若 pch-pg 容器不在）：见上方"环境"段；记得 5432 占用时改 5433
+4. 从 **B6**（docker-compose + Dockerfile）继续；执行方式 `superpowers:subagent-driven-development`
+5. 后端 B6-B16 串行跑完冻结 OpenAPI 契约（B16）后，MCDR(M1-M2) + 前端(F1-F4) 可并行
 
 ## review 策略（已采用）
 

@@ -413,32 +413,54 @@ git commit -m "feat(backend): 添加 FastAPI 入口与健康检查"
 
 ### Task B5：Alembic 初始化 + `users` schema + `players` 表迁移
 
+> **✅ 已完成（commit `b324e50`，2026-07-01）**。下列 Step 1-6 全部 ✅，正文保留下方原始设计代码作为参考；实际入库代码与原设计的偏差记录在此横幅：
+>
+> | # | 偏差 | 原因 | 实际处理 |
+> |---|---|---|---|
+> | 1 | **Player 模型 UUID 命名冲突**（原 `uuid: Mapped[uuid.UUID]`） | 字段名 `uuid` 遮蔽 `uuid` 模块；SQLAlchemy 2.0 延迟解析注解时 `uuid` 已绑为 MappedColumn → `AttributeError: 'MappedColumn' object has no attribute 'UUID'` | 改为 `from uuid import UUID` + `from sqlalchemy.dialects.postgresql import UUID as PG_UUID`，注解 `Mapped[UUID]`，列定义 `PG_UUID(as_uuid=True)` |
+> | 2 | **`alembic/env.py` 加 `compare_type=True`** | 为 B9 autogenerate 检测类型变更铺路 | offline/online 两个 `context.configure(...)` 均加 |
+> | 3 | **docker run 命令漏 `POSTGRES_USER=pch`**（原计划只设 PASSWORD/DB） | postgres:16 默认创建 `postgres` 用户，与 `Settings.postgres_user="pch"` 不匹配 | 补 `-e POSTGRES_USER=pch` |
+> | 4 | **本机 5432 已被别的容器（`pf-postgres`）占用** | 虚拟器内已运行的别项目 postgres | 改 `-p 5433:5432`，`Backend/.env` 设 `POSTGRES_PORT=5433`；B6 docker-compose 内部网络不受影响，仍用 5432 |
+> | 5 | **迁移脚本删除原计划的占位建表/删表/真建表丑陋模式** | `op.create_table(..., sa_column_kwargs=[])` → `op.drop_table` → 再 `op.create_table` 是无意义绕路 | 直接写干净的 `op.create_table("players", sa.Column(...), schema="users")` 一次完成 |
+> | 6 | 文件名 `001_users_schema_players.py` → `0001_users_players.py` | 与 revision id `0001_users_players` 对齐 | 已按此命名 |
+>
+> **验证记录**：`alembic upgrade head` 成功；`psql \d users.players` 显示 6 列 + PK + 默认值全对；`alembic downgrade -1` 后 `upgrade head` 可逆；`pytest` 3/3 全绿。
+
 **Files:**
 - Create: `Backend/alembic.ini`
 - Create: `Backend/alembic/env.py`
 - Create: `Backend/alembic/script.py.mako`
-- Create: `Backend/alembic/versions/001_users_schema_players.py`
+- Create: `Backend/alembic/versions/0001_users_players.py`
 - Create: `Backend/app/models/user.py`
 
-- [ ] **Step 1：写 `Player` 模型**
+- [x] **Step 1：写 `Player` 模型**（commit `b313e40` 初版有 UUID 命名冲突，`b324e50` 修复）
 
 ```python
 # Backend/app/models/user.py
-import uuid
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import DateTime, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 
 
 class Player(Base):
+    """玩家实体（users schema）。
+
+    MVP 第一阶段身份锚 = 游戏内 UUID（离线模式由玩家名确定性推导，
+    详见根规范 R-5）。后续阶段升级为 Web 绑定账号主锚时再调整。
+    """
+
     __tablename__ = "players"
     __table_args__ = {"schema": "users"}
 
-    uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    # 注意：字段名 uuid 不能与 uuid 模块同名再于注解中引用模块属性 ——
+    # SQLAlchemy 2.0 延迟解析 Mapped[...] 时 uuid 已被绑为 MappedColumn。
+    # 故直接 from uuid import UUID，并把 PG 的 UUID 类型起别名 PG_UUID。
+    uuid: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     current_name: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
     whitelist_state: Mapped[str] = mapped_column(
@@ -452,7 +474,7 @@ class Player(Base):
     )
 ```
 
-- [ ] **Step 2：写 `alembic.ini`（关键段）**
+- [x] **Step 2：写 `alembic.ini`（关键段）**（实际由 `alembic init` 生成，仅改 `[alembic]` 段 `sqlalchemy.url` 占位）
 
 ```ini
 [alembic]
@@ -488,7 +510,7 @@ format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
 ```
 
-- [ ] **Step 3：写 `alembic/env.py`（同步，从 Settings 取 url，导入 Base.metadata）**
+- [x] **Step 3：写 `alembic/env.py`（同步，从 Settings 取 url，导入 Base.metadata）**
 
 ```python
 # Backend/alembic/env.py
@@ -517,6 +539,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,  # 为 B9 autogenerate 检测类型变更铺路
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -529,7 +552,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
@@ -542,16 +569,17 @@ else:
 
 > 注：`script.py.mako` 用 `alembic init` 标准模板；若未生成，执行 `cd Backend && alembic init -t generic alembic_tmp` 后把其 `script.py.mako` 拷到 `alembic/`，删 `alembic_tmp`。
 
-- [ ] **Step 4：写首个迁移**
+- [x] **Step 4：写首个迁移**（去除原设计 `sa_column_kwargs=[]` 占位 + `drop_table` + 真建表的绕路，直接一次 `op.create_table` 完成）
 
 ```python
-# Backend/alembic/versions/001_users_schema_players.py
+# Backend/alembic/versions/0001_users_players.py
 """create users schema and players table
 
 Revision ID: 0001_users_players
 Revises:
 Create Date: 2026-07-01
 """
+import sqlalchemy as sa
 from alembic import op
 
 revision = "0001_users_players"
@@ -564,18 +592,24 @@ def upgrade() -> None:
     op.execute("CREATE SCHEMA IF NOT EXISTS users")
     op.create_table(
         "players",
-        sa_column_kwargs=[],  # 占位；实际用 op.Column
-        schema="users",
-    )
-    # 由于 sa_column_kwargs 不便展开，改用显式列定义：
-    op.drop_table("players", schema="users")  # 撤销上面占位建表
-    import sqlalchemy as sa
-    op.create_table(
-        "players",
-        sa.Column("uuid", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "uuid",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            primary_key=True,
+        ),
         sa.Column("current_name", sa.String(64), nullable=False),
-        sa.Column("role", sa.String(16), nullable=False, server_default="user"),
-        sa.Column("whitelist_state", sa.String(16), nullable=False, server_default="active"),
+        sa.Column(
+            "role",
+            sa.String(16),
+            nullable=False,
+            server_default="user",
+        ),
+        sa.Column(
+            "whitelist_state",
+            sa.String(16),
+            nullable=False,
+            server_default="active",
+        ),
         sa.Column(
             "first_seen_at",
             sa.DateTime(timezone=True),
@@ -597,22 +631,42 @@ def downgrade() -> None:
     op.execute("DROP SCHEMA IF EXISTS users")
 ```
 
-- [ ] **Step 5：起本地 PG 并验证迁移**
+- [x] **Step 5：起本地 PG 并验证迁移**
 
 ```bash
-# 需先有运行的 PG（可临时 docker run -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=pchsystem -p 5432:5432 postgres:16）
+# 起 PG 容器：原计划漏 POSTGRES_USER=pch，已补；5432 被占用时改 5433:5432
+docker run -d --name pch-pg \
+  -e POSTGRES_USER=pch \
+  -e POSTGRES_PASSWORD=pw \
+  -e POSTGRES_DB=pchsystem \
+  -p 5432:5432 \
+  postgres:16
+
 cd Backend
-# 配 .env 的 POSTGRES_PASSWORD 与本地 PG 一致
-alembic upgrade head
-alembic current
+# 配 .env 的 POSTGRES_PASSWORD/POSTGRES_PORT 与本地 PG 一致
+.venv/bin/alembic upgrade head
+.venv/bin/alembic current
+# 期望：0001_users_players (head)
+
+# 可逆性验证（实际已跑通）
+.venv/bin/alembic downgrade -1
+.venv/bin/alembic upgrade head
+
+# 表结构验证
+docker exec pch-pg psql -U pch -d pchsystem -c "\dt users.*"
+docker exec pch-pg psql -U pch -d pchsystem -c "\d users.players"
 ```
+
+> **本机执行实际**：5432 已被别项目 `pf-postgres` 容器占用 → 改用 `-p 5433:5432`，`Backend/.env` 设 `POSTGRES_PORT=5433`。B6 docker-compose 内部网络不受影响，PG 主机名仍为 `postgres`、内部端口 5432。
+
 Expected: `0001_users_players (head)`
 
-- [ ] **Step 6：Commit**
+- [x] **Step 6：Commit**（实际 `b324e50`，含 Player 模型 UUID 修复）
 
 ```bash
 git add alembic.ini alembic/ app/models/user.py
 git commit -m "feat(backend): 初始化 Alembic 与 users.players 表"
+# 实际 commit b324e50，正文记录偏差与验证结果
 ```
 
 ---
