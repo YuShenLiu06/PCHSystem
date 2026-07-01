@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-分支 `main`（本地；远程默认分支仍是 `origin/feat/backend-phase0-foundation`，本地 `main` 未设 upstream）。本地领先 `origin/feat/backend-phase0-foundation` **5 个提交**（B5 代码 / B6 代码 + 3 docs），未 push：
+分支 `main`（本地；远程默认分支仍是 `origin/feat/backend-phase0-foundation`，本地 `main` 未设 upstream）。本地领先 `origin/feat/backend-phase0-foundation` **16 个提交**（B5 代码 / B6 代码 + B7-B16 代码 + 4 docs），未 push：
 
 | Task | 状态 | Commit |
 |---|---|---|
@@ -14,9 +14,20 @@
 | B4 FastAPI 入口 + `/healthz` | ✅ | `f646d3a` |
 | B5 Step1：Player 模型 `Backend/app/models/user.py`（初版含 UUID 命名冲突 bug） | ✅（已在 B5 Step2 修复） | `b313e40` |
 | B5 Step2-6：alembic.ini + env.py + 0001 迁移 + docker PG 验证（含 Player 模型 UUID 修复） | ✅（本次） | `b324e50` |
-| B6–B16 / M1-M2 / F1-F4 / V1 | 待做 | — |
+| B6 Docker Compose（Dockerfile + .dockerignore + compose + .env.example） | ✅ | `bce60ce` |
+| B7 Service Token 鉴权依赖（`X-Service-Token` + `secrets.compare_digest`） | ✅ | `fef686a` |
+| B8 JWT 工具（HS256 + access/refresh + jti） | ✅ | `d08d297` |
+| B9 auth_tokens + jwt_revocations 表迁移 + ORM 模型 | ✅ | `f7b5253` |
+| B10 pytest fixture（conftest 含同步 truncate + NullPool 修复） | ✅ | `fc9596a` |
+| B11 players repository（`get_or_create` / `get_by_uuid`） | ✅ | `3c5e939` |
+| B12 auth_tokens repository（一次性 + 过期 + `with_for_update`） | ✅ | `86f1b06` |
+| B13 限频（`RateLimiter` 内存滑窗）+ 白名单（`check_whitelist`） | ✅ | `4b9d390` |
+| B14 Pydantic schemas + `POST /auth/token`（MCDR 入口） | ✅ | `d3741cc` |
+| B15 `POST /auth/exchange` + `POST /auth/refresh` + `GET /me` + `get_current_player`/`require_role` | ✅ | `ba8b1ff` |
+| B16 OpenAPI 契约冻结（5 端点测试 + `openapi.json` 工件导出） | ✅ | `48bc1f3` |
+| M1-M2 / F1-F4 / V1 | 待做 | — |
 
-**下一步**：**B6 Docker Compose**（postgres + backend）+ `Backend/Dockerfile`。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 620 行起。
+**下一步**：**M1 MCDR 插件骨架** + **F1 前端脚手架** 可并行启动（B16 OpenAPI 契约已冻结，前端/MCDR 可基于 `Backend/openapi.json` 桩测）。详见 `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md` 第 1877 行起（M1）/ 第 2087 行起（F1）。
 
 ## 计划与参考文件
 
@@ -36,10 +47,13 @@
 
 | 资源 | 状态 | 验证命令 |
 |---|---|---|
-| `Backend/.venv/` | ✅ 已装 `pip install -e ".[dev]"`，alembic 1.18.5 | `Backend/.venv/bin/alembic --version` |
-| docker 容器 `pch-pg` | ✅ 运行中，端口 5433 | `docker ps --filter name=pch-pg` |
-| `Backend/.env` | ✅ 已配（`POSTGRES_PORT=5433` 等，gitignored） | `grep POSTGRES_PORT Backend/.env` |
-| 数据库迁移 | ✅ 已 `alembic upgrade head`（`users.players` 表存在） | `docker exec pch-pg psql -U pch -d pchsystem -c "\dt users.*"` |
+| `Backend/.venv/` | ✅ 已装 `pip install -e ".[dev]"`，alembic 1.18.5、pytest 9.1.1、pytest-asyncio 1.4.0 | `Backend/.venv/bin/alembic --version` |
+| docker compose 项目 | ✅ `pchsystem-postgres-1` (postgres:16, 端口 `127.0.0.1:5433`) + `pchsystem-backend-1` (uvicorn :8000) 运行中 | `docker compose -f /home/yushen/opt/PCHSystem/docker-compose.yml ps` |
+| 根 `.env` | ✅ 已配（`POSTGRES_PASSWORD=change_me_strong_random` 与容器初始化一致；gitignored） | `grep POSTGRES_PASSWORD .env` |
+| `Backend/.env` | ✅ 已配（`POSTGRES_HOST=localhost` / `POSTGRES_PORT=5433` / `POSTGRES_PASSWORD=change_me_strong_random` 与根 .env 一致，本地 venv 跑 alembic 与 pytest 用） | `grep POSTGRES_PASSWORD Backend/.env` |
+| 数据库迁移 | ✅ 已 `alembic upgrade head`（`0002_auth_jwt` head；3 表：players / auth_tokens / jwt_revocations） | `cd Backend && .venv/bin/alembic current` |
+| 测试套件 | ✅ 21 个测试全绿（`JWT_SECRET=test_secret_for_pytest .venv/bin/pytest -v`） | `cd Backend && JWT_SECRET=test_secret_for_pytest .venv/bin/pytest -v` |
+| OpenAPI 工件 | ✅ `Backend/openapi.json` 已导出（5 端点：`/healthz` `/auth/token` `/auth/exchange` `/auth/refresh` `/me`） | `.venv/bin/python -c "import json; print(list(json.load(open('Backend/openapi.json'))['paths'].keys()))"` |
 
 > **若换机器**：按下方"继续方式"段重建 venv + 起 pch-pg + 配 `.env` + 跑 `alembic upgrade head`。
 
@@ -63,11 +77,14 @@ git checkout feat/backend-phase0-foundation
 ```
 
 然后：
-1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5/B6 段已标 ✅，可直接看 B7）
-2. 重建 venv：`cd Backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`（仅本地裸跑 uvicorn 时需要；走 docker 可跳过）
+1. 读本文件 + `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`（B5/B6/B7-B16 段已标 ✅，可直接看 M1/F1）
+2. 重建 venv（可选）：`cd Backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`（走 docker 可跳过）
 3. 起完整栈（B6 产出）：根目录 `cp .env.example .env` → 编辑真实密码 → `docker compose up -d` → `docker compose exec backend alembic upgrade head`（卷持久化，首次或换机器才需要）→ `curl http://localhost:8000/healthz` 应返回 `{"status":"ok"}`
-4. 从 **B7**（Service Token 鉴权依赖）继续；执行方式 `superpowers:subagent-driven-development`
-5. 后端 B7-B16 串行跑完冻结 OpenAPI 契约（B16）后，MCDR(M1-M2) + 前端(F1-F4) 可并行
+4. **后端 B16 OpenAPI 契约已冻结**，可并行启动：
+   - **M1 MCDR 插件骨架**（计划 1877 行起）：`mcdreforged.plugin.json` + `htcmc_auth/` 包；需联网核实 MCDR API（红线 S-1，本文件已核实部分 API，详见上表）
+   - **F1 前端脚手架**（计划 2087 行起）：Vue3 + Vite + Element Plus
+   - 执行方式 `superpowers:subagent-driven-development`
+5. M/F 完成后进入 V1 端到端联调验收（计划 2358 行起）
 
 ## review 策略（已采用）
 

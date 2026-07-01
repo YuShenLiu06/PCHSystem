@@ -26,8 +26,26 @@
 - `Backend/.dockerignore`：11 条目（`.env` / `.env.local` / `.venv/` / `__pycache__/` / `*.pyc` / `.pytest_cache/` / `*.egg-info/` / `build/` / `dist/` / `tests/` / `.git/`），关键挡 `.env` 防止 secrets 进镜像 layer（R-11）。`bce60ce`
 - 根 `docker-compose.yml`：`postgres:16` + `backend`；显式 `environment:` + `${VAR}` 插值（非 `env_file:`，文档化后端实际依赖变量且防意外注入）；`POSTGRES_HOST=postgres` / `POSTGRES_PORT=5432` 硬编码为容器网络视角；PG 端口 `127.0.0.1:5433:5432`（宿主 5432 被 `pf-postgres` 占用 + 绑 loopback 防公网暴露）；`pgdata` named volume 持久化；PG healthcheck `pg_isready` + backend `depends_on: service_healthy`；MVP 不加 backend 自身 healthcheck、不进 alembic entrypoint。`bce60ce`
 - 根 `.env.example`：compose 模板（`POSTGRES_HOST=postgres` / `POSTGRES_PORT=5432` 锁定容器视角），用户拷贝为真实 `.env`（gitignored，不进库）。`bce60ce`
+- `X-Service-Token` 鉴权依赖 `require_service_token`（`Backend/app/api/deps.py`）：`secrets.compare_digest` 常数时间比较防时序侧信道、空值短路防 None 误比较、`X-Service-Token` 头自动映射参数名。`fef686a`
+- JWT 工具 `Backend/app/core/jwt.py`：`create_access_token` / `create_refresh_token`（返回 `(token, jti)` 供 B15 吊销追踪）/ `decode_token`，HS256 算法常量、`algorithms=[_ALGO]` 防 alg-confusion 攻击、payload 含 `sub/role/type/iat/exp/jti`、TTL 走 `Settings.jwt_*_ttl_seconds`。`d08d297`
+- `auth_tokens` + `jwt_revocations` 表迁移 `0002_auth_jwt`：FK 到 `users.players.uuid`、`(player_uuid, expires_at)` 复合索引便于清理、`server_default=now()` DB 端时间戳、可逆 downgrade。`f7b5253`
+- `AuthToken` / `JwtRevocation` ORM 模型追加到 `app/models/user.py`：`token`/`jti` 主键 UUID、`used_at` 可空支持一次性语义、`issued_ip`/`exchanged_ip` 审计列。`f7b5253`
+- pytest 异步 fixture 与测试库清理 `Backend/tests/conftest.py`：`_truncate_db` autouse 同步 truncate（避免 pytest-asyncio 1.4 + 同步测试混合跑的 `RuntimeError: Event loop is closed`）、`client` fixture 用 httpx `AsyncClient` + `ASGITransport`。`fc9596a`
+- players repository `Backend/app/repositories/player_repo.py`：`get_or_create`（首次创建走 `flush()` 不 commit 由调用方控事务；已存在则更新 `current_name` + `last_seen_at`）、`get_by_uuid` 读助手。`3c5e939`
+- auth_tokens repository `Backend/app/repositories/auth_token_repo.py`：`issue`（创建带 TTL 与可选 `issued_ip` 的 token）、`exchange`（`with_for_update()` 行锁防并发重放、三护栏返回 None：未找到/`used_at` 已设/`expires_at < now`、返回 Player 而非 AuthToken）。`86f1b06`
+- 限频 + 白名单服务 `Backend/app/services/auth_service.py`：`RateLimiter` 内存滑窗（`time.monotonic` + `threading.Lock`，docstring 标注多 worker 需 Redis）、`rate_limiter` 模块单例、`check_whitelist` 仅投影 `whitelist_state` 列返回 `state != "removed"` 前向兼容未来状态。`4b9d390`
+- Pydantic schemas `Backend/app/schemas/auth.py`：7 个模型覆盖 issue/exchange/refresh/me 全流程，B15 直接复用。`d3741cc`
+- `POST /auth/token` 端点（MCDR 调用入口）：限频 → `get_or_create` → 白名单 → `issue` → `commit` → 拼接 `web_base_url/auth?token=<uuid>`；429/403 错误码；`X-Service-Token` 头校验（B7 依赖）；`issued_ip` 从 `request.client.host` 取并 None 防御。`d3741cc`
+- `POST /auth/exchange` 端点（前端一次性 token 换 JWT）：调用 B12 `exchange_token`，None 返回 401，成功 commit 后签发 access + refresh JWT pair。`ba8b1ff`
+- `POST /auth/refresh` 端点：解码 refresh JWT 校验 `type=="refresh"` 后重签 pair（MVP 未接 `jwt_revocations` 吊销表，源码注释标注后续扩展点）。`ba8b1ff`
+- `GET /me` 端点（JWT 持有者信息）：挂在 `top_router`（无 `/auth` 前缀），通过 `Depends(get_current_player)` 校验 Bearer token。`ba8b1ff`
+- `get_current_player` + `require_role` 依赖（`Backend/app/api/deps.py` 追加）：Bearer 解析 + JWT 解码 + `type=="access"` 校验 + Player 回查，四种 401 路径；`require_role` 工厂返回闭包，`owner` 角色绕过 RBAC（为后续管理类端点预留）。`ba8b1ff`
+- OpenAPI 契约冻结：`Backend/tests/test_openapi_freeze.py` 校验 5 端点路径不可移除；`Backend/openapi.json` 工件导出（OpenAPI 3.1.0，`ensure_ascii=False` 保中文 description），供前端/MCDR 团队桩测。`48bc1f3`
 
 #### Fixed
+
+- `Backend/.env` 的 `POSTGRES_PASSWORD=pw`（B5 时 pch-pg 容器密码）与 docker compose 启动的 `pchsystem-postgres-1`（用根 `.env` 的 `change_me_strong_random` 初始化）不一致，导致本地 venv alembic 与 B10+ 测试 fixture 认证失败；改为 `change_me_strong_random` 对齐容器。`fc9596a`
+- B10 spec 的 async `_truncate` autouse fixture 在 pytest-asyncio 1.4 + 同步测试混合跑时触发 `RuntimeError: Event loop is closed`（autouse async fixture 在同步测试周围也会创建/关闭 loop，asyncpg 池内连接泄漏到已关闭 loop）；控制器级修复改为同步 fixture 用独立 sync engine + 每次 dispose；同时 `app.core.db` 的 async engine 改用 `NullPool` 防止 async 测试跨 loop 复用池内连接。`fc9596a`
 
 - `Player.uuid` 字段名遮蔽 `uuid` 模块导致 SQLAlchemy 2.0 延迟解析 `Mapped[...]` 注解时抛 `AttributeError: 'MappedColumn' object has no attribute 'UUID'`。改为 `from uuid import UUID` + `from sqlalchemy.dialects.postgresql import UUID as PG_UUID`，注解用 `Mapped[UUID]`、列定义用 `PG_UUID(as_uuid=True)`。`b324e50`
 
