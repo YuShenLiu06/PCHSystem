@@ -15,5 +15,9 @@ def test_paths_present():
         "/sheets/{sheet_id}",
         "/sheets/{sheet_id}/rows",
         "/sheets/{sheet_id}/rows/{row_id}",
+        "/sheets/{sheet_id}/rows/{row_id}/claim",
+        "/sheets/{sheet_id}/rows/{row_id}/delivery",
+        "/sheets/{sheet_id}/rows/{row_id}/release",
+        "/sheets/{sheet_id}/rows/{row_id}/reject",
     ]:
         assert p in paths, f"missing {p}"
