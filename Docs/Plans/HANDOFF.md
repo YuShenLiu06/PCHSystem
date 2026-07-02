@@ -117,3 +117,19 @@ R-1 后端独占 DB；R-5 UUID 为身份锚；R-11 密钥进 `.env`；R-12 MCDR 
 - 关键决策（已对齐）：`done_flag` 二元 0/1；`item_name` 自由文本（R-6 不覆盖 sheets）；JWT 已登录可读所有表 / owner+admin 可写 / CSV 全量走 service token；`format_qty` 后端纯函数 + API 只返原始 int。
 - 计划文档：[`Docs/Plans/superpowers/2026-07-02-phase2-sheets-backend.md`](./superpowers/2026-07-02-phase2-sheets-backend.md)。
 - 待办：MCDR `!!sheet`（Phase 4），待后端 API 稳定后单独 spawn `mcdr-dev`（含 service-token 写通道 + body.uuid 代玩家操作契约）。
+
+---
+
+## sheets 协作改进（2026-07-02）
+
+落地 spec [`Docs/superpowers/specs/2026-07-02-sheets-collaboration-design.md`](../superpowers/specs/2026-07-02-sheets-collaboration-design.md)（点1 名称显示 + 点2 认领/进度协作），Teammates 并行：`Teammate-Backend`（B1-B6）+ `Teammate-Frontend`（F1-F4）→ lead 文档收尾（D1-D2）。
+
+| 端 | 产物 | commit |
+|---|---|---|
+| 后端 | 迁移 `0005_sheets_collab`（`sheet_rows` 加 mode/status/claimant_uuid/delivered_qty，删 done_flag，可逆）；repo join 取 `owner_name`/`claimant_name` + `with_for_update` 状态机（claim/delivery/release/reject）；4 新端点 + `owner_name`；schema 去 done_flag 加 mode + `RowDeliveryRequest` | `510abec` · `f638f3c` · `80ec623` |
+| 前端 | `sheets.ts` 4 新 API 函数 + 新契约类型；`SheetList.vue` 显游戏名；`SheetEditor.vue` 协作 UI（模式/认领者/状态/进度/动作按角色×状态，progress 上报交付 ElMessageBox.prompt，R-9 旁观者只读）；vitest 26 + build 通过 | `b66916f` · `2c82ef8` |
+| 文档 | sheets API 参考 `Docs/architecture/api/sheets.md`；本计划 `Docs/Plans/superpowers/2026-07-02-sheets-collaboration.md` | `205c850` + 本提交 |
+
+- 验收：后端 86 测试全绿（含 `sheet_repo` 20 + `sheets_api` 33，覆盖状态机全分支 + 403/404/409 + `owner_name=游戏名`）；迁移 `0005_sheets_collab (head)` 可逆；`openapi.json` 重导出含 4 新端点；前端 vitest 26 + `npm run build` 通过。
+- 关键决策（已对齐 D-1~D-10）：单认领人；拥有者每行手选 mode（lock/progress）；3 态状态机（open/claimed/done，备齐=done）；认领信息上墙 `sheet_rows`（YAGNI，多人时再迁 `sheet_claims` 子表，API 列表语义已铺路）。
+- 待办：MCDR `!!sheet` 认领（Phase 4，待此 API 稳定后 spawn `mcdr-dev`）；多人认领（接口已预留 `claimants[]` 升级路径）。

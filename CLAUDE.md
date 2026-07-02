@@ -120,6 +120,11 @@ PCHSystem/
 
 > 各服务文档权威、完整；子服务目录下的 `CLAUDE.md` 只是其**雷点摘要 + 局部导航**，详情永远以上表文档为准。
 
+### API 参考
+| 文档 | 路径 | 说明 |
+|---|---|---|
+| sheets API | [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) | sheets HTTP 端点 / 鉴权 / 行状态机（认领·交付·解除·打回）/ 权限矩阵 / 错误码 / CSV 列 |
+
 ---
 
 ## 6. 分布式 CLAUDE.md 体系
