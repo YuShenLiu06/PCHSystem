@@ -25,6 +25,8 @@ import {
   exportAllCSV,
   claimRow,
   setRowDelivery,
+  contributeRow,
+  setRowProgress,
   releaseRow,
   rejectRow,
 } from '../../api/sheets'
@@ -65,6 +67,7 @@ const rowDetail = {
   claimant_uuid: null,
   claimant_name: null,
   delivered_qty: 0,
+  contributors: [],
   sort_order: 1,
   updated_at: '',
 }
@@ -197,6 +200,38 @@ describe('sheets API client', () => {
       const result = await setRowDelivery(1, 10, 64)
       expect(mocked.patch).toHaveBeenCalledWith('/sheets/1/rows/10/delivery', { delivered_qty: 64 })
       expect(result).toEqual(done)
+    })
+  })
+
+  describe('contributeRow', () => {
+    it('POST /sheets/{id}/rows/{rowId}/contribute 带 {qty}', async () => {
+      const contributed = {
+        ...rowDetail,
+        mode: 1,
+        status: 'claimed',
+        delivered_qty: 32,
+        contributors: [{ player_uuid: 'me', player_name: 'Me' }],
+      }
+      mocked.post.mockResolvedValue({ data: contributed })
+      const result = await contributeRow(1, 10, 32)
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/1/rows/10/contribute', { qty: 32 })
+      expect(result).toEqual(contributed)
+    })
+  })
+
+  describe('setRowProgress', () => {
+    it('PATCH /sheets/{id}/rows/{rowId}/progress 带 {delivered_qty}（绝对值）', async () => {
+      const adjusted = {
+        ...rowDetail,
+        mode: 1,
+        status: 'done',
+        delivered_qty: 64,
+        contributors: [{ player_uuid: 'me', player_name: 'Me' }],
+      }
+      mocked.patch.mockResolvedValue({ data: adjusted })
+      const result = await setRowProgress(1, 10, 64)
+      expect(mocked.patch).toHaveBeenCalledWith('/sheets/1/rows/10/progress', { delivered_qty: 64 })
+      expect(result).toEqual(adjusted)
     })
   })
 

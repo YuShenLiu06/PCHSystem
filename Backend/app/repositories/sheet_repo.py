@@ -12,9 +12,10 @@ import io
 import uuid
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.sheet import Sheet, SheetRow
+from app.models.sheet import Sheet, SheetRow, SheetRowContributor
 from app.models.user import Player
 
 # mode（D-3）
@@ -125,9 +126,10 @@ async def upsert_row(
     """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort）。在则改，不在则 insert。
 
     新建行：status=open / claimant=None / delivered=0。
-    更新行：仅改 need_qty/mode/sort_order，保留 status/claimant/delivered；
-    并按 spec §5.3 封顶：delivered>新need→delivered=新need；
-    若 status∈{claimed,done} 且 delivered>=need→done；status==done 且 delivered<need→claimed。
+    更新行 mode 不变：仅改 need_qty/sort_order，保留 status/claimant/delivered；
+    按 spec §5.3 封顶 delivered 并按新 need 重算 status。
+    更新行 mode 变化：重置协作（status=open/claimant=None/delivered=0/清贡献者），
+    避免违反 progress 不变量（claimant 恒 null）。
     并发同名 insert 会触发 IntegrityError，上抛交 api 层翻译为 409。
     """
     stmt = (
@@ -137,15 +139,28 @@ async def upsert_row(
     )
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row is not None:
+        mode_changed = row.mode != mode
         row.need_qty = need_qty
         row.mode = mode
         row.sort_order = sort_order
-        if row.delivered_qty > need_qty:
-            row.delivered_qty = need_qty
-        if row.status in (STATUS_CLAIMED, STATUS_DONE) and row.delivered_qty >= need_qty:
-            row.status = STATUS_DONE
-        elif row.status == STATUS_DONE and row.delivered_qty < need_qty:
-            row.status = STATUS_CLAIMED
+        if mode_changed:
+            # 换模式 = 重新开始：清协作状态，避免违反 progress 不变量（claimant 恒 null）
+            row.status = STATUS_OPEN
+            row.claimant_uuid = None
+            row.delivered_qty = 0
+            await clear_contributors(session, row.id)
+        else:
+            # mode 不变：保留进度，按新 need 封顶（need=0 = 无目标，不封顶）
+            if need_qty > 0 and row.delivered_qty > need_qty:
+                row.delivered_qty = need_qty
+            if (
+                row.status in (STATUS_CLAIMED, STATUS_DONE)
+                and need_qty > 0
+                and row.delivered_qty >= need_qty
+            ):
+                row.status = STATUS_DONE
+            elif row.status == STATUS_DONE and row.delivered_qty < need_qty:
+                row.status = STATUS_CLAIMED
         await session.flush()
         return row
     row = SheetRow(
@@ -174,10 +189,12 @@ async def _lock_row(
 async def claim_row(
     session: AsyncSession, sheet_id: int, row_id: int, claimant_uuid: uuid.UUID
 ) -> SheetRow | None:
-    """open → claimed：置 claimant、delivered=0。非 open 行视为非法转移。"""
+    """lock 行 open → claimed：置 claimant、delivered=0。progress 行 / 非 open 行视为非法转移。"""
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    if row.mode == MODE_PROGRESS:
+        raise SheetRowConflict("progress rows use contribute, not claim")
     if row.status != STATUS_OPEN:
         raise SheetRowConflict(f"cannot claim row in status {row.status}")
     row.status = STATUS_CLAIMED
@@ -190,10 +207,12 @@ async def claim_row(
 async def set_row_delivery(
     session: AsyncSession, sheet_id: int, row_id: int, delivered_qty: int
 ) -> SheetRow | None:
-    """claimed/done → 设 delivered；delivered>=need 自动 done，否则 claimed。"""
+    """lock 行 claimed/done → 设 delivered；delivered>=need 自动 done，否则 claimed。progress 行用 contribute。"""
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    if row.mode == MODE_PROGRESS:
+        raise SheetRowConflict("progress rows use contribute, not delivery")
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
         raise SheetRowConflict(f"cannot set delivery on row in status {row.status}")
     row.delivered_qty = delivered_qty
@@ -202,10 +221,35 @@ async def set_row_delivery(
     return row
 
 
+async def set_row_progress(
+    session: AsyncSession, sheet_id: int, row_id: int, delivered_qty: int
+) -> SheetRow | None:
+    """progress 行 owner 直接修正进度（绝对值，可增可减）：按新值重算 status，**不动 contributors**。
+
+    仅 progress 行可用（lock 行 raise SheetRowConflict，请用 set_row_delivery）。
+    delivered_qty=0 → open；0<x<need → claimed；>=need → done。
+    保留 contributors（上交历史），即使 owner 把进度调回 0 也不清贡献者名单。
+    """
+    row = await _lock_row(session, sheet_id, row_id)
+    if row is None:
+        return None
+    if row.mode != MODE_PROGRESS:
+        raise SheetRowConflict("lock rows use set_row_delivery, not progress")
+    row.delivered_qty = delivered_qty
+    if delivered_qty == 0:
+        row.status = STATUS_OPEN
+    elif row.need_qty > 0 and delivered_qty >= row.need_qty:
+        row.status = STATUS_DONE
+    else:
+        row.status = STATUS_CLAIMED  # need=0 + delivered>0 → 无目标，永不 done
+    await session.flush()
+    return row
+
+
 async def release_row(
     session: AsyncSession, sheet_id: int, row_id: int
 ) -> SheetRow | None:
-    """claimed/done → open：清 claimant、delivered=0。"""
+    """claimed/done → open：清 claimant、delivered=0、清贡献者（progress 行）。"""
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -214,6 +258,7 @@ async def release_row(
     row.status = STATUS_OPEN
     row.claimant_uuid = None
     row.delivered_qty = 0
+    await clear_contributors(session, row.id)
     await session.flush()
     return row
 
@@ -221,16 +266,88 @@ async def release_row(
 async def reject_row(
     session: AsyncSession, sheet_id: int, row_id: int
 ) -> SheetRow | None:
-    """done → claimed：delivered 归零，claimant 保留重做。非 done 行视为非法转移。"""
+    """lock 行 done → claimed：delivered 归零，claimant 保留重做。progress 行无 reject（用 release）。"""
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    if row.mode == MODE_PROGRESS:
+        raise SheetRowConflict("progress rows have no reject; use release")
     if row.status != STATUS_DONE:
         raise SheetRowConflict(f"cannot reject row in status {row.status}")
     row.status = STATUS_CLAIMED
     row.delivered_qty = 0
     await session.flush()
     return row
+
+
+async def contribute_row(
+    session: AsyncSession,
+    sheet_id: int,
+    row_id: int,
+    player_uuid: uuid.UUID,
+    qty: int,
+) -> SheetRow | None:
+    """progress 行增量上交（任意玩家）：delivered += qty，幂等加入贡献者，重算 status。
+
+    仅 progress 行可用（lock 行 raise SheetRowConflict）；done 行不再收上交。
+    delivered 不封顶 need（允许超额，status=done）。
+    幂等加贡献者：ON CONFLICT (row_id, player_uuid) DO NOTHING。
+    """
+    row = await _lock_row(session, sheet_id, row_id)
+    if row is None:
+        return None
+    if row.mode != MODE_PROGRESS:
+        raise SheetRowConflict(f"cannot contribute on row in mode {row.mode}")
+    # need=0 = 无目标（无限收集），永不 done，可一直上交；仅 need>0 的 done 行拒绝重复上交
+    if row.status == STATUS_DONE and row.need_qty > 0:
+        raise SheetRowConflict("cannot contribute on done row")
+    row.delivered_qty += qty
+    row.status = (
+        STATUS_DONE
+        if (row.need_qty > 0 and row.delivered_qty >= row.need_qty)
+        else STATUS_CLAIMED
+    )
+    # 幂等加贡献者并累加每人累计上交量（contributed_qty 供按贡献量排序显示）
+    await session.execute(
+        pg_insert(SheetRowContributor)
+        .values(row_id=row.id, player_uuid=player_uuid, contributed_qty=qty)
+        .on_conflict_do_update(
+            index_elements=["row_id", "player_uuid"],
+            set_={"contributed_qty": SheetRowContributor.contributed_qty + qty},
+        )
+    )
+    await session.flush()
+    return row
+
+
+async def list_contributors(
+    session: AsyncSession, row_ids: list[int]
+) -> dict[int, list[tuple[uuid.UUID, str]]]:
+    """批量取多行贡献者：返回 {row_id: [(player_uuid, player_name), ...]}，按 joined_at 升序。"""
+    if not row_ids:
+        return {}
+    stmt = (
+        select(SheetRowContributor.row_id, Player.uuid, Player.current_name)
+        .join(Player, Player.uuid == SheetRowContributor.player_uuid)
+        .where(SheetRowContributor.row_id.in_(row_ids))
+        .order_by(
+            SheetRowContributor.row_id,
+            SheetRowContributor.contributed_qty.desc(),
+            SheetRowContributor.joined_at,
+            SheetRowContributor.id,
+        )
+    )
+    result: dict[int, list[tuple[uuid.UUID, str]]] = {}
+    for row_id, player_uuid, player_name in (await session.execute(stmt)).all():
+        result.setdefault(row_id, []).append((player_uuid, player_name))
+    return result
+
+
+async def clear_contributors(session: AsyncSession, row_id: int) -> None:
+    """清空某行贡献者（progress release / upsert 改 mode 重置时调用）。"""
+    await session.execute(
+        delete(SheetRowContributor).where(SheetRowContributor.row_id == row_id)
+    )
 
 
 async def delete_row(session: AsyncSession, sheet_id: int, row_id: int) -> int:

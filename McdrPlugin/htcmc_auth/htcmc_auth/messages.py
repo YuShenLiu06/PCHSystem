@@ -79,11 +79,32 @@ def _status_color(status: str) -> str:
     return _STATUS_COLOR.get(status, "§f")
 
 
+# progress 行贡献者显示上限：受 MC 聊天行宽限制，至多 2 位 + 省略号（后端已按 contributed_qty desc 排序）
+_CONTRIB_DISPLAY_MAX = 2
+
+
+def _format_contributors(contributors: list) -> str:
+    """progress 行认领者列：按贡献量降序取前 N 位 + 省略号；无贡献者显「未认领」。"""
+    names = [c.get("player_name") for c in (contributors or []) if c.get("player_name")]
+    if not names:
+        return "未认领"
+    if len(names) <= _CONTRIB_DISPLAY_MAX:
+        return "、".join(names)
+    return "、".join(names[:_CONTRIB_DISPLAY_MAX]) + "…"
+
+
 def format_row_line(row: dict) -> str:
-    """格式化单行（RowDetail）为游戏内一行文本。"""
+    """格式化单行（RowDetail）为游戏内一行文本。
+
+    progress 行：认领者列改显贡献者（按贡献量降序，至多 2 位 + 省略号）；无则「未认领」。
+    lock 行：显 claimant_name。
+    """
     mode = _MODE_LABEL.get(int(row.get("mode", 0)), str(row.get("mode")))
     status = str(row.get("status", ""))
-    claimant = row.get("claimant_name") or "未认领"
+    if int(row.get("mode", 0)) == 1:
+        claimant = _format_contributors(row.get("contributors"))
+    else:
+        claimant = row.get("claimant_name") or "未认领"
     return SHEET_ROW_LINE.format(
         status_c=_status_color(status),
         row_id=row.get("id"),
@@ -112,11 +133,14 @@ def rtext_button(label: str, command: str, *, color=RColor.aqua, hover: str = ""
 def format_row_clickable(row: dict, sheet_id, *, is_owner: bool) -> RTextList:
     """格式化单行为可点击 RTextList：行文本 + 按状态/模式/拥有者追加尾部操作按钮。
 
-    完整工具栏方案（与 web 端对齐）：
-      open          → [认领]
-      claimed(lock) → [标备齐][解除]
-      claimed(progress) → [交付][标备齐][解除]
-      done          → [打回]
+    lock 模式（单认领人状态机）：
+      open → [认领]
+      claimed → [标备齐][解除]
+      done → [打回]
+    progress 模式（无认领，任意玩家增量上交；owner 解除=重置）：
+      open → [交付]            （不认领，直接贡献）
+      claimed → [交付][标备齐][解除]
+      done → [解除]            （无打回；reject 对 progress 返 409）
     拥有者在任意状态额外追加 [删行]。其余状态/未知 → 仅行文本（无按钮）。
     """
     rid = row.get("id")
@@ -124,30 +148,49 @@ def format_row_clickable(row: dict, sheet_id, *, is_owner: bool) -> RTextList:
     mode = int(row.get("mode", 0))
     buttons = []
     if status == "open":
-        buttons.append(rtext_button(
-            "[认领]", f"!!PCH sheet claim {sheet_id} {rid}",
-            color=RColor.green, hover="认领此行（open→claimed）",
-        ))
-    elif status == "claimed":
-        if mode == 1:  # progress：数量为绝对值，末尾留空格让玩家续输
+        if mode == 1:  # progress：任意玩家直接上交（无需认领）
             buttons.append(rtext_button(
                 "[交付]", f"!!PCH sheet deliver {sheet_id} {rid} ",
                 color=RColor.aqua,
-                hover="上报交付（数量为绝对值，末尾补数量后回车）",
+                hover="上报本次上交数量（增量，末尾补数量后回车）",
+            ))
+        else:  # lock：认领
+            buttons.append(rtext_button(
+                "[认领]", f"!!PCH sheet claim {sheet_id} {rid}",
+                color=RColor.green, hover="认领此行（open→claimed）",
+            ))
+    elif status == "claimed":
+        if mode == 1:  # progress：可继续上交 + 一次性补齐
+            buttons.append(rtext_button(
+                "[交付]", f"!!PCH sheet deliver {sheet_id} {rid} ",
+                color=RColor.aqua,
+                hover="上报本次上交数量（增量，末尾补数量后回车）",
+            ))
+            buttons.append(rtext_button(
+                "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
+                color=RColor.green, hover="一次性补齐到需求量（progress）",
+            ))
+        else:  # lock：标备齐
+            buttons.append(rtext_button(
+                "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
+                color=RColor.green, hover="标记此行备齐（lock 快捷）",
             ))
         buttons.append(rtext_button(
-            "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
-            color=RColor.green, hover="标记此行备齐（lock 快捷 / progress 封顶）",
-        ))
-        buttons.append(rtext_button(
             "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
-            color=RColor.yellow, hover="解除认领（claimed→open，他人可重新认领）",
+            color=RColor.yellow,
+            hover="解除认领/重置进度（→open，progress 清贡献者）",
         ))
     elif status == "done":
-        buttons.append(rtext_button(
-            "[打回]", f"!!PCH sheet reject {sheet_id} {rid}",
-            color=RColor.red, hover="打回（done→claimed，delivered 归零，可重做）",
-        ))
+        if mode == 1:  # progress：无打回，owner 用解除重置进度（清贡献者）
+            buttons.append(rtext_button(
+                "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
+                color=RColor.yellow, hover="重置进度（done→open，清贡献者名单）",
+            ))
+        else:  # lock：打回
+            buttons.append(rtext_button(
+                "[打回]", f"!!PCH sheet reject {sheet_id} {rid}",
+                color=RColor.red, hover="打回（done→claimed，delivered 归零，可重做）",
+            ))
     if is_owner:
         buttons.append(rtext_button(
             "[删行]", f"!!PCH sheet delrow {sheet_id} {rid}",

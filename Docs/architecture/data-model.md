@@ -252,11 +252,28 @@ erDiagram
 | `sheet_id` | bigint | FK→sheets.id `ON DELETE CASCADE`, not null | 删表级联删行 |
 | `item_name` | text | not null | 自由文本（红线 R-6 不覆盖 sheets） |
 | `need_qty` | integer | not null default 0 | 原始整数，永不存换算结果 |
-| `done_flag` | smallint | not null default 0 | 二元 0/1（未备齐/已备齐） |
+| `mode` | smallint | not null default 0 | 0=lock（二元备齐，单人锁定）/ 1=progress（进度，多人贡献者列表） |
+| `status` | text | not null default 'open' | open / claimed / done（见下不变量） |
+| `claimant_uuid` | uuid | FK→players.uuid, null | lock 模式当前认领人（open 态 null）；**progress 模式恒 null** |
+| `delivered_qty` | integer | not null default 0 | lock 认领人维护；progress 任何人 `contribute` 累加 |
 | `sort_order` | integer | not null default 0 | |
 | `updated_at` | timestamptz | not null default now() | |
 
-约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`。
+约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。
+
+**双模式不变量**（迁移 0005 协作改进 + 0007 progress 多人贡献者，推翻原 spec D-4）：
+- **lock（mode=0）**：单认领人状态机 `open → claimed → done`（claim / delivery / release / reject）；`open ⇒ claimant IS NULL ∧ delivered=0`，`claimed ⇒ claimant NOT NULL`，`done ⇒ claimant NOT NULL ∧ delivered≥need`。
+- **progress（mode=1）**：`claimant_uuid` **恒 null**（不锁定单人）；`status` 由 `delivered_qty` 推导（`=0 → open` / `0<x<need → claimed` / `>=need → done`）；贡献者走 `sheet_row_contributors` 子表，任何人 `POST /contribute`（增量累加、幂等加入）。`claim/delivery/reject` 对 progress 行 → 409；owner `release` 清 delivered + 贡献者重置。
+
+### 10.3 `sheet_row_contributors`（progress 行贡献者，迁移 0007）
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | bigserial | PK | |
+| `row_id` | bigint | FK→sheet_rows.id `ON DELETE CASCADE`, not null | 删行级联清贡献者 |
+| `player_uuid` | uuid | FK→players.uuid, not null | 贡献者身份锚（R-5） |
+| `joined_at` | timestamptz | not null default now() | 首次上交时间（贡献者排序依据） |
+
+约束：`UNIQUE(row_id, player_uuid)`（同一玩家对同一行只一条记录，配合 `INSERT ... ON CONFLICT DO NOTHING` 幂等加入）。仅 progress（mode=1）行写入；lock 行不用本表。
 
 > **权限（RBAC，后端为准）**：JWT 已登录可读所有表；表的 `owner_uuid` 或 admin/owner 角色可写；CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。

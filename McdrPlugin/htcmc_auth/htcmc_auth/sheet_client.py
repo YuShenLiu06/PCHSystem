@@ -164,7 +164,8 @@ def deliver_row(
 ) -> SheetOutcome:
     """PATCH /sheets/{sheet_id}/rows/{row_id}/delivery {delivered_qty} → RowDetail。
 
-    qty 是绝对值（与后端/前端契约一致，非增量）。
+    qty 是绝对值（与后端/前端契约一致，非增量）。仅 lock 模式：认领人维护总量。
+    progress 行后端对此端点返 409 —— 调用方需先按 mode 分流到 contribute_row。
     """
     return _request(
         cfg,
@@ -172,6 +173,49 @@ def deliver_row(
         f"/sheets/{sheet_id}/rows/{row_id}/delivery",
         player_uuid,
         json_body={"delivered_qty": qty},
+    )
+
+
+def contribute_row(
+    cfg: HtcmcAuthConfig,
+    player_uuid: str,
+    sheet_id: int,
+    row_id: int,
+    qty: int,
+) -> SheetOutcome:
+    """POST /sheets/{sheet_id}/rows/{row_id}/contribute {qty} → RowDetail。
+
+    progress 模式专用：qty 是**增量**（本次上交数量，≥1），任意登录玩家可调，
+    不要求认领人（progress 无认领概念）。后端累加 delivered_qty、幂等加入贡献者、
+    按累计重算 status（>=need 自动 done）。
+    """
+    return _request(
+        cfg,
+        "POST",
+        f"/sheets/{sheet_id}/rows/{row_id}/contribute",
+        player_uuid,
+        json_body={"qty": qty},
+    )
+
+
+def set_row_progress(
+    cfg: HtcmcAuthConfig,
+    player_uuid: str,
+    sheet_id: int,
+    row_id: int,
+    delivered_qty: int,
+) -> SheetOutcome:
+    """PATCH /sheets/{sheet_id}/rows/{row_id}/progress {delivered_qty} → RowDetail。
+
+    progress 模式 owner 专用：delivered_qty 是**绝对值**（直接修正进度，可增可减）。
+    仅表的拥有者可调（后端 RBAC）；不动 contributors（保留上交历史），仅按新值重算 status。
+    """
+    return _request(
+        cfg,
+        "PATCH",
+        f"/sheets/{sheet_id}/rows/{row_id}/progress",
+        player_uuid,
+        json_body={"delivered_qty": delivered_qty},
     )
 
 

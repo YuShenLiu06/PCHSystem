@@ -536,3 +536,295 @@ async def test_export_all_returns_csv(client):
         "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
     assert f"{sid},iron,64,0,open,,0,0" in lines[1:]
+
+
+# ---------- progress 行：多人贡献者（contribute） ----------
+async def _contribute(client, bearer: str, sid: int, rid: int, qty: int) -> dict:
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/contribute",
+        json={"qty": qty},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_progress_row_claim_returns_409(client):
+    """progress 行无 claim 概念：POST /claim → 409（repo 守卫）。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/claim", headers=_auth(bearer_bob)
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_progress_row_delivery_returns_409(client):
+    """progress 行用 contribute 不走 delivery：PATCH /delivery → 409（repo mode 守卫）。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/delivery",
+        json={"delivered_qty": 5},
+        headers=_auth(bearer_bob),
+    )
+    assert resp.status_code == 409
+
+
+# ---------- progress 行：owner 调整进度（PATCH /progress，绝对值） ----------
+@pytest.mark.asyncio
+async def test_set_row_progress_by_owner_overrides_and_keeps_contributors(client):
+    """owner PATCH /progress 设绝对值：重算 status，contributors 保留（上交历史）。"""
+    _, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    # bob 先上交 4（contributors=[bob], status=claimed）
+    await _contribute(client, bearer_bob, sid, rid, 4)
+
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 8},
+        headers=_auth(bearer_owner),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["delivered_qty"] == 8
+    assert body["status"] == "claimed"
+    assert body["claimant_uuid"] is None
+    # contributors 保留（owner 调整不动贡献者名单）
+    assert len(body["contributors"]) == 1
+    assert body["contributors"][0]["player_uuid"] == str(bob_uuid)
+
+
+@pytest.mark.asyncio
+async def test_set_row_progress_to_zero_reopens(client):
+    """owner 设 0 → status=open。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 5)  # claimed
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 0},
+        headers=_auth(bearer_owner),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_set_row_progress_by_non_owner_returns_403(client):
+    """非 owner PATCH /progress → 403（仅拥有者/admin）。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 5},
+        headers=_auth(bearer_bob),
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_set_row_progress_on_lock_row_returns_409(client):
+    """lock 行 PATCH /progress → 409（lock 用 /delivery）。"""
+    _, bearer_owner = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=0))["id"]
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 5},
+        headers=_auth(bearer_owner),
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_progress_row_reject_by_owner_returns_409(client):
+    """progress 行无 reject：owner POST /reject → 409（owner 过 RBAC 后 repo 守卫触发）。"""
+    _, bearer_owner = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/reject", headers=_auth(bearer_owner)
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_contribute_partial_accumulates_and_lists_contributor(client):
+    """单次贡献：delivered += qty；contributors 含上交者；部分 → status=claimed。"""
+    _, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+
+    body = await _contribute(client, bearer_bob, sid, rid, 3)
+    assert body["delivered_qty"] == 3
+    assert body["status"] == "claimed"
+    assert body["claimant_uuid"] is None
+    contribs = body["contributors"]
+    assert len(contribs) == 1
+    assert contribs[0]["player_uuid"] == str(bob_uuid)
+    assert contribs[0]["player_name"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_contribute_meets_need_sets_done(client):
+    """贡献累计 >= need → status=done。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+
+    body = await _contribute(client, bearer_bob, sid, rid, 10)
+    assert body["delivered_qty"] == 10
+    assert body["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_contribute_multiple_players_accumulate(client):
+    """多人 contribute：delivered 累加；contributors 含多人。"""
+    _, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    carol_uuid, bearer_carol = await _make_player("carol")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+
+    b1 = await _contribute(client, bearer_bob, sid, rid, 3)
+    assert b1["delivered_qty"] == 3
+    assert {c["player_name"] for c in b1["contributors"]} == {"bob"}
+
+    b2 = await _contribute(client, bearer_carol, sid, rid, 4)
+    assert b2["delivered_qty"] == 7
+    names = {c["player_name"] for c in b2["contributors"]}
+    assert names == {"bob", "carol"}
+    uuids = {c["player_uuid"] for c in b2["contributors"]}
+    assert str(bob_uuid) in uuids and str(carol_uuid) in uuids
+
+
+@pytest.mark.asyncio
+async def test_contribute_same_player_idempotent_contributor(client):
+    """同一玩家多次 contribute：contributors 仅一条（幂等 UNIQUE）。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 100, mode=1))["id"]
+
+    await _contribute(client, bearer_bob, sid, rid, 3)
+    body = await _contribute(client, bearer_bob, sid, rid, 4)
+    assert body["delivered_qty"] == 7
+    assert len(body["contributors"]) == 1
+    assert body["contributors"][0]["player_name"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_contribute_on_done_row_returns_409(client):
+    """done 后再 contribute → 409。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 10)
+
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/contribute",
+        json={"qty": 1},
+        headers=_auth(bearer_bob),
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_contribute_on_lock_row_returns_409(client):
+    """lock 行 contribute → 409（contribute 仅 progress）。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=0))["id"]
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/contribute",
+        json={"qty": 1},
+        headers=_auth(bearer_bob),
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_contribute_qty_must_be_positive(client):
+    """qty<1 → 422。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/contribute",
+        json={"qty": 0},
+        headers=_auth(bearer_bob),
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_progress_release_by_owner_resets(client):
+    """owner release progress 行 → delivered=0 / contributors=[] / status=open。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 5)
+
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/release", headers=_auth(bearer_owner)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "open"
+    assert body["delivered_qty"] == 0
+    assert body["claimant_uuid"] is None
+    assert body["contributors"] == []
+
+
+@pytest.mark.asyncio
+async def test_progress_release_by_non_owner_forbidden(client):
+    """progress 无 claimant：非 owner release → 403。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    _, bearer_carol = await _make_player("carol")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 5)
+    # carol 既非 owner 也非 claimant（progress 行 claimant 永空）
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/release", headers=_auth(bearer_carol)
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_progress_detail_includes_contributors_field(client):
+    """RowDetail 始终含 contributors 字段（progress 非空 / lock 空数组）。"""
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid_p = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    rid_l = (await _upsert_row(client, bearer_owner, sid, "gold", 5, mode=0))["id"]
+    await _contribute(client, bearer_bob, sid, rid_p, 3)
+
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer_owner))).json()
+    rows = {r["id"]: r for r in detail["rows"]}
+    # progress 行 contributors 非空
+    assert len(rows[rid_p]["contributors"]) == 1
+    assert rows[rid_p]["contributors"][0]["player_name"] == "bob"
+    # lock 行 contributors 为空数组
+    assert rows[rid_l]["contributors"] == []

@@ -104,6 +104,23 @@ def _require_player(src):
     return src.player
 
 
+def _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id):
+    """先 view_sheet 定位行，返回 row dict；失败/行不在时回执并返回 None。
+
+    deliver/done 在执行前需知道行的 mode（lock 走 delivery 绝对值；progress 走 contribute 增量），
+    故先拉一次 view。view 成功但行不在 → SHEET_NOT_FOUND；view 返错（404/403/409/None）→ _resolve 回执。
+    """
+    view_outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+    if isinstance(view_outcome, dict):
+        for r in view_outcome.get("rows", []):
+            if int(r.get("id", -1)) == int(row_id):
+                return r
+        server.tell(player_name, SHEET_NOT_FOUND)
+        return None
+    _resolve(server, player_name, view_outcome)
+    return None
+
+
 # === sheet 总览（!!PCH sheet 不带子命令时）===
 
 def _sheet_root(src, ctx):
@@ -428,6 +445,10 @@ def _sheet_claim(src, ctx):
 
 
 def _sheet_deliver(src, ctx):
+    """上报交付：progress 行走增量上交（任意玩家，不要求认领）；lock 行走绝对值（认领人）。
+
+    qty 语义随模式：progress=本次新增量（≥1）；lock=delivered_qty 绝对值。故需先 view 拉行判 mode。
+    """
     player_name = _require_player(src)
     if not player_name:
         return
@@ -443,7 +464,14 @@ def _sheet_deliver(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        outcome = sheet_client.deliver_row(CONFIG, player_uuid, sheet_id, row_id, qty)
+        row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
+        if row is None:
+            return
+        mode = int(row.get("mode", 0))
+        if mode == 1:  # progress：增量上交，任意玩家，不查认领人
+            outcome = sheet_client.contribute_row(CONFIG, player_uuid, sheet_id, row_id, qty)
+        else:  # lock：绝对值，认领人维护
+            outcome = sheet_client.deliver_row(CONFIG, player_uuid, sheet_id, row_id, qty)
 
         def _show(data):
             server.tell(player_name, SHEET_OK_DELIVERED.format(
@@ -458,10 +486,9 @@ def _sheet_deliver(src, ctx):
 
 
 def _sheet_done(src, ctx):
-    """lock 模式快捷标备齐：先 view 拿 need，再 deliver(need)。
+    """标备齐快捷：lock→deliver(need) 绝对值；progress→contribute(need-delivered) 补齐差额。
 
-    若为 progress 模式，后端按 delivered≥need 判定；这里 deliver 一个安全的大值
-    （need，由后端封顶）——需先拉 need。失败回执走 _resolve。
+    先 view 拿 mode/need/delivered，再按模式分流。progress 已齐（delta=0）则直接回显。
     """
     player_name = _require_player(src)
     if not player_name:
@@ -477,20 +504,21 @@ def _sheet_done(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        # 1) 先取行详情拿 need
-        view_outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
-        need = None
-        if isinstance(view_outcome, dict):
-            for r in view_outcome.get("rows", []):
-                if int(r.get("id", -1)) == int(row_id):
-                    need = int(r.get("need_qty", 0))
-                    break
-        if need is None:
-            # view 失败或行不在：复用 _resolve 把 view 的错误回执（404/403/409/None）
-            _resolve(server, player_name, view_outcome)
+        row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
+        if row is None:
             return
-        # 2) deliver need（绝对值；后端对 ≥need 自动转 done）
-        outcome = sheet_client.deliver_row(CONFIG, player_uuid, sheet_id, row_id, need)
+        need = int(row.get("need_qty", 0))
+        delivered = int(row.get("delivered_qty", 0))
+        mode = int(row.get("mode", 0))
+        if mode == 1:  # progress：补齐差额（增量上交）；已齐则无需操作
+            delta = max(need - delivered, 0)
+            if delta == 0:
+                server.tell(player_name, SHEET_OK_DELIVERED.format(
+                    item=row.get("item_name", ""), delivered=delivered, need=need))
+                return
+            outcome = sheet_client.contribute_row(CONFIG, player_uuid, sheet_id, row_id, delta)
+        else:  # lock：绝对值设 need
+            outcome = sheet_client.deliver_row(CONFIG, player_uuid, sheet_id, row_id, need)
 
         def _show(data):
             server.tell(player_name, SHEET_OK_DELIVERED.format(

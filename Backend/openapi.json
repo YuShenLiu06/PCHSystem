@@ -1386,6 +1386,226 @@
         }
       }
     },
+    "/sheets/{sheet_id}/rows/{row_id}/contribute": {
+      "post": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Contribute To Row",
+        "description": "progress 行增量上交（任意登录玩家）。lock 行 → 409（应用 claim）。\n\ndelivered_qty += qty（不封顶）；幂等加入贡献者；累计≥need 自动 done。",
+        "operationId": "contribute_to_row_sheets__sheet_id__rows__row_id__contribute_post",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RowContributeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sheets/{sheet_id}/rows/{row_id}/progress": {
+      "patch": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Set Row Progress",
+        "description": "progress 行 owner 直接修正进度（绝对值，可增可减）。仅表拥有者/admin。\n\n与 contribute（增量、任意玩家、加贡献者）互补：本端点供拥有者修正/回退进度，\n直接覆写 delivered_qty，按新值重算 status，**不动 contributors**（保留下交历史）。\nlock 行 → 409（请用 /delivery）。",
+        "operationId": "set_row_progress_sheets__sheet_id__rows__row_id__progress_patch",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RowProgressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/parsing/litematic": {
       "post": {
         "tags": [
@@ -2074,6 +2294,41 @@
         ],
         "title": "RefreshRequest"
       },
+      "RowContributeRequest": {
+        "properties": {
+          "qty": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "qty"
+        ],
+        "title": "RowContributeRequest",
+        "description": "progress 模式增量上交（任意登录玩家）。qty 为本次新增交付量。"
+      },
+      "RowContributor": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "player_name": {
+            "type": "string",
+            "title": "Player Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "player_name"
+        ],
+        "title": "RowContributor",
+        "description": "progress 行的贡献者（上交过材料的玩家）。"
+      },
       "RowDeliveryRequest": {
         "properties": {
           "delivered_qty": {
@@ -2137,6 +2392,14 @@
             "type": "integer",
             "title": "Delivered Qty"
           },
+          "contributors": {
+            "items": {
+              "$ref": "#/components/schemas/RowContributor"
+            },
+            "type": "array",
+            "title": "Contributors",
+            "default": []
+          },
           "sort_order": {
             "type": "integer",
             "title": "Sort Order"
@@ -2161,6 +2424,21 @@
           "updated_at"
         ],
         "title": "RowDetail"
+      },
+      "RowProgressRequest": {
+        "properties": {
+          "delivered_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Delivered Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "delivered_qty"
+        ],
+        "title": "RowProgressRequest",
+        "description": "progress 模式 owner 直接修正进度（绝对值，可增可减）。仅表拥有者/admin。"
       },
       "RowUpsertRequest": {
         "properties": {
