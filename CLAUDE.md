@@ -46,7 +46,7 @@
 | MC 层 | MCDReforged 插件（Fabric + Create + Carpet，**离线模式**） |
 | Wiki | wiki.js（后端经 GraphQL **单向同步**） |
 | 部署 | Docker Compose（postgres + backend；wiki.js 规划中，尚未纳入 compose） |
-| 关键库 | [`litemapy`](https://github.com/Spindust/litemapy)（投影解析）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，**不自研**） |
+| 关键库 | [`litemapy`](https://github.com/SmylerMC/litemapy)（`.litematic` 投影解析，自带 `nbtlib`，**不自研**）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，**不自研**） |
 
 ---
 
@@ -157,6 +157,7 @@ PCHSystem/
 - [x] 前端 F1–F4：`/auth` 兑换 · `/me` · 路由守卫 · axios 拦截器（含 sheets 列表/详情轮询）
 - [x] MCDR 插件：`!!PCH login/bind` + sheets 命令树 + 通知轮询（`@new_thread`）
 - [x] 子服务 CLAUDE.md：Frontend / McdrPlugin 已由 skill 生成；Backend 为导航待拆分
+- [x] 投影解析生成表格：`POST /parsing/litematic`（上传 `.litematic` → litemapy 解析 → 中文翻译 → 预览，不落库）+ `POST /sheets/from-items`（批量建表+行，`mode` 默认 lock）；仅 Web 端；解析/翻译为 ABC，见 [`api/parsing.md`](./Docs/architecture/api/parsing.md)
 
 **待处理**：
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
