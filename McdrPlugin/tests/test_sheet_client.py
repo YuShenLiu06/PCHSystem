@@ -161,6 +161,38 @@ class SheetClientTest(unittest.TestCase):
             sc.view_sheet(cfg, self.UUID, 1)
         self.assertEqual(captured["url"], "http://backend:8000/sheets/1")
 
+    def test_contribute_row_posts_qty(self):
+        captured = {}
+
+        def _capture(method, url, params=None, json=None, headers=None, timeout=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = json
+            return _resp(200, {"id": 2, "delivered_qty": 5})
+
+        with mock.patch.object(sc.requests, "request", side_effect=_capture):
+            out = sc.contribute_row(_cfg(), self.UUID, 1, 2, 5)
+        self.assertEqual(captured["method"], "POST")
+        self.assertIn("/sheets/1/rows/2/contribute", captured["url"])
+        self.assertEqual(captured["json"], {"qty": 5})
+        self.assertEqual(out["delivered_qty"], 5)
+
+    def test_set_row_progress_patches_delivered_qty(self):
+        captured = {}
+
+        def _capture(method, url, params=None, json=None, headers=None, timeout=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = json
+            return _resp(200, {"id": 2, "delivered_qty": 10})
+
+        with mock.patch.object(sc.requests, "request", side_effect=_capture):
+            out = sc.set_row_progress(_cfg(), self.UUID, 1, 2, 10)
+        self.assertEqual(captured["method"], "PATCH")
+        self.assertIn("/sheets/1/rows/2/progress", captured["url"])
+        self.assertEqual(captured["json"], {"delivered_qty": 10})
+        self.assertEqual(out["delivered_qty"], 10)
+
 
 if __name__ == "__main__":
     unittest.main()

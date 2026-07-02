@@ -99,11 +99,26 @@ class FormatRowLineTest(unittest.TestCase):
         self.assertEqual(_status_color("open"), "§7")
 
     def test_claimed_row_yellow(self):
-        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 64, "delivered_qty": 32, "claimant_name": "B"}
+        # progress 行：认领者列显示贡献者名单（非 claimant_name）
+        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 64, "delivered_qty": 32, "claimant_name": None, "contributors": [{"player_uuid": "x", "player_name": "B"}]}
         s = format_row_line(row)
         self.assertIn("progress", s)
-        self.assertIn("B", s)
+        self.assertIn("B", s)  # 贡献者 B 渲染
         self.assertEqual(_status_color("claimed"), "§e")
+
+    def test_progress_row_shows_top_two_contributors_with_ellipsis(self):
+        # 3 位贡献者（后端已按 contributed_qty desc 排序）：至多显 2 位 + 省略号
+        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 100, "delivered_qty": 90, "claimant_name": None, "contributors": [{"player_uuid": "a", "player_name": "甲"}, {"player_uuid": "b", "player_name": "乙"}, {"player_uuid": "c", "player_name": "丙"}]}
+        s = format_row_line(row)
+        self.assertIn("甲", s)
+        self.assertIn("乙", s)
+        self.assertNotIn("丙", s)  # 第三位被省略
+        self.assertIn("…", s)
+
+    def test_progress_row_no_contributors_shows_unclaimed(self):
+        row = {"id": 3, "item_name": "i", "mode": 1, "status": "open", "need_qty": 10, "delivered_qty": 0, "claimant_name": None, "contributors": []}
+        s = format_row_line(row)
+        self.assertIn("未认领", s)
 
     def test_done_row_green(self):
         row = {"id": 3, "item_name": "i", "mode": 0, "status": "done", "need_qty": 64, "delivered_qty": 64, "claimant_name": "B"}
@@ -175,6 +190,24 @@ class FormatRowClickableTest(unittest.TestCase):
         self.assertNotIn("[认领]", s)
         self.assertNotIn("[标备齐]", s)
         self.assertNotIn("[交付]", s)
+
+    def test_open_progress_has_deliver_no_claim(self):
+        # progress·open：任意玩家直接上交，不显示认领（progress 无认领概念）
+        row = self._row(status="open", mode=1, delivered_qty=0)
+        rtl = format_row_clickable(row, 3, is_owner=False)
+        s = str(rtl)
+        self.assertIn("[交付]", s)
+        self.assertNotIn("[认领]", s)
+        self.assertIn("!!PCH sheet deliver 3 5 ", _click_values(rtl))
+
+    def test_done_progress_release_no_reject(self):
+        # progress·done：无打回（reject 对 progress 返 409），显 [解除] 供 owner 重置
+        row = self._row(status="done", mode=1, delivered_qty=64)
+        rtl = format_row_clickable(row, 3, is_owner=False)
+        s = str(rtl)
+        self.assertIn("[解除]", s)
+        self.assertNotIn("[打回]", s)
+        self.assertIn("!!PCH sheet release 3 5", _click_values(rtl))
 
 
 class OwnerFooterTest(unittest.TestCase):
