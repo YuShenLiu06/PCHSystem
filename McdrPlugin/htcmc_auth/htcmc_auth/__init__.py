@@ -190,11 +190,6 @@ def _register_commands(server: PluginServerInterface):
         )
     )
     server.register_command(root)
-    server.register_help_message(
-        "!!PCH",
-        "黄皮子积分系统（login/bind/submit/project/score/rank/title/info）",
-    )
-    server.register_help_message(
-        "!!PCH sheet",
-        "在线表格：list/view/create/add/set/delrow/claim/deliver/done/release/reject/notify ...",
-    )
+    # sheet 是 !!PCH 的子命令（命令树内 Literal("sheet")），不在 !!help 单列；
+    # 其子命令清单由 `!!PCH sheet` 根回调 _sheet_root 展示。文案只留系统名（issue 1/2）。
+    server.register_help_message("!!PCH", "黄皮子积分系统")

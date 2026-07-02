@@ -2,7 +2,7 @@
 import uuid_api_remake  # 红线 S-1 / RS-8：get_uuid(name)->str
 
 from mcdreforged.api.decorator import new_thread
-from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle
+from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
 from .client import request_login_url, LoginResult
 from .config import HtcmcAuthConfig
@@ -29,18 +29,31 @@ def _pch_root(src, ctx):
     if not src.is_player:
         src.reply(PLAYER_ONLY.format(cmd="!!PCH"))
         return
+    # 命令名列宽：ASCII 命令名按列宽补空格 → 描述起列对齐（MC 字体下 ASCII 等宽）。
+    # 色板见 McdrPlugin/CLAUDE.md §6：标题 gold+bold、分组/命令名 aqua、描述 gray。
+    name_w = len("!!PCH login")  # 11，!!PCH login / !!PCH sheet 等长
+
+    def _line(name, desc, suggest, hover):
+        return RTextList(
+            RText("  " + name.ljust(name_w), color=RColor.aqua)
+            .c(RAction.suggest_command, suggest)
+            .h(RText(hover, color=RColor.yellow)),
+            RText("- " + desc + "\n", color=RColor.gray),
+        )
+
     src.reply(RTextList(
-        RText("黄皮子积分系统（PCH）可用命令：\n", color=RColor.gold).set_styles(RStyle.bold),
-        RText("  !!PCH login      - 申请 Web 登录链接\n", color=RColor.green),
-        RText("  !!PCH sheet      - 在线表格协作（list/view/create/add/claim/deliver/done/release/reject ...）\n", color=RColor.green),
-        RText("  !!PCH bind       - 申请 Web 绑定短码（开发中）\n", color=RColor.yellow),
-        RText("  !!PCH submit      - 物品提交（开发中）\n", color=RColor.yellow),
-        RText("  !!PCH project    - 项目查询（开发中）\n", color=RColor.yellow),
-        RText("  !!PCH score      - 个人积分（开发中）\n", color=RColor.yellow),
-        RText("  !!PCH rank       - 排行榜（开发中）\n", color=RColor.yellow),
-        RText("  !!PCH title      - 称号管理（开发中）\n", color=RColor.yellow),
-        RText("  !!PCH info       - 个人信息（开发中）\n", color=RColor.yellow),
-        RText("\n输入 !!help 查看所有命令", color=RColor.gray),
+        RText("黄皮子积分系统（PCH）\n", color=RColor.gold).set_styles(RStyle.bold),
+        RText("已上线：\n", color=RColor.aqua),
+        _line(
+            "!!PCH login", "申请 Web 登录链接", "!!PCH login ",
+            "申请一次性 Web 登录链接（约 10 分钟内有效）",
+        ),
+        _line(
+            "!!PCH sheet", "在线表格协作", "!!PCH sheet ",
+            "查看 list / view / create / claim / deliver 等子命令",
+        ),
+        RText("开发中：bind / submit / project / score / rank / title / info\n", color=RColor.gray),
+        RText("输入 !!help 查看所有命令；sheet 子命令详见 !!PCH sheet", color=RColor.gray),
     ))
 
 

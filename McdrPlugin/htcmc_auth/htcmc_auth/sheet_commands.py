@@ -16,7 +16,7 @@
 import uuid_api_remake  # RS-8：get_uuid(name)->str
 
 from mcdreforged.api.decorator import new_thread
-from mcdreforged.api.rtext import RText, RTextList, RColor
+from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
 from . import sheet_client
 from .config import HtcmcAuthConfig
@@ -34,7 +34,9 @@ from .messages import (
     SHEET_LIST_MINE,
     SHEET_DETAIL_TITLE,
     SHEET_DETAIL_EMPTY,
-    format_row_line,
+    rtext_button,
+    format_row_clickable,
+    format_owner_footer,
     SHEET_OK_CREATED,
     SHEET_OK_RENAMED,
     SHEET_OK_DELETED,
@@ -109,20 +111,54 @@ def _sheet_root(src, ctx):
     if not src.is_player:
         src.reply("§c!!PCH sheet 只能玩家在游戏内执行")
         return
+    # 命令名列宽：ASCII 命令名按列宽补空格 → 描述起列跨分组对齐（MC 字体下 ASCII 等宽；
+    # CJK 参数不进左列，避免破坏对齐）。色板见 McdrPlugin/CLAUDE.md §6。
+    name_w = len("release")  # 7，本菜单最长命令名（release / deliver / add/set）
+
+    def _line(name, desc, suggest, hover):
+        if isinstance(desc, str):
+            desc = RText(desc, color=RColor.gray)
+        return RTextList(
+            RText("  " + name.ljust(name_w), color=RColor.aqua)
+            .c(RAction.suggest_command, suggest)
+            .h(RText(hover, color=RColor.yellow)),
+            RText("- ", color=RColor.gray),
+            desc,
+            RText("\n", color=RColor.gray),
+        )
+
     src.reply(RTextList(
         RText(SHEET_HEAD),
-        RText("子命令（输入 !!PCH sheet <子命令>）：\n", color=RColor.gold),
-        RText("  list [--mine]                列表（--mine 仅自己拥有）\n"),
-        RText("  view <表id>                  查看表详情\n"),
-        RText("  create <标题>                建表\n"),
-        RText("  add/set <表id> <物品> <数量> [lock|progress] [排序]  增改行（拥有者）\n"),
-        RText("  delrow <表id> <行号>         删行（拥有者）\n"),
-        RText("  claim <表id> <行号>          认领\n"),
-        RText("  deliver <表id> <行号> <数量> 上报交付（绝对值）\n"),
-        RText("  done <表id> <行号>           标备齐（lock 模式快捷）\n"),
-        RText("  release <表id> <行号>        解除锁定（认领人/拥有者）\n"),
-        RText("  reject <表id> <行号>         打回（认领人/拥有者）\n"),
-        RText("  notify list                  查看自己的通知\n", color=RColor.gray),
+        RText(" 子命令（!!PCH sheet <子命令>）：\n", color=RColor.gold),
+        RText("查看：\n", color=RColor.aqua),
+        _line("list", "表格列表（--mine 仅自己拥有）", "!!PCH sheet list ", "list [--mine]  列出表格"),
+        _line("view", "查看表详情与行", "!!PCH sheet view ", "view <表id>  查看指定表"),
+        RText("建表 / 改表（拥有者）：\n", color=RColor.aqua),
+        _line("create", "新建表", "!!PCH sheet create ", "create <标题>  新建一张表"),
+        _line(
+            "add/set", "增改行（拥有者）", "!!PCH sheet add ",
+            "add/set <表id> <物品> <数量> [lock|progress] [排序]",
+        ),
+        _line("rename", "改表标题", "!!PCH sheet rename ", "rename <表id> <新标题>"),
+        _line("delete", "删表", "!!PCH sheet delete ", "delete <表id>"),
+        _line("delrow", "删行", "!!PCH sheet delrow ", "delrow <表id> <行号>"),
+        RText("认领 / 交付：\n", color=RColor.aqua),
+        _line("claim", "认领", "!!PCH sheet claim ", "claim <表id> <行号>"),
+        _line(
+            "deliver",
+            RTextList(
+                RText("上报交付（", color=RColor.gray),
+                RText("绝对值", color=RColor.yellow),
+                RText("）", color=RColor.gray),
+            ),
+            "!!PCH sheet deliver ",
+            "deliver <表id> <行号> <数量>  数量为绝对值，先 view 看当前",
+        ),
+        _line("done", "标备齐（lock 模式快捷）", "!!PCH sheet done ", "done <表id> <行号>"),
+        _line("release", "解除锁定", "!!PCH sheet release ", "release <表id> <行号>  认领人/拥有者"),
+        _line("reject", "打回", "!!PCH sheet reject ", "reject <表id> <行号>  认领人/拥有者"),
+        RText("通知：\n", color=RColor.aqua),
+        _line("notify", "查看自己的通知", "!!PCH sheet notify list ", "notify list  查看未读通知"),
     ))
 
 
@@ -163,11 +199,20 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
                 parts.append(RText(SHEET_LIST_MINE))
             parts.append(RText("\n"))
             for s in data:
-                parts.append(RText(SHEET_LIST_ITEM.format(
-                    id=s.get("id"),
-                    owner=s.get("owner_name") or "?",
-                    title=s.get("title") or "",
-                ) + "\n"))
+                sid = s.get("id")
+                parts.append(RTextList(
+                    RText(SHEET_LIST_ITEM.format(
+                        id=sid,
+                        owner=s.get("owner_name") or "?",
+                        title=s.get("title") or "",
+                    )),
+                    RText("  "),
+                    rtext_button(
+                        "[查看表格]", f"!!PCH sheet view {sid}",
+                        color=RColor.aqua, hover=f"查看 #{sid} 详情",
+                    ),
+                    RText("\n"),
+                ))
             server.tell(player_name, RTextList(*parts))
 
         _resolve(server, player_name, outcome, on_success=_show)
@@ -193,6 +238,8 @@ def _sheet_view(src, ctx):
 
         def _show(data):
             rows = data.get("rows") or []
+            # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）
+            is_owner = (data.get("owner_name") == player_name)
             parts = [RText(SHEET_DETAIL_TITLE.format(
                 id=data.get("id"),
                 title=data.get("title") or "",
@@ -202,7 +249,9 @@ def _sheet_view(src, ctx):
                 parts.append(RText(SHEET_DETAIL_EMPTY))
             else:
                 for r in rows:
-                    parts.append(RText(format_row_line(r) + "\n"))
+                    parts.append(format_row_clickable(r, sheet_id, is_owner=is_owner))
+                if is_owner:
+                    parts.append(format_owner_footer(sheet_id))
             server.tell(player_name, RTextList(*parts))
 
         _resolve(server, player_name, outcome, on_success=_show)
