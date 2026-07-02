@@ -64,6 +64,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | `POST /notifications/{id}/read` | 标已读（service-token，query `player_uuid` 归属校验，跨玩家 404；L-2 同步幂等置 delivered_at） |
 | `POST /parsing/litematic` | Web 上传 `.litematic` → litemapy 解析 + 中文翻译 → 分组预览（不落库）。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
 | `POST /sheets/from-items` | 一次性建表 + 批量行（`mode` 默认 lock），用于「投影解析→生成表格」 |
+| sheets CRUD + 协作 | `GET/POST/PATCH/DELETE /sheets*` + 行级 `claim`/`delivery`/`contribute`/`release`/`reject`/`progress`（JWT 或 service-token+UUID 代玩家写）—— 全套端点见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) |
 
 ### 数据表（users schema）
 - `players`：玩家主身（UUID + current_name + role + whitelist_state）
@@ -73,7 +74,12 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 ### 数据表（notifications schema）
 - `notifications`：统一通知记录（recipient_uuid FK→users.players.uuid ON DELETE CASCADE / category / title / body / payload jsonb / created_at / delivered_at / read_at；索引 `(recipient_uuid, delivered_at)`）
 
-> 完整 DDL 见 [`Docs/architecture/data-model.md`](../Docs/architecture/data-model.md)。
+### 数据表（sheets schema）
+- `sheets`：表格主表（owner_uuid FK / title / created_at / updated_at）
+- `sheet_rows`：行（sheet_id FK CASCADE / item_name / need_qty / `mode` 0=lock|1=progress / `status` open|claimed|done / claimant_uuid / delivered_qty / sort_order；`UNIQUE(sheet_id, item_name)`）
+- `sheet_row_contributors`：progress 行贡献者聚合（row_id FK CASCADE / player_uuid FK / joined_at / contributed_qty；`UNIQUE(row_id, player_uuid)`；迁移 0007/0008）
+
+> 完整 DDL 见 [`Docs/architecture/data-model.md`](../Docs/architecture/data-model.md) §2（users）/ §10（sheets）/ §11（notifications）。
 
 ---
 
@@ -126,4 +132,4 @@ curl -sS http://localhost:8000/me                   # 应返回 401（未带 JWT
 
 ---
 
-*最后更新：2026-07-02（加双通道 get_current_player deps + notifications 模块：迁移 0006 / model / repo / service.notify 契约 / API pending·ack·read）*
+*最后更新：2026-07-03（v0.3.0：parsing 模块 + sheets progress 多人贡献者——迁移 0007/0008 + contribute/progress 端点 + RowDetail.contributors）*

@@ -122,13 +122,15 @@ PCHSystem/
 | title-service | [`Docs/architecture/services/title-service.md`](./Docs/architecture/services/title-service.md) |
 | wiki-service | [`Docs/architecture/services/wiki-service.md`](./Docs/architecture/services/wiki-service.md) |
 | alert-service | [`Docs/architecture/services/alert-service.md`](./Docs/architecture/services/alert-service.md) |
+| notification-service | [`Docs/architecture/services/notification-service.md`](./Docs/architecture/services/notification-service.md) |
 
 > 各服务文档权威、完整；子服务目录下的 `CLAUDE.md` 只是其**雷点摘要 + 局部导航**，详情永远以上表文档为准。
 
 ### API 参考
 | 文档 | 路径 | 说明 |
 |---|---|---|
-| sheets API | [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) | sheets HTTP 端点 / 鉴权 / 行状态机（认领·交付·解除·打回）/ 权限矩阵 / 错误码 / CSV 列 |
+| sheets API | [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) | sheets HTTP 端点 / 鉴权 / 行状态机（认领·交付·解除·打回·贡献·进度）/ 权限矩阵 / 错误码 / CSV 列 |
+| parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
 
 ---
 
@@ -159,6 +161,14 @@ PCHSystem/
 - [x] 子服务 CLAUDE.md：Frontend / McdrPlugin 已由 skill 生成；Backend 为导航待拆分
 - [x] 投影解析生成表格：`POST /parsing/litematic`（上传 `.litematic` → litemapy 解析 → 中文翻译 → 预览，不落库）+ `POST /sheets/from-items`（批量建表+行，`mode` 默认 lock）；仅 Web 端；解析/翻译为 ABC，见 [`api/parsing.md`](./Docs/architecture/api/parsing.md)
 
+**已完成（2026-07-03，v0.3.0 首次正式打 tag）**：
+- [x] sheets progress 多人贡献者：迁移 `0007`（`sheet_row_contributors` 表）+ `0008`（`contributed_qty`）；progress 行不再单人锁定，任意玩家 `POST /contribute` 增量上交；owner `PATCH /progress` 覆写绝对值
+- [x] MCDR deliver 按 mode 分流（progress→`contribute` 增量 / lock→`delivery` 绝对值）+ 贡献者显示
+- [x] MCDR sheet view 特权按钮按查看者身份显隐（对齐后端 RBAC）
+- [x] 前端 sheets 列表/详情轮询自动刷新（`usePolling` composable，后台暂停/退避/草稿保护）+ progress 上交/调整 UI
+- [x] 通知体验修复（文案补清单名 / ack 防越权 body 加 `player_uuid` / 空列表按钮 / 默认轮询 2s 对齐）
+- [x] 三组件分别打 tag `backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`（首个真正打 git tag 的版本）
+
 **待处理**：
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
 - [ ] wiki.js 纳入 compose + GraphQL 单向同步（当前 compose 仅 postgres + backend）
@@ -166,4 +176,4 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-07-02*
+*最后更新：2026-07-03（v0.3.0 发布：progress 多人贡献者 + deliver mode 分流 + 轮询；文档对齐修复——data-model 补 auth_tokens/jwt_revocations/notifications 三表 + sheets.md 补 PATCH /progress）*

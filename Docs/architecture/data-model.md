@@ -7,11 +7,13 @@
 ## 0. 设计约定
 
 - **玩家主键 = MC UUID**（离线模式 OfflinePlayer 确定性推导，见 [`services/user-service.md`](./services/user-service.md)）。`UUID` 类型为 PostgreSQL 原生 `uuid`。
-- **身份主锚 = Web 账号**：`players.web_account_id` 可空（未绑定时），绑定后指向 `web_accounts.id`。离线改名通过更新映射做过户，不丢积分。
+- **身份主锚 = MC UUID**（R-5）：当前实现以 `players.uuid` 为身份锚；Web 账号绑定（`web_accounts` / `players.web_account_id`）为**规划中**（见 §2.4，未落地），落地后离线改名通过更新映射做过户，不丢积分。
 - **物品 id = registry id**：统一 `namespace:path`（如 `create:warehouse`、`minecraft:chest`），存储前剥离 BlockState properties。
 - **时间戳**：`TIMESTAMPTZ`，统一存 UTC。
-- **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单。
-- **schema 划分**：`users` / `projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 个）+ `sheets`（MVP 第一阶段新增，见 §10 附录）。
+- **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单（**规划中**，未落地）。
+- **schema 划分与实现状态**：
+  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations`，迁移 0001-0003，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors`，迁移 0004/0005/0007/0008，§10）、`notifications`（`notifications`，迁移 0006，§11）
+  - 🚧 **规划中（未落地）**：`projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 schema 中的 5 个，§3-§7 为设计预案）；`web_accounts` / `bind_tokens`（§2.4/§2.5，`!!bind` 流程）
 
 ## 1. 全局 ER 图
 
@@ -36,22 +38,52 @@ erDiagram
 
 ## 2. `users` schema —— 身份核心
 
-### 2.1 `players`（玩家）
+### 2.1 `players`（玩家）✅ 已实现（迁移 `0001_users_players`）
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| `uuid` | uuid | PK | MC OfflinePlayer UUID |
-| `current_name` | text | not null | 当前游戏名（离线改名会变） |
-| `web_account_id` | bigint | FK→web_accounts.id, null | 绑定的 Web 账号（身份主锚） |
-| `total_score` | numeric(18,2) | not null default 0 | 历史累计积分（冗余，由 ledger 重建） |
-| `current_title_id` | bigint | FK→titles.id, null | 当前展示称号 |
-| `whitelist_state` | text | not null default 'active' | active/under_review/removed |
-| `credit_score` | int | not null default 100 | 负责人信用分（项目互评） |
-| `first_seen_at` | timestamptz | not null | 首次入服 |
-| `last_seen_at` | timestamptz | null | 最近在线 |
+| `uuid` | uuid | PK | MC OfflinePlayer UUID（身份锚 R-5） |
+| `current_name` | varchar(64) | not null | 当前游戏名（离线改名会变） |
+| `role` | varchar(16) | not null default 'user' | user / admin / owner（RBAC） |
+| `whitelist_state` | varchar(16) | not null default 'active' | active / under_review / removed |
+| `first_seen_at` | timestamptz | not null default now() | 首次入服 |
+| `last_seen_at` | timestamptz | not null default now() | 最近在线 |
 
-索引：`uniq(current_name)` 部分索引（仅 active）；`idx(web_account_id)`。
+> 规划列（**未实现**，依赖对应 schema 落地后补）：`web_account_id`（FK→web_accounts.id，§2.4）、`total_score`（冗余累计积分，由 score_ledger 重建，§4）、`current_title_id`（FK→titles.id，§5）、`credit_score`（负责人信用分）。
 
-### 2.2 `web_accounts`（Web 账号 —— 身份主锚）
+### 2.2 `auth_tokens`（一次性登录令牌）✅ 已实现（迁移 `0002_auth_jwt` + `0003_auth_tokens_revoked_at`）
+
+`!!PCH login` 链路：MCDR 调 `POST /auth/token` 签发 → 玩家 Web 端 `POST /auth/exchange` 兑换 JWT 后置 `used_at`。
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `token` | uuid | PK | 一次性随机 token（URL 携带） |
+| `player_uuid` | uuid | FK→players.uuid, not null | 申请登录的玩家 |
+| `expires_at` | timestamptz | not null | 短有效期（默认 10 分钟） |
+| `used_at` | timestamptz | null | 已兑换时间（一次性语义，兑换后置位） |
+| `revoked_at` | timestamptz | null | 软吊销时间（同 UUID 签发新 token 时旧 token 置位，RS-5） |
+| `issued_ip` | varchar(64) | null | MCDR 端签发时记录的客户端 IP |
+| `exchanged_ip` | varchar(64) | null | 前端兑换时记录的客户端 IP |
+| `created_at` | timestamptz | not null default now() | |
+
+索引：`ix_auth_tokens_player_expires (player_uuid, expires_at)`；`ix_auth_tokens_player_active ON (player_uuid) WHERE used_at IS NULL AND revoked_at IS NULL`（部分索引，"活跃 token"快速查找，迁移 0003）。
+
+### 2.3 `jwt_revocations`（JWT 吊销表）✅ 已实现（迁移 `0002_auth_jwt`）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `jti` | uuid | PK | JWT ID（签发时生成） |
+| `player_uuid` | uuid | FK→players.uuid, not null | 所属玩家 |
+| `expires_at` | timestamptz | not null | JWT 自然过期时间（过期后可清理） |
+| `revoked_at` | timestamptz | not null default now() | 主动吊销时间 |
+
+索引：`ix_jwt_revocations_player_expires (player_uuid, expires_at)`。
+
+> refresh token 吊销接入待办（当前 `POST /auth/refresh` 未查本表，源码注释标注扩展点）。
+
+### 2.4 `web_accounts`（Web 账号）🚧 规划中（未实现）
+
+> 计划用于 `!!bind` Web 账号绑定后的身份主锚迁移（R-5 终态）。当前身份锚是 MC UUID（§0）。表结构预案：
+
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | bigserial | PK | |
@@ -60,7 +92,10 @@ erDiagram
 | `role` | text | not null default 'user' | user/admin/owner |
 | `created_at` | timestamptz | not null | |
 
-### 2.3 `bind_tokens`（游戏内绑定令牌）
+### 2.5 `bind_tokens`（游戏内绑定令牌）🚧 规划中（未实现）
+
+> 计划用于 `!!bind` 流程。当前已实现的登录令牌是 `auth_tokens`（§2.2，用于 `!!PCH login`），与本表**不是同一张表**。表结构预案：
+
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `token` | uuid | PK | 一次性随机 token |
@@ -71,7 +106,7 @@ erDiagram
 
 索引：`idx(player_uuid)`；定期清理过期 token。
 
-> 流程：玩家游戏内 `!!bind` → 生成 `bind_tokens` → 后端返回短码 → 玩家 Web 端输入 → 写 `players.web_account_id` + `used_at`。
+> 规划流程：玩家游戏内 `!!bind` → 生成 `bind_tokens` → 后端返回短码 → 玩家 Web 端输入 → 写 `players.web_account_id` + `used_at`。
 
 ---
 
@@ -233,7 +268,7 @@ erDiagram
 
 ---
 
-## 10. 附录：`sheets` schema —— MVP 第一阶段在线表格
+## 10. ✅ 已实现 schema 附录：`sheets` —— 在线协作表格
 
 > MVP 第一阶段新增（不在原架构 6 schema 内），权威定义见 [`../../Plans/MVP-第一阶段计划.md`](../../Plans/MVP-第一阶段计划.md) §3.2，落地迁移 `0004_sheets`。与 `projects.material_lists`（投影解析、强制 registry id）是**两套体系**：sheets 是玩家自建、自由文本、Web + 游戏内双向可编辑的轻量协作表。
 
@@ -277,3 +312,26 @@ erDiagram
 
 > **权限（RBAC，后端为准）**：JWT 已登录可读所有表；表的 `owner_uuid` 或 admin/owner 角色可写；CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。
+
+---
+
+## 11. ✅ 已实现 schema 附录：`notifications`（迁移 `0006_notifications`）
+
+> 统一通知抽象层：业务事件同事务写入 → MCDR 轮询投递。调用契约与 category 枚举见 [`services/notification-service.md`](./services/notification-service.md)；端点见 [`api/sheets.md`](./api/sheets.md) §12。
+
+### 11.1 `notifications`（通知记录）
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | bigserial | PK | |
+| `recipient_uuid` | uuid | FK→players.uuid `ON DELETE CASCADE`, not null | 收件人（玩家身份锚 R-5）；删玩家级联清通知 |
+| `category` | text | not null | `<domain>_<event>`（首期 7 类 sheets 专用，见 notification-service.md §3） |
+| `title` | text | not null | 标题（≤200，入库前限长清洗） |
+| `body` | text | not null | 正文（≤500，入库前限长清洗） |
+| `payload` | jsonb | not null default '{}'::jsonb | 结构化载荷（≤8KB），如 `{sheet_id, sheet_title, row_id, item_name, actor_uuid, actor_name, old, new}` |
+| `created_at` | timestamptz | not null default now() | 写入时间（投递排序依据） |
+| `delivered_at` | timestamptz | null | MCDR `POST /ack` 后置位（null = 未投递） |
+| `read_at` | timestamptz | null | 玩家标已读后置位 |
+
+索引：`ix_notifications_recipient_delivered (recipient_uuid, delivered_at)`（服务 MCDR `GET /pending` 轮询拉取 `delivered_at IS NULL`）。
+
+> 投递/已读端点（`GET /pending` / `POST /ack` / `POST /{id}/read`）均带 `player_uuid` 归属校验防越权（C-1，见 [`api/sheets.md`](./api/sheets.md) §12）。
