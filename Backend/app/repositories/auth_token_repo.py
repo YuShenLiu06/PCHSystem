@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -10,9 +10,24 @@ from app.models.user import AuthToken, Player
 _settings = get_settings()
 
 
+async def revoke_active_tokens(session: AsyncSession, player_uuid: uuid.UUID) -> int:
+    stmt = (
+        update(AuthToken)
+        .where(
+            AuthToken.player_uuid == player_uuid,
+            AuthToken.used_at.is_(None),
+            AuthToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+    result = await session.execute(stmt)
+    return result.rowcount
+
+
 async def issue(
     session: AsyncSession, player_uuid: uuid.UUID, issued_ip: str | None = None
-) -> AuthToken:
+) -> tuple[AuthToken, int]:
+    revoked_count = await revoke_active_tokens(session, player_uuid)
     token = AuthToken(
         token=uuid.uuid4(),
         player_uuid=player_uuid,
@@ -22,7 +37,7 @@ async def issue(
     )
     session.add(token)
     await session.flush()
-    return token
+    return token, revoked_count
 
 
 async def exchange(
@@ -34,6 +49,7 @@ async def exchange(
     if (
         auth_token is None
         or auth_token.used_at is not None
+        or auth_token.revoked_at is not None
         or auth_token.expires_at < now
     ):
         return None

@@ -9,6 +9,8 @@ class TokenIssueRequest(BaseModel):
 
 class TokenIssueResponse(BaseModel):
     login_url: str
+    expires_in: int
+    previous_tokens_revoked: int
 
 
 class TokenExchangeRequest(BaseModel):

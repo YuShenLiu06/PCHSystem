@@ -40,12 +40,16 @@ async def post_token(
     player = await get_or_create(session, body.uuid, body.name)
     if not await check_whitelist(session, body.uuid):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "player removed")
-    token = await issue(
+    token, revoked_count = await issue(
         session, body.uuid, issued_ip=request.client.host if request.client else None
     )
     await session.commit()
     url = f"{_settings.web_base_url.rstrip('/')}/auth?token={token.token}"
-    return TokenIssueResponse(login_url=url)
+    return TokenIssueResponse(
+        login_url=url,
+        expires_in=_settings.auth_token_ttl_seconds,
+        previous_tokens_revoked=revoked_count,
+    )
 
 
 @router.post("/exchange", response_model=TokenExchangeResponse)
