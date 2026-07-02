@@ -45,7 +45,7 @@
 | 数据库 | PostgreSQL（Alembic 迁移，唯一业务库） |
 | MC 层 | MCDReforged 插件（Fabric + Create + Carpet，**离线模式**） |
 | Wiki | wiki.js（后端经 GraphQL **单向同步**） |
-| 部署 | Docker Compose（backend + postgres + wiki.js） |
+| 部署 | Docker Compose（postgres + backend；wiki.js 规划中，尚未纳入 compose） |
 | 关键库 | [`litemapy`](https://github.com/Spindust/litemapy)（投影解析）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，**不自研**） |
 
 ---
@@ -76,16 +76,20 @@
 ```
 PCHSystem/
 ├── CLAUDE.md                          # 根规范（本文件）
-├── Docs/                              # 架构与设计文档（已建）
+├── README.md                          # 项目说明 / 快速开始 / 文档导航
+├── CONTRIBUTING.md                    # 分支 / Commit / SemVer / MCDR 发布
+├── CHANGELOG.md                       # 三端变更日志（Keep a Changelog）
+├── docker-compose.yml                 # postgres + backend（dev，源码挂载热重载）
+├── .env.example                       # compose 环境变量模板
+├── Docs/                              # 架构与设计文档（权威）
 │   ├── architecture.md                #   工程架构统一总览
 │   ├── guied.md                       #   玩法设计
-│   └── architecture/
-│       ├── data-model.md              #   全局数据模型 / DDL
-│       ├── frontend.md                #   前端文档
-│       └── services/*.md              #   各服务文档
-├── Backend/        (规划中)           # FastAPI 模块化单体   → 内含 CLAUDE.md
-├── Frontend/       (规划中)           # Vue3 后台            → 内含 CLAUDE.md
-├── McdrPlugin/     (规划中)           # MCDR 插件            → 内含 CLAUDE.md
+│   ├── Cheatsheets/dev-cheatsheet.md  #   开发指令速查
+│   └── architecture/                  #   data-model / frontend / services/* / api/*
+├── Backend/        (M1+M2 已实现)     # FastAPI 模块化单体   → 内含 CLAUDE.md
+├── Frontend/       (F1–F4 已实现)     # Vue3 后台            → 内含 CLAUDE.md
+├── McdrPlugin/     (已实现)           # MCDReforged 插件     → 内含 CLAUDE.md
+├── TestServer/                        # 集成测试用 Docker 测试服（mc-test）
 └── .claude/skills/service-claude-md/  # 子服务 CLAUDE.md 生成/维护 skill
 ```
 
@@ -106,6 +110,7 @@ PCHSystem/
 |---|---|---|
 | 贡献与发布规范 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 分支模型 / Conventional Commits / 各组件独立 SemVer / MCDR 插件发布（参考 MCDR 标准） |
 | 开发指令速查表 | [`Docs/Cheatsheets/dev-cheatsheet.md`](./Docs/Cheatsheets/dev-cheatsheet.md) | 日常开发高频运维 / 调试指令（Docker / MCDR / 后端 / 前端）速查 |
+| 运维手册 | [`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md) | dev/staging 部署 / 健康检查 / 排错 / 回滚流程 |
 
 ### 各服务文档
 | 服务 | 路径 |
@@ -145,10 +150,19 @@ PCHSystem/
 - [x] 禁用与本项目冲突的全局 skill（`naming-conventions`、`persistent-context`，备份于 `~/.claude/.skill-backups/20260701/`）
 - [x] 建立 `service-claude-md` skill（子服务 CLAUDE.md 唯一维护入口）
 
+**已完成（2026-07-02）**：
+- [x] 后端 M1+M2：`users` schema（players / auth_tokens / jwt_revocations）+ auth 链路（`/auth/token`·`/auth/exchange`·`/auth/refresh`·`/me`）
+- [x] 后端双通道鉴权 `get_current_player`（Bearer JWT 优先，否则 service-token + `X-Player-UUID` 代玩家）
+- [x] 后端 sheets 协作（迁移 `0004`/`0005`）+ notifications（迁移 `0006`）
+- [x] 前端 F1–F4：`/auth` 兑换 · `/me` · 路由守卫 · axios 拦截器（含 sheets 列表/详情轮询）
+- [x] MCDR 插件：`!!PCH login/bind` + sheets 命令树 + 通知轮询（`@new_thread`）
+- [x] 子服务 CLAUDE.md：Frontend / McdrPlugin 已由 skill 生成；Backend 为导航待拆分
+
 **待处理**：
-- [ ] 各服务进入实现阶段前，用 `service-claude-md` 补齐子服务 `CLAUDE.md`
+- [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
+- [ ] wiki.js 纳入 compose + GraphQL 单向同步（当前 compose 仅 postgres + backend）
 - [ ] 拍板待确认参数（积分 `k / α / β / r`、赛季周期等，见 arch §9）
 
 ---
 
-*最后更新：2026-07-01*
+*最后更新：2026-07-02*

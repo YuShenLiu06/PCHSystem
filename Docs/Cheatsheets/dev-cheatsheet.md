@@ -25,6 +25,32 @@ docker attach pchsystem-mc-test-1
 
 ---
 
+## 环境变量（根 `.env`，compose 插值读取）
+
+> compose 用 `${VAR}` 插值读**根 `.env`**（compose 文件同目录），**不是** `Backend/.env`。
+> 变量定义见 [`../../Backend/app/core/config.py`](../../Backend/app/core/config.py)（`Settings`，pydantic-settings）。
+
+<!-- AUTO-GENERATED from .env.example + Backend/app/core/config.py；drift 时同步 -->
+| 变量 | 必需 | 默认（config.py） | 说明 |
+|---|---|---|---|
+| `POSTGRES_USER` | 是（compose） | `pch` | DB 用户 |
+| `POSTGRES_PASSWORD` | **是** | `""`（空） | DB 密码，须设强随机值 |
+| `POSTGRES_DB` | 是（compose） | `pchsystem` | DB 名 |
+| `POSTGRES_HOST` | 是（compose） | `localhost`（compose 注入 `postgres`） | DB 主机 |
+| `POSTGRES_PORT` | 否 | `5432` | DB 端口 |
+| `JWT_SECRET` | **是** | `""`（空） | JWT 签名密钥，须设长随机串 |
+| `JWT_ACCESS_TTL_SECONDS` | 否 | `3600` | access token 有效期（秒） |
+| `JWT_REFRESH_TTL_SECONDS` | 否 | `604800`（7 天） | refresh token 有效期（秒） |
+| `AUTH_TOKEN_TTL_SECONDS` | 否 | `600`（10 分钟） | 一次性登录 token 有效期（秒） |
+| `AUTH_TOKEN_RATE_LIMIT_SECONDS` | 否 | `30` | 同 UUID 登录 token 限频窗口（秒） |
+| `MCDR_SERVICE_TOKEN` | **是** | `""`（**fail-fast**） | MCDR 代玩家写通道共享密钥；空则后端启动报错（`config.py` 校验，R-11） |
+| `WEB_BASE_URL` | 是（联调） | `http://localhost:5173` | 前端 base URL，`!!PCH login` 回链前缀；改端口须同步 |
+<!-- AUTO-GENERATED END -->
+
+> ⚠️ 本地 venv 直跑 uvicorn 读 `Backend/.env`（`POSTGRES_HOST=postgres` 连不上 DB）；开箱即用走 compose（读根 `.env`）。
+
+---
+
 ## 后端 FastAPI
 
 > 容器编排：根 [`../../docker-compose.yml`](../../docker-compose.yml)（postgres + backend）。

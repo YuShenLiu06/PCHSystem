@@ -53,7 +53,7 @@ refactor(backend)!: 重命名 players 主键字段
 - **一个 PR 一件事**（同作者同字段的多处同类修改可合并）
 - 关联 Issue（先 Issue 再 PR）
 - 合入前自检：
-  - [ ] lint / 类型检查通过
+  - [ ] 构建通过：前端 `cd Frontend && npm run build`（含 `vue-tsc` 类型检查）；后端 `cd Backend && pytest`（无独立 lint，依赖类型 + 测试）
   - [ ] 不违反根 CLAUDE.md §3 红线 R-1~R-12
   - [ ] MCDR 相关改动已联网核实 API（根 CLAUDE.md §0 S-1）
 
@@ -107,4 +107,4 @@ refactor(backend)!: 重命名 players 主键字段
 
 ---
 
-*最后更新：2026-07-01*
+*最后更新：2026-07-02*
