@@ -48,7 +48,7 @@ flowchart LR
         P["玩家 / 管理员"]
     end
 
-    MCDR -->|HTTP API + 服务密钥| API
+    MCDR -->|HTTP API + 服务密钥<br/>（写：service-token + X-Player-UUID 代玩家）| API
     WEB -->|HTTP API + JWT| API
     P -->|游戏内命令 !!xx| MCDR
     P --> WEB
@@ -59,7 +59,7 @@ flowchart LR
 **核心约束**：
 
 - **数据唯一拥有者**：所有业务数据集中在 **PostgreSQL**，由 **FastAPI 后端独占**读写。MCDR 插件**不直连数据库**，仅通过 HTTP API 与后端交互。
-- **MCDR 是纯游戏内客户端**：只负责命令交互、箱子/背包扫描、称号下发、HTTP 上报。
+- **MCDR 是纯游戏内客户端**：只负责命令交互、箱子/背包扫描、称号下发、HTTP 上报。写后端时经 `X-Service-Token` + `X-Player-UUID` 头**代玩家调用**（与 JWT 等价，复用 RBAC，详见 [`services/notification-service.md`](./architecture/services/notification-service.md) 与 [`api/sheets.md`](./architecture/api/sheets.md) §2）。
 - **wiki.js 只接收**：由后端通过 GraphQL **单向同步**归档与用户组，不回写业务库。
 - **离线身份锚**：因离线模式 UUID 由玩家名确定性推导，**以「Web 绑定账号」为身份主锚**，MC UUID 为子身份（见 [`services/user-service.md`](./architecture/services/user-service.md)）。
 
@@ -155,17 +155,19 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    MCDR["MCDR 插件<br/>!!submit/!!bind/!!title"]
+    MCDR["MCDR 插件<br/>!!submit/!!bind/!!title/!!PCH sheet"]
     USER["user-service<br/>身份核心"]
     PROJ["project-service<br/>项目+材料清单"]
     SCORE["scoring-service<br/>积分引擎"]
     TITLE["title-service<br/>称号"]
     WIKI["wiki-service<br/>wiki.js 同步"]
     ALERT["alert-service<br/>风控告警"]
+    NOTIFY["notification-service<br/>统一通知"]
     FRONT["frontend<br/>Vue 后台"]
 
     MCDR --> USER
     MCDR --> SCORE
+    MCDR --> NOTIFY
     FRONT --> USER
     FRONT --> PROJ
     FRONT --> SCORE
@@ -176,18 +178,21 @@ flowchart LR
     SCORE --> WIKI
     TITLE --> WIKI
     SCORE --> ALERT
+    SCORE --> NOTIFY
+    PROJ --> NOTIFY
     USER -.被所有服务依赖.-> PROJ
 ```
 
 | 服务 | 职责 | 文档 |
 |---|---|---|
-| **MCDR 插件**（游戏内端） | 命令、箱子/背包扫描、UUID 推导、称号下发、HTTP 上报 | [`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md) |
+| **MCDR 插件**（游戏内端） | 命令、箱子/背包扫描、UUID 推导、称号下发、HTTP 上报、通知轮询投递 | [`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md) |
 | **user-service** | MC 绑定 / Token / wiki 账号映射 / 权限（身份主锚） | [`services/user-service.md`](./architecture/services/user-service.md) |
 | **project-service** | 项目生命周期 + `.litematic` 解析 + 材料清单 | [`services/project-service.md`](./architecture/services/project-service.md) |
 | **scoring-service** | 提交入库 + 放置贡献 + 黄皮子积分引擎 | [`services/scoring-service.md`](./architecture/services/scoring-service.md) |
 | **title-service** | 指数称号体系 + scoreboard 前缀下发 | [`services/title-service.md`](./architecture/services/title-service.md) |
 | **wiki-service** | GraphQL 同步归档 + 用户组 + Page Rules 授权 | [`services/wiki-service.md`](./architecture/services/wiki-service.md) |
 | **alert-service** | 异常检测 + Notifier 抽象（游戏内/后台/QQ webhook） | [`services/alert-service.md`](./architecture/services/alert-service.md) |
+| **notification-service** | 业务事件 → 给特定玩家记通知 → 落库与投递（可复用契约） | [`services/notification-service.md`](./architecture/services/notification-service.md) |
 | **frontend** | Vue3 后台管理界面 | [`frontend.md`](./architecture/frontend.md) |
 
 ---
@@ -268,6 +273,48 @@ sequenceDiagram
 ### 7.4 项目完结 → 归档同步
 
 `project-service` 标记完结 → `scoring-service` 终算（占比/加权/负责人 k 增发）→ `wiki-service` 写归档页 + 名人堂 + 回收负责人 wiki 编辑权。
+
+### 7.5 sheets 协作（Web ↔ MC 对等 + 通知流转）
+
+sheets 协作端点对 Web（JWT）与 MCDR（service-token + `X-Player-UUID` 代玩家）**对等开放**，RBAC 与状态机一致（R-9）。任何写动作都在**同一事务**内记通知（R-10），由 MCDR 后台轮询拉取并 `server.tell` 投递，离线玩家通知落库、上线补推。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as 玩家B(认领者/MC)
+    participant MCDR as MCDR 插件
+    participant API as 后端 API
+    participant DB as PostgreSQL
+    participant O as 拥有者(在线)
+    participant BO as 玩家B(离线→上线)
+
+    Note over B,O: 认领 → 拥有者收到通知
+    B->>MCDR: !!PCH sheet claim <sid> <rid>
+    MCDR->>API: POST /sheets/{sid}/rows/{rid}/claim<br/>(X-Service-Token + X-Player-UUID=B)
+    API->>DB: 事务: 写 sheet_rows(claimed, claimant=B)<br/>+ notify(owner, sheet_claimed)
+    API-->>MCDR: 200 RowDetail
+    MCDR-->>B: §a认领成功
+
+    Note over MCDR,O: 后台轮询拉取 + tell 拥有者
+    MCDR->>API: GET /notifications/pending?player_uuid=<owner>
+    API-->>MCDR: [{category:sheet_claimed, ...}]
+    MCDR->>O: server.tell: 「B 认领了 [铁锭]」
+    MCDR->>API: POST /notifications/ack {ids}
+
+    Note over O,BO: 拥有者打回 → 认领人收到通知
+    O->>API: POST /sheets/{sid}/rows/{rid}/reject<br/>(JWT 或 service-token+UUID)
+    API->>DB: 事务: 写 sheet_rows(done→claimed, delivered=0)<br/>+ notify(B, sheet_rejected)
+    API-->>O: 200
+
+    Note over MCDR,BO: B 离线堆积，上线补推
+    BO->>MCDR: 上线事件 on_player_joined
+    MCDR->>API: GET /notifications/pending?player_uuid=<B>
+    API-->>MCDR: [{category:sheet_rejected, ...}]
+    MCDR->>BO: server.tell: 「[铁锭] 已打回，可重做」
+    MCDR->>API: POST /notifications/ack {ids}
+```
+
+> 详细：[`api/sheets.md`](./architecture/api/sheets.md) §11/§12、[`services/notification-service.md`](./architecture/services/notification-service.md)、[`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md)「通知轮询」。
 
 ---
 

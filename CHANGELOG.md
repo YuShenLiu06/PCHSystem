@@ -11,7 +11,36 @@
 
 ## [Unreleased]
 
-_暂无未发布变更。_
+### 文档与计划
+
+#### Added
+
+- `Docs/superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md`：sheets ↔ MCDR 对接 + 统一通知抽象层权威设计（鉴权双通道 service-token + `X-Player-UUID` 代玩家写 / 通知抽象层契约 / 触发规则表 7 类 category / `!!PCH sheet` 命令映射 / 轮询投递与离线补推 / 红线遵循 / MCDR API 依据 URL）。`未提交`
+- `Docs/architecture/services/notification-service.md`：notification-service 通知抽象层**可复用契约**文档（调用契约 `notify(session,…)` 同事务语义 + `category` 枚举注册表与扩展规约 + 数据模型 `notifications.notifications` + `Notifier` Protocol 首期 `DbNotifier` 预留 Webhook/Discord + pending/ack/read 端点契约 + MCDR 投递契约 + 与 alert-service 关系）。`未提交`
+
+### Backend
+
+#### Changed
+
+- `Docs/architecture/api/sheets.md` §2：鉴权表新增「Service Token + X-Player-UUID（代玩家）」通道（覆盖 sheets 写端点 + 通知端点，与 JWT 等价，复用 RBAC）；§5 端点表每个写端点说明列补「MCDR 可经 service-token+`X-Player-UUID` 代玩家调用」；§10 迁移表加 `0006_notifications`；新增 §11「MCDR `!!PCH sheet` 命令映射表」（14 条命令→HTTP 端点→角色）；新增 §12「通知端点」（pending/ack/read）。
+
+### McdrPlugin
+
+#### Changed
+
+- `Docs/architecture/services/mcdr-plugin.md`：命令表加 `!!PCH sheet …` 全套（引用 sheets.md §11）；§3.6 HTTP 客户端修正 `schedule_task` 卸载阻塞的过时描述（与 RS-6 冲突，改「阻塞 HTTP 必须放 `@new_thread`；`schedule_task` 跑 TaskExecutor=主线程不可卸载阻塞」），新增 §3.6.1「service-token + `X-Player-UUID` 代玩家写」、§3.7「sheets 命令树」、§3.8「通知轮询」（在线集合 on_player_joined/left + rcon list 初始化 + 轮询 + ack + 离线补推）；§4 依赖服务表加 sheets / notifications；§5 配置项加 `notify_poll_interval_seconds`/`notify_max_per_poll`；§6 风险表加阻塞误用与轮询延迟两项。
+
+### 项目级
+
+#### Changed
+
+- `Docs/architecture.md`：§2.1 三端流程图 `MCDR → API` 边加注「（写：service-token + X-Player-UUID 代玩家）」+ 核心约束补 MCDR 代玩家写说明；§5 服务地图 mermaid 加 `notification-service` 节点（MCDR/SCORE/PROJ → NOTIFY 边）+ 服务表加一行（职责：业务事件→玩家通知记库与投递，文档链接 notification-service.md）；§7 新增「7.5 sheets 协作（Web ↔ MC 对等 + 通知流转）」sequenceDiagram（认领→后端事务写 row+notify→轮询拉取→tell 拥有者；owner reject→notify 认领人→认领人上线补推）。
+
+### Security
+
+#### Added
+
+- service-token 代玩家写**安全加固**（`MCDR_SERVICE_TOKEN` 等同「全员 root 凭据」，详见 [`Docs/architecture/services/notification-service.md`](Docs/architecture/services/notification-service.md) §7）：① 后端对每次 service-token 代玩家写记 `service_token_proxy` 审计日志（`{timestamp, player_uuid, http_path, client_ip}`，**不含 token 本身**）；② `POST /notifications/ack` 加 `player_uuid` 归属校验（body 增 `player_uuid`，与通知 `recipient_uuid` 一致方可 ack，防越权 ack 他人通知）；③ `POST /notifications/{id}/read` 加 `player_uuid` query 归属校验（同上，防越权 read）；④ `notify()` 对 title/body 限长清洗 + payload 设 8KB 上限（防滥用与异常体积）；⑤ `GET /notifications/pending` 的 `limit` 上限收紧至 50（原 100）。引用根 CLAUDE.md R-11；运维侧缓解（网络隔离 / secrets 注入 / ≥32 字节 / 定期轮换）见 notification-service.md §7.2。
 
 ---
 

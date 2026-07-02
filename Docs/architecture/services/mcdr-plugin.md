@@ -25,7 +25,8 @@
 | `!!project list` / `!!project info <项目>` | user | 项目列表 / 进度查询 |
 | `!!score` / `!!rank [分类]` | user | 个人积分 / 榜单（总/赛季/分类） |
 | `!!title list` / `!!title set <称号>` | user | 已解锁称号 / 切换展示称号 |
-| `!!info` | user | 个人信息：UUID / 绑定状态 / 当前称号 |
+| `!!PCH login` | user | 申请登录链接（已落地） |
+| `!!PCH sheet …` | user / owner | sheets 全套（list/view/create/rename/delete/add/set/delrow/claim/deliver/done/release/reject/notify list），详见 [`api/sheets.md`](../api/sheets.md) §11 |
 
 ## 3. 内部实现要点
 
@@ -82,6 +83,7 @@ def apply_prefix(server, player, prefix_text):
 - 切换称号时重建 team prefix。
 
 ### 3.6 HTTP 客户端（带鉴权）
+
 ```python
 import requests
 def call_backend(server, path, payload):
@@ -90,8 +92,62 @@ def call_backend(server, path, payload):
         headers={'X-Service-Token': SERVICE_TOKEN},   # MCDR↔后端服务密钥
     ).json()
 ```
-- 用 `requests`（或 `aiohttp`）；耗时调用放 `server.schedule_task(...)`，避免阻塞 MCDR 主循环。
-- 含超时 + 重试 + 失败回执给玩家。
+- 用 `requests`（或 `aiohttp`）。
+- **阻塞型 HTTP 必须放 `@new_thread('name')`**（如 `@new_thread('htcmc_auth sheet')`）—— 卸载到 daemon 线程，`server.tell` 线程安全。
+- ⚠️ `server.schedule_task(...)` 的回调跑在 **TaskExecutor = 主线程**，**不可**用于卸载阻塞工作（RS-6）。它仅用于协程调度 / 延迟到主线程下一 tick / 从后台线程回主线程。误用会卡住整个 MCDR 主循环（命令/事件/控制台输出解析全停滞）。
+- 含超时（≤10s）+ 重试 + 失败回执给玩家。
+- 哨兵字符串必须回执玩家（RS-11）：`__RATE_LIMITED__`（限频）/`__REMOVED__`（玩家被移出白名单）/`None`（服务不可用）。
+
+证据：[MCDR `@new_thread`](https://docs.mcdreforged.com/zh-cn/latest/code_references/ServerInterface.html)、[PluginServerInterface `schedule_task`](https://docs.mcdreforged.com/zh-cn/latest/code_references/ServerInterface.html)（task executor = 主线程，S-1 联网核实）。
+
+#### 3.6.1 service-token + `X-Player-UUID` 代玩家写
+
+对需要以玩家身份写的端点（sheets 全套写、未来认领/交付类），MCDR 不持有 JWT，改用**双头代玩家**：
+
+```python
+from mcdreforged.api.decorator import new_thread
+
+@new_thread('htcmc_auth sheet')
+def _do_claim(server, player, sheet_id, row_id):
+    player_uuid = uuid_api_remake.get_uuid(player)          # RS-8：UUID 推导唯一来源
+    resp = requests.post(
+        f'{API_URL}/sheets/{sheet_id}/rows/{row_id}/claim',
+        timeout=10,
+        headers={
+            'X-Service-Token': SERVICE_TOKEN,
+            'X-Player-UUID': player_uuid,                   # 后端据此加载 Player 注入
+        },
+    )
+    # 哨兵 + 403/404/409 → server.tell 友好回执
+```
+
+- 后端 `get_current_player` 双通道：Bearer JWT 优先，否则 `X-Service-Token` + `X-Player-UUID`（校验 token 后用 UUID 查 Player 注入，复用现有 RBAC，**与 JWT 写等价**）。
+- `/sheets/export` 仍独占 service-token-only（不带身份）。
+- 详细：[`api/sheets.md`](../api/sheets.md) §2 鉴权表。
+
+### 3.7 sheets 命令树
+
+`!!PCH sheet …` 全套命令树收敛到现有 `!!PCH` 父节点（与 `__init__.py` 一致），完整命令↔HTTP 端点↔角色映射表见 [`api/sheets.md`](../api/sheets.md) §11。要点：
+
+- `!!PCH sheet deliver <qty>` 用**绝对值**（与后端/前端契约一致）；progress 模式玩家先 `view` 看当前 delivered 再决定。
+- 权限文案在 help 里说明；真实 RBAC 以后端 403/409 为准（R-9）。
+- 新增模块：`htcmc_auth/sheet_client.py`（HTTP + 哨兵）、`htcmc_auth/sheet_commands.py`（`@new_thread` + `server.tell` 回执）、`htcmc_auth/notifier.py`（通知轮询）。
+
+### 3.8 通知轮询（投递候选池）
+
+后端 notification-service 把通知落库（[`notification-service.md`](./notification-service.md)），MCDR 负责拉取 + 投递 + ack + 离线补推：
+
+| 阶段 | 实现 |
+|---|---|
+| 在线集合维护 | `on_player_joined(server, player, info)` 加入 / `on_player_left(server, player)` 移出；插件加载时若服务端已启动，用 `server.rcon_query('list')` 解析初始化（兜底，`get_online_players` 不在通用 API） |
+| 后台轮询 | `on_load` 启动 `@new_thread('htcmc_sheet_notifier')` 循环；`on_unload` 设停止位退出；每 `notify_poll_interval_seconds`（默认 15.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll` |
+| 逐条投递 | `server.tell(player, format_notification(n))` |
+| ack | 投递成功后 `POST /notifications/ack {ids}`（幂等） |
+| 上线补推 | `on_player_joined` 立即为该玩家拉一次 pending（离线期间堆积的补推） |
+| 主动查看 | `!!PCH sheet notify list` 拉取并分页回显 |
+| 离线处理 | 通知仅落库后端；MCDR 不持久化，重启后靠上线拉取恢复 |
+
+证据：[`on_player_joined`/`on_player_left`/`register_event_listener`](https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/event.html)、[`rcon_query`/`tell`](https://docs.mcdreforged.com/zh-cn/latest/code_references/ServerInterface.html)（S-1 联网核实）。
 
 ## 4. 依赖的其他服务（HTTP API）
 
@@ -102,12 +158,14 @@ def call_backend(server, path, payload):
 | project-service | `GET /projects/{id}` | `!!project info` |
 | scoring-service | `POST /submissions` | `!!submit` |
 | title-service | `GET/POST /players/me/titles` | `!!title` |
+| sheets | `GET/POST/PATCH/DELETE /sheets/*`（service-token + `X-Player-UUID` 代玩家） | `!!PCH sheet …` |
+| notifications | `GET /notifications/pending` / `POST /notifications/ack` / `POST /notifications/{id}/read`（service-token） | 通知轮询 + `!!PCH sheet notify list` |
 | alert-service | （被动）后端检测异常后，通过 `!!` 系统消息或 scoreboard 推送告警 | 由后端触发 |
 
 ## 5. 所属数据表
 
 **不直连业务库。** 本地仅：
-- `config/config.yml`：`api_url`、`service_token`、`rcon` 设置、命令前缀开关。
+- `config/config.yml`：`api_url`、`service_token`、`rcon` 设置、命令前缀开关、`notify_poll_interval_seconds`（默认 15.0）、`notify_max_per_poll`（默认 20）。
 - 可选缓存：玩家信息短时缓存（减少重复 `GET /players/me`）。
 
 ## 6. 风险与待确认
@@ -119,5 +177,8 @@ def call_backend(server, path, payload):
 | 清箱时机 | 上报失败却清箱会丢材料 | **先上报成功再清箱** |
 | scoreboard prefix 显示效果 | Fabric+Carpet 下聊天/Tab 前缀实际渲染 | 待真机验证；不达标则引入 Fabric 前缀 mod |
 | Title Prefix Handler 兼容性 | 与 Carpet 等共存 | 部署时回归玩家名解析 |
+| 阻塞 HTTP 误用 `schedule_task` | 卡住 MCDR 主循环（RS-6） | 全部走 `@new_thread`；详见 §3.6 |
+| 通知轮询延迟 | 默认 15s 周期 | 可调 `notify_poll_interval_seconds`；紧急叠加 webhook（预留） |
+| 离线通知补推 | 离线堆积 | 上线 `on_player_joined` 立即拉取 + 分页 |
 
 > 待确认：服务端 RCON 已启用且端口/密码配置；Carpet 是否影响 `/data get block` 输出格式。
