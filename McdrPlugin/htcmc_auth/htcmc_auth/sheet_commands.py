@@ -335,7 +335,7 @@ def _sheet_delete(src, ctx):
 # === 行级 ===
 
 def _sheet_upsert(src, ctx):
-    """add/set 共用：upsert 行。mode 由子命令字面量（lock/progress）映射，sort 可选。"""
+    """add/set 共用：upsert 行。mode 可选（默认 lock；字面量 lock/progress），sort 可选（默认 0）。"""
     player_name = _require_player(src)
     if not player_name:
         return

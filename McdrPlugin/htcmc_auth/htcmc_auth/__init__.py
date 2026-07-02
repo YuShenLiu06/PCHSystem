@@ -122,7 +122,7 @@ def _register_commands(server: PluginServerInterface):
                 .then(Integer("sheet_id").then(QuotableText("title").runs(_sheet_rename)))
             )
             .then(Literal("delete").then(Integer("sheet_id").runs(_sheet_delete)))
-            # 行级 upsert：add / set 同端点，mode 字面量 lock|progress，sort 可选
+            # 行级 upsert：add / set 同端点，mode 可选（默认 lock；字面量 lock|progress），sort 可选
             .then(
                 Literal("add")
                 .then(
@@ -130,7 +130,7 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         QuotableText("item")
                         .then(
-                            Integer("need")
+                            Integer("need").runs(_sheet_upsert)
                             .then(
                                 Literal("lock").runs(_sheet_upsert)
                                 .then(Integer("sort").runs(_sheet_upsert))
@@ -150,7 +150,7 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         QuotableText("item")
                         .then(
-                            Integer("need")
+                            Integer("need").runs(_sheet_upsert)
                             .then(
                                 Literal("lock").runs(_sheet_upsert)
                                 .then(Integer("sort").runs(_sheet_upsert))
