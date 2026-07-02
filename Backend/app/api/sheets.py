@@ -6,7 +6,7 @@
 - 认领 claim（POST .../claim）：任意登录玩家
 - 上报交付（PATCH .../delivery）：当前认领人 only
 - 解除锁定（POST .../release）：认领人自放 或 拥有者
-- 打回（POST .../reject）：拥有者 only
+- 打回（POST .../reject）：认领人 或 拥有者（done→claimed，delivered 归零，认领人保留重做）
 - CSV 全量导出（GET /sheets/export）：service token（外部系统读取，MVP §4 硬约束）
 
 分层（红线）：api 调 repo，**commit 在 api 层**，repo 只 flush。
@@ -318,7 +318,11 @@ async def reject_row(
     player: Player = Depends(get_current_player),
 ) -> RowDetail:
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    current = await sheet_repo.get_row(session, sheet_id, row_id)
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    # 认领人（自取消备齐）或拥有者（打回）均可；其余 403
+    if current[0].claimant_uuid != player.uuid and not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     try:
         row = await sheet_repo.reject_row(session, sheet_id, row_id)

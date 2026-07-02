@@ -247,17 +247,6 @@ async function onSetDelivery(row: RowDetail): Promise<void> {
   }
 }
 
-// 认领人取消备齐（done→claimed）：delivered 归零
-async function onUnmarkDone(row: RowDetail): Promise<void> {
-  try {
-    await setRowDelivery(sheetId.value, row.id, 0)
-    sheet.value = await fetchSheet(sheetId.value)
-    ElMessage.success('已取消备齐')
-  } catch (e: unknown) {
-    ElMessage.error(errorMessage(e))
-  }
-}
-
 // 认领人自放 / 拥有者解除锁定（claimed|done→open）
 async function onRelease(row: RowDetail): Promise<void> {
   try {
@@ -269,7 +258,8 @@ async function onRelease(row: RowDetail): Promise<void> {
   }
 }
 
-// 拥有者打回（done→claimed，delivered 归零，认领人保留）
+// 认领人/拥有者打回（done→claimed，delivered 归零，认领人保留重做）
+// 合并了原认领人「取消备齐」——两者效果一致（done→claimed, delivered=0）
 async function onReject(row: RowDetail): Promise<void> {
   try {
     await rejectRow(sheetId.value, row.id)
@@ -446,12 +436,10 @@ onMounted(load)
               </el-button>
               <el-button size="small" @click="onRelease(row)">放弃</el-button>
             </template>
-            <!-- 认领人 × done → 取消备齐 -->
-            <el-button v-if="isClaimant(row) && row.status === 'done'" size="small" @click="onUnmarkDone(row)">取消备齐</el-button>
             <!-- 拥有者 × claimed|done → 解除锁定 -->
             <el-button v-if="canEdit && (row.status === 'claimed' || row.status === 'done')" size="small" plain @click="onRelease(row)">解除锁定</el-button>
-            <!-- 拥有者 × done → 打回 -->
-            <el-button v-if="canEdit && row.status === 'done'" size="small" type="warning" plain @click="onReject(row)">打回</el-button>
+            <!-- 认领人|拥有者 × done → 打回（合并原「取消备齐」，done→claimed, delivered 归零） -->
+            <el-button v-if="(isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" plain @click="onReject(row)">打回</el-button>
           </template>
         </el-table-column>
       </el-table>

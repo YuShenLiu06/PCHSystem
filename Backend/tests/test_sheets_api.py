@@ -3,7 +3,7 @@
 覆盖 API 契约表全路径 + 权限分支（spec §5.3）：
 - 读：JWT 已登录可读所有表
 - 写表/行 upsert/删：owner_uuid 或 admin/owner 角色
-- claim：任意登录玩家；delivery：认领人；release：认领人/拥有者；reject：拥有者
+- claim：任意登录玩家；delivery：认领人；release：认领人/拥有者；reject：认领人/拥有者
 - CSV 全量导出：service token
 
 复用 test_auth_api.py 的 _svc_token fixture 模式（注入 service token 到 deps._settings）。
@@ -436,15 +436,44 @@ async def test_reject_by_owner_done_to_claimed(client):
 
 
 @pytest.mark.asyncio
-async def test_reject_by_non_owner_forbidden(client):
+async def test_reject_by_claimant_done_to_claimed(client):
     _, bearer_owner = await _make_player("alice")
     _, bearer_bob = await _make_player("bob")
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
     rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, 0))["id"]
     await client.post(f"/sheets/{sid}/rows/{rid}/claim", headers=_auth(bearer_bob))
-    # bob（认领人但非拥有者）打回 → 403
+    await client.patch(
+        f"/sheets/{sid}/rows/{rid}/delivery",
+        json={"delivered_qty": 10},
+        headers=_auth(bearer_bob),
+    )
+    # 认领人（非拥有者）打回自己已备齐的行 → claimed，认领人保留 delivered 归零
     resp = await client.post(
         f"/sheets/{sid}/rows/{rid}/reject", headers=_auth(bearer_bob)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "claimed"
+    assert body["claimant_name"] == "bob"
+    assert body["delivered_qty"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reject_by_third_party_forbidden(client):
+    _, bearer_owner = await _make_player("alice")
+    _, bearer_bob = await _make_player("bob")
+    _, bearer_carol = await _make_player("carol")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, 0))["id"]
+    await client.post(f"/sheets/{sid}/rows/{rid}/claim", headers=_auth(bearer_bob))
+    await client.patch(
+        f"/sheets/{sid}/rows/{rid}/delivery",
+        json={"delivered_qty": 10},
+        headers=_auth(bearer_bob),
+    )
+    # carol（既非拥有者也非认领人）打回 → 403
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/reject", headers=_auth(bearer_carol)
     )
     assert resp.status_code == 403
 

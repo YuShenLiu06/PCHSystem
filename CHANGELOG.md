@@ -16,14 +16,14 @@
 #### Added
 
 - 迁移 `0005_sheets_collab`：`sheets.sheet_rows` 加 `mode`(smallint 0=lock/1=progress) · `status`(text open/claimed/done) · `claimant_uuid`(FK→users.players.uuid 可空) · `delivered_qty`；旧 `done_flag=1`→`status='done'` 后删 `done_flag`；加 `ix_sheet_rows_sheet_status`，可逆已验证。`510abec`
-- sheets 行认领协作 + 名称显示：`SheetRepository` 加 `claim_row`/`set_row_delivery`/`release_row`/`reject_row`（`select...with_for_update()` 行锁 + 状态机不变量，非法转移 raise `SheetRowConflict`→409）；`list_sheets`/`get_sheet` inner join、`list_rows`/`get_row` left join `users.players` 取 `owner_name`/`claimant_name`；upsert 改 need 时 delivered 按新 need 封顶并自动判 done/回落。4 新端点（claim 任意玩家 / delivery 认领人 / release 认领人|owner / reject owner）；schema 去 done_flag 加 mode + `RowDeliveryRequest`。`f638f3c`
+- sheets 行认领协作 + 名称显示：`SheetRepository` 加 `claim_row`/`set_row_delivery`/`release_row`/`reject_row`（`select...with_for_update()` 行锁 + 状态机不变量，非法转移 raise `SheetRowConflict`→409）；`list_sheets`/`get_sheet` inner join、`list_rows`/`get_row` left join `users.players` 取 `owner_name`/`claimant_name`；upsert 改 need 时 delivered 按新 need 封顶并自动判 done/回落。4 新端点（claim 任意玩家 / delivery 认领人 / release 认领人|owner / reject 认领人|owner）；schema 去 done_flag 加 mode + `RowDeliveryRequest`。`f638f3c`
 - sheets 协作测试 + OpenAPI 同步：`sheet_repo` 20 用例（状态机全分支 + 不变量 + upsert 封顶）+ `sheets_api` 33 用例（403/404/409 + owner_name=游戏名 + RowDetail 新字段）；`openapi.json` 重导出含 4 新端点，`test_openapi_freeze` 追加 4 路径断言。`80ec623`
 
 ### Frontend
 
 #### Added
 
-- sheets 认领/进度协作 UI + 名称显示：`sheets.ts` 类型对齐新契约（+`owner_name`；RowDetail 去 done_flag 加 mode/status/claimant_uuid/claimant_name/delivered_qty；RowUpsertRequest 加 mode）+ 4 新 API 函数（claimRow/setRowDelivery/releaseRow/rejectRow）；`SheetList.vue` 所有者列显游戏名；`SheetEditor.vue` 协作控件（模式/认领者/状态 el-tag/交付进度 el-progress/动作按角色×状态渲染，progress 上报交付 ElMessageBox.prompt，R-9 旁观者只读）。`b66916f`
+- sheets 认领/进度协作 UI + 名称显示：`sheets.ts` 类型对齐新契约（+`owner_name`；RowDetail 去 done_flag 加 mode/status/claimant_uuid/claimant_name/delivered_qty；RowUpsertRequest 加 mode）+ 4 新 API 函数（claimRow/setRowDelivery/releaseRow/rejectRow）；`SheetList.vue` 所有者列显游戏名；`SheetEditor.vue` 协作控件（模式/认领者/状态 el-tag/交付进度 el-progress/动作按角色×状态渲染，progress 上报交付 ElMessageBox.prompt，R-9 旁观者只读；认领人「取消备齐」与拥有者「打回」效果一致，合并为单一「打回」按钮）。`b66916f`
 - sheets 协作前端测试：4 新端点「以正确参数调用」断言 + 新契约 fixture；vitest 26 通过 + `npm run build`（vue-tsc）通过。`2c82ef8`
 
 ### 文档与计划
