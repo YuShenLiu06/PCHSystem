@@ -48,7 +48,11 @@ class SheetRow(Base):
 
     item_name 自由文本（D-2，红线 R-6 不覆盖 sheets）；
     need_qty 原始整数（D-4，永不存换算结果）；
-    done_flag 二元 0/1（D-1）。UNIQUE(sheet_id, item_name) 兼作 upsert 锁点。
+    mode=0 lock（二元备齐）/ mode=1 progress（跟踪交付量），拥有者每行手选（D-2/D-3）；
+    status 三态 open/claimed/done（D-6，认领协作语义，spec §5.2）；
+    claimant_uuid 当前认领人（null 当 open，FK→users.players.uuid）；
+    delivered_qty 已交付数量（lock 模式认领人标备齐=置 need_qty；progress 模式累加上报）。
+    UNIQUE(sheet_id, item_name) 兼作 upsert 锁点。
     """
 
     __tablename__ = "sheet_rows"
@@ -65,7 +69,20 @@ class SheetRow(Base):
     )
     item_name: Mapped[str] = mapped_column(Text, nullable=False)
     need_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    done_flag: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    mode: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default=text("0")
+    )
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="open", server_default=text("'open'")
+    )
+    claimant_uuid: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.players.uuid"),
+        nullable=True,
+    )
+    delivered_qty: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False

@@ -15,15 +15,23 @@ class SheetPatchRequest(BaseModel):
 class RowUpsertRequest(BaseModel):
     item_name: str = Field(min_length=1, max_length=128)
     need_qty: int = Field(default=0, ge=0)
-    done_flag: int = Field(default=0, ge=0, le=1)
+    mode: int = Field(default=0, ge=0, le=1)
     sort_order: int = Field(default=0, ge=0)
+
+
+class RowDeliveryRequest(BaseModel):
+    delivered_qty: int = Field(ge=0)
 
 
 class RowDetail(BaseModel):
     id: int
     item_name: str
     need_qty: int
-    done_flag: int
+    mode: int
+    status: str
+    claimant_uuid: UUID | None
+    claimant_name: str | None
+    delivered_qty: int
     sort_order: int
     updated_at: datetime
 
@@ -31,6 +39,7 @@ class RowDetail(BaseModel):
 class SheetSummary(BaseModel):
     id: int
     owner_uuid: UUID
+    owner_name: str
     title: str
     created_at: datetime
     updated_at: datetime
