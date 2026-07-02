@@ -32,6 +32,7 @@ def _pch_root(src, ctx):
     src.reply(RTextList(
         RText("黄皮子积分系统（PCH）可用命令：\n", color=RColor.gold).set_styles(RStyle.bold),
         RText("  !!PCH login      - 申请 Web 登录链接\n", color=RColor.green),
+        RText("  !!PCH sheet      - 在线表格协作（list/view/create/add/claim/deliver/done/release/reject ...）\n", color=RColor.green),
         RText("  !!PCH bind       - 申请 Web 绑定短码（开发中）\n", color=RColor.yellow),
         RText("  !!PCH submit      - 物品提交（开发中）\n", color=RColor.yellow),
         RText("  !!PCH project    - 项目查询（开发中）\n", color=RColor.yellow),

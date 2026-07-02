@@ -8,6 +8,7 @@ from .commands import configure, _pch_root, _not_impl, _login
 from .config import HtcmcAuthConfig
 from .sheet_commands import (
     configure as sheet_configure,
+    _sheet_root,
     _sheet_list,
     _sheet_list_mine,
     _sheet_view,
@@ -101,6 +102,7 @@ def _register_commands(server: PluginServerInterface):
         # === sheets 子命令树（service-token + X-Player-UUID 代玩家写）===
         .then(
             Literal("sheet")
+            .runs(_sheet_root)
             # 表级
             .then(
                 Literal("list")

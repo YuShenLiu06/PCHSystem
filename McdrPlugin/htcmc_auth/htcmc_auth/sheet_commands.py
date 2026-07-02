@@ -102,6 +102,30 @@ def _require_player(src):
     return src.player
 
 
+# === sheet 总览（!!PCH sheet 不带子命令时）===
+
+def _sheet_root(src, ctx):
+    """!!PCH sheet（无子命令）→ 列出全部子命令清单。"""
+    if not src.is_player:
+        src.reply("§c!!PCH sheet 只能玩家在游戏内执行")
+        return
+    src.reply(RTextList(
+        RText(SHEET_HEAD),
+        RText("子命令（输入 !!PCH sheet <子命令>）：\n", color=RColor.gold),
+        RText("  list [--mine]                列表（--mine 仅自己拥有）\n"),
+        RText("  view <表id>                  查看表详情\n"),
+        RText("  create <标题>                建表\n"),
+        RText("  add/set <表id> <物品> <数量> [lock|progress] [排序]  增改行（拥有者）\n"),
+        RText("  delrow <表id> <行号>         删行（拥有者）\n"),
+        RText("  claim <表id> <行号>          认领\n"),
+        RText("  deliver <表id> <行号> <数量> 上报交付（绝对值）\n"),
+        RText("  done <表id> <行号>           标备齐（lock 模式快捷）\n"),
+        RText("  release <表id> <行号>        解除锁定（认领人/拥有者）\n"),
+        RText("  reject <表id> <行号>         打回（认领人/拥有者）\n"),
+        RText("  notify list                  查看自己的通知\n", color=RColor.gray),
+    ))
+
+
 # === 表级 ===
 
 def _sheet_list(src, ctx):
