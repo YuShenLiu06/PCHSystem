@@ -130,22 +130,39 @@ def rtext_button(label: str, command: str, *, color=RColor.aqua, hover: str = ""
     return rt
 
 
-def format_row_clickable(row: dict, sheet_id, *, is_owner: bool) -> RTextList:
-    """格式化单行为可点击 RTextList：行文本 + 按状态/模式/拥有者追加尾部操作按钮。
+def format_row_clickable(
+    row: dict,
+    sheet_id,
+    *,
+    is_owner: bool = False,
+    player_name: str = "",
+    player_uuid: str = "",
+) -> RTextList:
+    """格式化单行为可点击 RTextList：行文本 + 按状态/模式/查看者权限追加尾部操作按钮。
 
+    按钮显隐对齐后端 RBAC（红线 R-9：真实权限以后端 403 为准，此处仅控可见性）。
+    查看者身份用 UUID 为主、名字兜底（离线模式名↔UUID 1:1，见 R-5）：
+      is_claimant = (claimant_uuid == player_uuid) or (claimant_name == player_name)
     lock 模式（单认领人状态机）：
-      open → [认领]
-      claimed → [标备齐][解除]
-      done → [打回]
-    progress 模式（无认领，任意玩家增量上交；owner 解除=重置）：
-      open → [交付]            （不认领，直接贡献）
-      claimed → [交付][标备齐][解除]
-      done → [解除]            （无打回；reject 对 progress 返 409）
+      open      → [认领]（任意）
+      claimed   → [标备齐]（仅认领人；delivery 端点 owner 不豁免）/ [解除]（认领人 or owner）
+      done      → [打回]（认领人 or owner）
+    progress 模式（无认领，任意玩家增量上交；无认领人 → 仅 owner 可解除/重置）：
+      open      → [交付]（任意，直接贡献）
+      claimed   → [交付][标备齐]（任意；协作）/ [解除]（owner）
+      done      → [解除]（owner 重置进度；reject 对 progress 返 409 故无打回）
     拥有者在任意状态额外追加 [删行]。其余状态/未知 → 仅行文本（无按钮）。
     """
     rid = row.get("id")
     status = str(row.get("status", ""))
     mode = int(row.get("mode", 0))
+    # 身份锚 = UUID（行上存的 claimant_uuid 是权威锚；claimant_name 仅展示，可变）；
+    # 名字兜底防 payload 偶发缺 uuid。默认 player_*="" → is_claimant=False（fails closed）。
+    is_claimant = (
+        (bool(player_uuid) and str(row.get("claimant_uuid") or "") == player_uuid)
+        or (bool(player_name) and row.get("claimant_name") == player_name)
+    )
+    can_release_or_reject = is_claimant or is_owner
     buttons = []
     if status == "open":
         if mode == 1:  # progress：任意玩家直接上交（无需认领）
@@ -160,7 +177,7 @@ def format_row_clickable(row: dict, sheet_id, *, is_owner: bool) -> RTextList:
                 color=RColor.green, hover="认领此行（open→claimed）",
             ))
     elif status == "claimed":
-        if mode == 1:  # progress：可继续上交 + 一次性补齐
+        if mode == 1:  # progress：可继续上交 + 一次性补齐（协作，任意玩家）
             buttons.append(rtext_button(
                 "[交付]", f"!!PCH sheet deliver {sheet_id} {rid} ",
                 color=RColor.aqua,
@@ -170,23 +187,25 @@ def format_row_clickable(row: dict, sheet_id, *, is_owner: bool) -> RTextList:
                 "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
                 color=RColor.green, hover="一次性补齐到需求量（progress）",
             ))
-        else:  # lock：标备齐
+        elif is_claimant:  # lock：标备齐仅认领人（delivery 端点 owner 不豁免，sheets.py:472）
             buttons.append(rtext_button(
                 "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
                 color=RColor.green, hover="标记此行备齐（lock 快捷）",
             ))
-        buttons.append(rtext_button(
-            "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
-            color=RColor.yellow,
-            hover="解除认领/重置进度（→open，progress 清贡献者）",
-        ))
-    elif status == "done":
-        if mode == 1:  # progress：无打回，owner 用解除重置进度（清贡献者）
+        if can_release_or_reject:  # 解除：认领人自放 或 owner（progress 无认领人 → 仅 owner）
             buttons.append(rtext_button(
                 "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
-                color=RColor.yellow, hover="重置进度（done→open，清贡献者名单）",
+                color=RColor.yellow,
+                hover="解除认领/重置进度（→open，progress 清贡献者）",
             ))
-        else:  # lock：打回
+    elif status == "done":
+        if mode == 1:  # progress：无打回，owner 用解除重置进度（清贡献者）
+            if can_release_or_reject:
+                buttons.append(rtext_button(
+                    "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
+                    color=RColor.yellow, hover="重置进度（done→open，清贡献者名单）",
+                ))
+        elif can_release_or_reject:  # lock：打回（认领人自取消 或 owner）
             buttons.append(rtext_button(
                 "[打回]", f"!!PCH sheet reject {sheet_id} {rid}",
                 color=RColor.red, hover="打回（done→claimed，delivered 归零，可重做）",

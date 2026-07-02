@@ -89,5 +89,48 @@ class ListEmptyTest(unittest.TestCase):
         self.assertIn("!!PCH sheet create ", _all_click_values(told[0]))
 
 
+class ViewPermissionTest(unittest.TestCase):
+    """_sheet_view 按查看者身份显隐特权按钮（端到端验证 player_uuid/player_name 接线）。"""
+
+    def _detail_with_done_row(self, status, mode, claimant_uuid, claimant_name, owner_name="别人"):
+        return {
+            "id": 7, "title": "清单P", "owner_name": owner_name,
+            "rows": [{
+                "id": 1, "item_name": "铁锭", "mode": mode, "status": status,
+                "need_qty": 64, "delivered_qty": 64,
+                "claimant_uuid": claimant_uuid, "claimant_name": claimant_name,
+            }],
+        }
+
+    def test_non_claimant_done_row_no_reject_button(self):
+        # 非认领人非拥有者查看含 done lock 行的表：不应出现 [打回]/reject 命令
+        src, told = _make_src_server(player="玩家A")
+        detail = self._detail_with_done_row(
+            "done", 0,
+            claimant_uuid="00000000-0000-0000-0000-000000000000",
+            claimant_name="认领人X",
+        )
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 7})
+        msg = str(told[0])
+        self.assertNotIn("[打回]", msg)
+        cmds = _all_click_values(told[0])
+        self.assertFalse(any("reject" in c for c in cmds), cmds)
+
+    def test_claimant_done_row_sees_reject_button(self):
+        # 认领人查看自己 done lock 行：应出现 [打回]/reject（UUID 路径命中）
+        src, told = _make_src_server(player="玩家A")
+        viewer_uuid = sheet_commands.uuid_api_remake.get_uuid("玩家A")
+        detail = self._detail_with_done_row(
+            "done", 0, claimant_uuid=viewer_uuid, claimant_name="玩家A",
+        )
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 7})
+        msg = str(told[0])
+        self.assertIn("[打回]", msg)
+        cmds = _all_click_values(told[0])
+        self.assertTrue(any("reject" in c for c in cmds), cmds)
+
+
 if __name__ == "__main__":
     unittest.main()

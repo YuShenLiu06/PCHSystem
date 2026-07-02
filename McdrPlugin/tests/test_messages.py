@@ -162,13 +162,14 @@ class FormatRowClickableTest(unittest.TestCase):
         self.assertIn("[认领]", str(rtl))
         self.assertNotIn("[删行]", str(rtl))
 
-    def test_claimed_lock_no_deliver(self):
+    def test_claimed_lock_non_claimant_no_priv_buttons(self):
+        # 非认领人非拥有者看 lock claimed 行：不显示任何特权按钮（仅行文本）
         row = self._row(status="claimed", mode=0, delivered_qty=10, claimant_name="B")
         rtl = format_row_clickable(row, 3, is_owner=False)
         s = str(rtl)
-        self.assertIn("[标备齐]", s)
-        self.assertIn("[解除]", s)
-        self.assertNotIn("[交付]", s)  # lock 模式无交付按钮
+        self.assertNotIn("[标备齐]", s)  # lock 标备齐仅认领人（delivery 端点 owner 不豁免）
+        self.assertNotIn("[解除]", s)    # 解除仅认领人/拥有者
+        self.assertNotIn("[交付]", s)    # lock 模式无交付按钮
         self.assertNotIn("[删行]", s)
 
     def test_claimed_progress_has_deliver_with_trailing_space(self):
@@ -182,11 +183,12 @@ class FormatRowClickableTest(unittest.TestCase):
         # deliver 末尾留空格，玩家续输数量
         self.assertIn("!!PCH sheet deliver 3 5 ", _click_values(rtl))
 
-    def test_done_row_only_reject(self):
+    def test_done_row_non_claimant_no_reject(self):
+        # 非认领人非拥有者看 lock done 行：不显示 [打回]（仅行文本）
         row = self._row(status="done", mode=0, delivered_qty=64, claimant_name="B")
         rtl = format_row_clickable(row, 3, is_owner=False)
         s = str(rtl)
-        self.assertIn("[打回]", s)
+        self.assertNotIn("[打回]", s)
         self.assertNotIn("[认领]", s)
         self.assertNotIn("[标备齐]", s)
         self.assertNotIn("[交付]", s)
@@ -200,14 +202,64 @@ class FormatRowClickableTest(unittest.TestCase):
         self.assertNotIn("[认领]", s)
         self.assertIn("!!PCH sheet deliver 3 5 ", _click_values(rtl))
 
-    def test_done_progress_release_no_reject(self):
-        # progress·done：无打回（reject 对 progress 返 409），显 [解除] 供 owner 重置
+    def test_done_progress_owner_release_no_reject(self):
+        # progress·done：无打回（reject 对 progress 返 409），owner 显 [解除] 重置进度
         row = self._row(status="done", mode=1, delivered_qty=64)
-        rtl = format_row_clickable(row, 3, is_owner=False)
+        rtl = format_row_clickable(row, 3, is_owner=True)
         s = str(rtl)
         self.assertIn("[解除]", s)
         self.assertNotIn("[打回]", s)
         self.assertIn("!!PCH sheet release 3 5", _click_values(rtl))
+
+    def test_done_progress_non_owner_no_release(self):
+        # progress·done 非拥有者：无认领人 → 解除仅 owner 可，故隐藏 [解除]
+        row = self._row(status="done", mode=1, delivered_qty=64)
+        rtl = format_row_clickable(row, 3, is_owner=False)
+        self.assertNotIn("[解除]", str(rtl))
+        self.assertNotIn("[打回]", str(rtl))
+
+    def test_claimant_claimed_lock_sees_done_and_release(self):
+        # 认领人看自己 claimed lock 行：可见 [标备齐]+[解除]，无 [删行]
+        row = self._row(status="claimed", mode=0, delivered_qty=10, claimant_name="玩家A")
+        rtl = format_row_clickable(row, 3, is_owner=False, player_name="玩家A")
+        s = str(rtl)
+        self.assertIn("[标备齐]", s)
+        self.assertIn("[解除]", s)
+        self.assertNotIn("[交付]", s)
+        self.assertNotIn("[删行]", s)
+
+    def test_claimant_by_uuid_sees_done(self):
+        # UUID 路径（生产路径）：claimant_uuid 匹配 player_uuid 即认领人，名字不同也认
+        row = self._row(status="claimed", mode=0, delivered_qty=10,
+                        claimant_name="别的名字", claimant_uuid="abc-123")
+        rtl = format_row_clickable(row, 3, is_owner=False, player_uuid="abc-123")
+        s = str(rtl)
+        self.assertIn("[标备齐]", s)
+        self.assertIn("[解除]", s)
+
+    def test_owner_non_claimant_claimed_lock_sees_release_not_done(self):
+        # 拥有者非认领人看 claimed lock 行：可见 [解除]+[删行]，但不见 [标备齐]
+        # （lock 标备齐经 delivery 端点，owner 不豁免 → 后端 403，故隐藏）
+        row = self._row(status="claimed", mode=0, delivered_qty=10, claimant_name="B")
+        rtl = format_row_clickable(row, 3, is_owner=True, player_name="玩家A")
+        s = str(rtl)
+        self.assertNotIn("[标备齐]", s)
+        self.assertIn("[解除]", s)
+        self.assertIn("[删行]", s)
+
+    def test_claimant_done_sees_reject(self):
+        # 认领人看自己 done 行：可见 [打回]（自取消备齐）
+        row = self._row(status="done", mode=0, delivered_qty=64, claimant_name="玩家A")
+        rtl = format_row_clickable(row, 3, is_owner=False, player_name="玩家A")
+        self.assertIn("[打回]", str(rtl))
+
+    def test_owner_non_claimant_done_sees_reject(self):
+        # 拥有者非认领人看 done 行：可见 [打回]+[删行]（owner 可打回他人行）
+        row = self._row(status="done", mode=0, delivered_qty=64, claimant_name="B")
+        rtl = format_row_clickable(row, 3, is_owner=True, player_name="玩家A")
+        s = str(rtl)
+        self.assertIn("[打回]", s)
+        self.assertIn("[删行]", s)
 
 
 class OwnerFooterTest(unittest.TestCase):

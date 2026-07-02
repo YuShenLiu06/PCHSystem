@@ -263,19 +263,27 @@ def _sheet_view(src, ctx):
 
         def _show(data):
             rows = data.get("rows") or []
-            # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）
-            is_owner = (data.get("owner_name") == player_name)
+            # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
+            # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
+            owner_uuid = str(data.get("owner_uuid") or "")
+            owner_name = data.get("owner_name") or ""
+            is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
             parts = [RText(SHEET_DETAIL_TITLE.format(
                 id=data.get("id"),
                 title=data.get("title") or "",
-                owner=data.get("owner_name") or "?",
+                owner=owner_name or "?",
             )), RText("\n")]
             if not rows:
                 parts.append(RText(SHEET_DETAIL_EMPTY))
                 parts.append(RText("\n"))
             else:
                 for r in rows:
-                    parts.append(format_row_clickable(r, sheet_id, is_owner=is_owner))
+                    parts.append(format_row_clickable(
+                        r, sheet_id,
+                        is_owner=is_owner,
+                        player_name=player_name,
+                        player_uuid=player_uuid,
+                    ))
             if is_owner:
                 parts.append(format_owner_footer(sheet_id))
             server.tell(player_name, RTextList(*parts))
