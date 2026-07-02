@@ -17,6 +17,7 @@
 
 - `Docs/superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md`：sheets ↔ MCDR 对接 + 统一通知抽象层权威设计（鉴权双通道 service-token + `X-Player-UUID` 代玩家写 / 通知抽象层契约 / 触发规则表 7 类 category / `!!PCH sheet` 命令映射 / 轮询投递与离线补推 / 红线遵循 / MCDR API 依据 URL）。`未提交`
 - `Docs/architecture/services/notification-service.md`：notification-service 通知抽象层**可复用契约**文档（调用契约 `notify(session,…)` 同事务语义 + `category` 枚举注册表与扩展规约 + 数据模型 `notifications.notifications` + `Notifier` Protocol 首期 `DbNotifier` 预留 Webhook/Discord + pending/ack/read 端点契约 + MCDR 投递契约 + 与 alert-service 关系）。`未提交`
+- `Docs/Cheatsheets/dev-cheatsheet.md`：补「后端 FastAPI」段（compose 启停 / 端口表 / 根 `.env` 雷点 / `alembic upgrade head`·`current` / `/healthz`·`/me` 健康检查 / 日志与 pytest）+「前端 Vue3（Vite）」段（`npm run dev/build/preview`·`npx vitest` / `/api` 代理自动剥离前缀 / 联调依赖 backend / `WEB_BASE_URL` 决定回链 / 改 config 不热重载 / `allowedHosts` 外部域名雷点）。`未提交`
 
 ### Backend
 
@@ -26,9 +27,23 @@
 
 ### McdrPlugin
 
+#### Added
+
+- `htcmc_auth/messages.py`：sheet 行可点击操作按钮 helper（`rtext_button` 用 `RAction.suggest_command` 点击向聊天栏填命令 + `RText.h` 悬停提示；`format_row_clickable` 按状态×模式×拥有者渲染尾部工具栏——open→`[认领]` / claimed(lock)→`[标备齐][解除]` / claimed(progress)→`[交付][标备齐][解除]` / done→`[打回]`，拥有者追加 `[删行]`；`format_owner_footer` 拥有者底部 `[新增物品][改标题][删表]`），统一色板（green 正向 / red 破坏 / yellow 谨慎 / aqua 中性）遵循 `McdrPlugin/CLAUDE.md` §6；`tests/_stubs.py` `RAction` 补 `suggest_command`/`run_command`、`RText.c` 改 `(action, value)` 签名 + 新增 `h()` hover stub；`tests/test_messages.py` +19 用例（按钮 / 行工具栏全状态分支 / 拥有者底部栏）。配合 `aa3ffb9` 菜单重做落地。`未提交`
+
 #### Changed
 
 - `Docs/architecture/services/mcdr-plugin.md`：命令表加 `!!PCH sheet …` 全套（引用 sheets.md §11）；§3.6 HTTP 客户端修正 `schedule_task` 卸载阻塞的过时描述（与 RS-6 冲突，改「阻塞 HTTP 必须放 `@new_thread`；`schedule_task` 跑 TaskExecutor=主线程不可卸载阻塞」），新增 §3.6.1「service-token + `X-Player-UUID` 代玩家写」、§3.7「sheets 命令树」、§3.8「通知轮询」（在线集合 on_player_joined/left + rcon list 初始化 + 轮询 + ack + 离线补推）；§4 依赖服务表加 sheets / notifications；§5 配置项加 `notify_poll_interval_seconds`/`notify_max_per_poll`；§6 风险表加阻塞误用与轮询延迟两项。
+
+#### Fixed
+
+- `aa3ffb9` 的 `sheet_commands.py` 已 import 并调用 `rtext_button`/`format_row_clickable`/`format_owner_footer`，但函数定义未随该提交进入 `messages.py`（HEAD 加载即 `ImportError: cannot import name 'rtext_button'`）；本次补齐三个函数定义修复插件加载。`未提交`
+
+### Frontend
+
+#### Changed
+
+- `Frontend/vite.config.ts`：`server.allowedHosts` 加 `dev-git.u3071783.nyat.app`，允许经反代/tunnel 的外部域名访问 dev server（Vite 默认拦截防 DNS rebinding；仅 dev，生产走 `vite build` 静态产物不受影响）。`未提交`
 
 ### 项目级
 

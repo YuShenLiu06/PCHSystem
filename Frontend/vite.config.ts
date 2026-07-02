@@ -5,6 +5,9 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   server: {
+    // 通过外部域名（反代 / tunnel，如 dev-git.u3071783.nyat.app）访问 dev server 时需显式信任，
+    // 否则 Vite 默认拦截（防 DNS rebinding）。仅 dev；生产走 vite build 静态产物，不受此影响。
+    allowedHosts: ['dev-git.u3071783.nyat.app'],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
