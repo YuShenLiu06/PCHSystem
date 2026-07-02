@@ -118,7 +118,7 @@
 首次发版前，各组件按以下节奏独立打 tag：
 
 - `backend-v0.1.0`：B1-B16 跑完、OpenAPI 契约冻结（B16）
-- `mcdr-plugin-v0.1.0`：M1-M2 完成、可发布到 MCDR 插件仓库
+- `mcdr-v0.1.0`：M1-M2 完成、可发布到 MCDR 插件仓库
 - `frontend-v0.1.0`：F1-F4 完成、首屏可访问
 
 打 tag 时把对应 `[Unreleased]` 段落固化为 `## [backend-v0.1.0] - YYYY-MM-DD` 等具名版本段，并重置 `[Unreleased]`。
