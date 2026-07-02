@@ -65,7 +65,7 @@
 | **R-9** | **前端权限仅可见性**：真实权限以**后端 RBAC 为准**，前端只控展示。 | frontend §4 |
 | **R-10** | **模块化单体**：部署单一 FastAPI 服务，内部按 schema 隔离（`users / projects / scoring / titles / wiki / alerts`），**不拆独立子服务**；跨表事务用单库事务。 | arch §2.2 |
 | **R-11** | **密钥不进代码库**：`POSTGRES_*`、`WIKI_API_KEY`、`MCDR_SERVICE_TOKEN`、`JWT_SECRET` 经 `.env` / docker secrets 注入。 | arch §4 |
-| **R-12** | **MCDR 耗时调用放 `schedule_task`**；HTTP 调用必含**超时 + 重试 + 失败回执**。 | mcdr-plugin §3.6 |
+| **R-12** | **MCDR 阻塞调用放 `@new_thread`**（`mcdreforged.api.decorator.new_thread`）；`schedule_task` 的同步回调跑在 task executor = 主线程，**不可**用于卸载阻塞工作。HTTP 调用必含**超时 + 重试 + 失败回执**。 | mcdr-plugin §3.6 |
 
 > 服务特有、局部的雷点写在各子服务 `CLAUDE.md`，不在此重复。
 
@@ -105,6 +105,7 @@ PCHSystem/
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | 贡献与发布规范 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 分支模型 / Conventional Commits / 各组件独立 SemVer / MCDR 插件发布（参考 MCDR 标准） |
+| 开发指令速查表 | [`Docs/Cheatsheets/dev-cheatsheet.md`](./Docs/Cheatsheets/dev-cheatsheet.md) | 日常开发高频运维 / 调试指令（Docker / MCDR / 后端 / 前端）速查 |
 
 ### 各服务文档
 | 服务 | 路径 |
