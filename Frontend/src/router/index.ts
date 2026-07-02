@@ -6,6 +6,8 @@ export const router = createRouter({
   routes: [
     { path: '/auth', component: () => import('../views/AuthExchange.vue'), meta: { public: true } },
     { path: '/me', component: () => import('../views/Me.vue') },
+    { path: '/sheets', component: () => import('../views/sheets/SheetList.vue') },
+    { path: '/sheets/:id', component: () => import('../views/sheets/SheetEditor.vue') },
     { path: '/', redirect: '/me' },
   ],
 })
