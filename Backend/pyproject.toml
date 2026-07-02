@@ -16,7 +16,7 @@ dependencies = [
   "pyjwt>=2.8",
   "pydantic-settings>=2.1",
   "httpx>=0.27",
-  "litemapy>=0.11",
+  "litemapy>=0.11.0b0",  # PyPI 仅有 pre-release（a/b）；显式标注 b0 让 pip 接受
   "python-multipart>=0.0.9",
 ]
 
