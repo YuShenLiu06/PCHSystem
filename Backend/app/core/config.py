@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,19 @@ class Settings(BaseSettings):
 
     mcdr_service_token: str = ""
     web_base_url: str = "http://localhost:5173"
+
+    @field_validator("mcdr_service_token")
+    @classmethod
+    def _mcdr_service_token_non_empty(cls, v: str) -> str:
+        """H-1'：service-token 是 MCDR 代玩家写的唯一共享密钥，空串 = 完全开放，
+        启动即 fail-fast（R-11 经环境注入，绝不硬编码、不留默认空）。
+        """
+        if not v or not v.strip():
+            raise ValueError(
+                "MCDR_SERVICE_TOKEN must be set to a non-empty value "
+                "(service-token 代理写通道的共享密钥，禁止空)"
+            )
+        return v
 
     @property
     def postgres_dsn(self) -> str:

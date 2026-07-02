@@ -13,7 +13,7 @@ class SheetPatchRequest(BaseModel):
 
 
 class RowUpsertRequest(BaseModel):
-    item_name: str = Field(min_length=1, max_length=128)
+    item_name: str = Field(min_length=1, max_length=64)
     need_qty: int = Field(default=0, ge=0)
     mode: int = Field(default=0, ge=0, le=1)
     sort_order: int = Field(default=0, ge=0)

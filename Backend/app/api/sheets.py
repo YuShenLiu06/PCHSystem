@@ -32,6 +32,7 @@ from app.schemas.sheet import (
     SheetPatchRequest,
     SheetSummary,
 )
+from app.services import notification_service
 
 router = APIRouter(prefix="/sheets", tags=["sheets"])
 
@@ -46,6 +47,34 @@ async def _load_sheet_or_404(session: AsyncSession, sheet_id: int) -> Sheet:
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
     return result[0]
+
+
+async def _notify(
+    session: AsyncSession,
+    *,
+    recipient_uuid,
+    actor: Player,
+    category: str,
+    title: str,
+    body: str,
+    payload: dict,
+) -> None:
+    """落库通知（同调用方事务）。actor==recipient 时跳过（不发给自己）。"""
+    if recipient_uuid is None or recipient_uuid == actor.uuid:
+        return
+    full_payload = {
+        "actor_uuid": str(actor.uuid),
+        "actor_name": actor.current_name,
+        **payload,
+    }
+    await notification_service.notify(
+        session,
+        recipient_uuid=recipient_uuid,
+        category=category,
+        title=title,
+        body=body,
+        payload=full_payload,
+    )
 
 
 def _row_dict(row: SheetRow, claimant_name: str | None = None) -> dict:
@@ -173,6 +202,30 @@ async def delete_sheet(
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    # 删表前：对所有被认领的行通知各认领人「行已随表删除」
+    # M-5：循环顶部把 item_name/claimant_uuid/row_id 解到局部变量快照，
+    # 避免 notify 落库 flush / commit 路径上 expire_on_commit 触发额外 SQL。
+    rows_with_names = await sheet_repo.list_rows(session, sheet_id)
+    for old_row, _name in rows_with_names:
+        claimant = old_row.claimant_uuid
+        if claimant is None:
+            continue
+        item_name = old_row.item_name
+        old_row_id = old_row.id
+        await _notify(
+            session,
+            recipient_uuid=claimant,
+            actor=player,
+            category="sheet_row_deleted",
+            title="认领的行已被删除",
+            body=f"[{item_name}] 已被拥有者删除，认领取消",
+            payload={
+                "sheet_id": sheet_id,
+                "sheet_title": sheet.title,
+                "row_id": old_row_id,
+                "item_name": item_name,
+            },
+        )
     await sheet_repo.delete_sheet(session, sheet_id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -188,6 +241,10 @@ async def upsert_row(
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    # 捕获旧状态：仅当更新已存在且被认领的行、且 need_qty 真正变化时，通知认领人
+    prev_row = await sheet_repo.get_row_by_item(session, sheet_id, body.item_name)
+    old_need = prev_row.need_qty if prev_row is not None else None
+    claimant_uuid = prev_row.claimant_uuid if prev_row is not None else None
     try:
         row = await sheet_repo.upsert_row(
             session,
@@ -197,6 +254,27 @@ async def upsert_row(
             mode=body.mode,
             sort_order=body.sort_order,
         )
+        if (
+            claimant_uuid is not None
+            and old_need is not None
+            and old_need != body.need_qty
+        ):
+            await _notify(
+                session,
+                recipient_uuid=claimant_uuid,
+                actor=player,
+                category="sheet_qty_changed",
+                title="所需数量已调整",
+                body=f"[{body.item_name}] 所需数量变为 {body.need_qty}（原 {old_need}）",
+                payload={
+                    "sheet_id": sheet_id,
+                    "sheet_title": sheet.title,
+                    "row_id": row.id,
+                    "item_name": body.item_name,
+                    "old": old_need,
+                    "new": body.need_qty,
+                },
+            )
         await session.commit()
     except IntegrityError as exc:  # 并发同名 insert 命中 UNIQUE
         await session.rollback()
@@ -215,6 +293,25 @@ async def delete_row(
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    current = await sheet_repo.get_row(session, sheet_id, row_id)
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    old_row = current[0]
+    if old_row.claimant_uuid is not None:
+        await _notify(
+            session,
+            recipient_uuid=old_row.claimant_uuid,
+            actor=player,
+            category="sheet_row_deleted",
+            title="认领的行已被删除",
+            body=f"[{old_row.item_name}] 已被拥有者删除，认领取消",
+            payload={
+                "sheet_id": sheet_id,
+                "sheet_title": sheet.title,
+                "row_id": row_id,
+                "item_name": old_row.item_name,
+            },
+        )
     count = await sheet_repo.delete_row(session, sheet_id, row_id)
     if count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
@@ -233,9 +330,24 @@ async def claim_row(
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
 ) -> RowDetail:
-    await _load_sheet_or_404(session, sheet_id)
+    sheet = await _load_sheet_or_404(session, sheet_id)
     try:
         row = await sheet_repo.claim_row(session, sheet_id, row_id, player.uuid)
+        if row is not None:
+            await _notify(
+                session,
+                recipient_uuid=sheet.owner_uuid,
+                actor=player,
+                category="sheet_claimed",
+                title="物品被认领",
+                body=f"{player.current_name} 认领了 [{row.item_name}]",
+                payload={
+                    "sheet_id": sheet_id,
+                    "sheet_title": sheet.title,
+                    "row_id": row_id,
+                    "item_name": row.item_name,
+                },
+            )
         await session.commit()
     except SheetRowConflict as exc:
         await session.rollback()
@@ -259,7 +371,7 @@ async def set_row_delivery(
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
 ) -> RowDetail:
-    await _load_sheet_or_404(session, sheet_id)
+    sheet = await _load_sheet_or_404(session, sheet_id)
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
@@ -269,6 +381,28 @@ async def set_row_delivery(
         row = await sheet_repo.set_row_delivery(
             session, sheet_id, row_id, body.delivered_qty
         )
+        if row is not None:
+            is_done = body.delivered_qty >= row.need_qty
+            await _notify(
+                session,
+                recipient_uuid=sheet.owner_uuid,
+                actor=player,
+                category="sheet_done" if is_done else "sheet_delivered",
+                title="物品已备齐" if is_done else "物品上报交付",
+                body=(
+                    f"{player.current_name} 已备齐 [{row.item_name}]"
+                    if is_done
+                    else f"{player.current_name} 上报交付 {body.delivered_qty}/{row.need_qty} [{row.item_name}]"
+                ),
+                payload={
+                    "sheet_id": sheet_id,
+                    "sheet_title": sheet.title,
+                    "row_id": row_id,
+                    "item_name": row.item_name,
+                    "delivered": body.delivered_qty,
+                    "need": row.need_qty,
+                },
+            )
         await session.commit()
     except SheetRowConflict as exc:
         await session.rollback()
@@ -293,10 +427,49 @@ async def release_row(
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
-    if current[0].claimant_uuid != player.uuid and not _can_edit(sheet, player):
+    old_row = current[0]
+    # repo 的 release_row 会清空 claimant_uuid/delivered（in-place 改同一 ORM 对象），
+    # 必须先存不可变快照，通知时引用快照值。
+    prev_claimant = old_row.claimant_uuid
+    prev_item = old_row.item_name
+    is_claimant_self = prev_claimant == player.uuid
+    if not is_claimant_self and not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     try:
         row = await sheet_repo.release_row(session, sheet_id, row_id)
+        if row is not None and prev_claimant is not None:
+            if is_claimant_self:
+                # 认领人自放 → 通知 owner「取消认领」
+                await _notify(
+                    session,
+                    recipient_uuid=sheet.owner_uuid,
+                    actor=player,
+                    category="sheet_released",
+                    title="认领已取消",
+                    body=f"{player.current_name} 取消了对 [{prev_item}] 的认领",
+                    payload={
+                        "sheet_id": sheet_id,
+                        "sheet_title": sheet.title,
+                        "row_id": row_id,
+                        "item_name": prev_item,
+                    },
+                )
+            else:
+                # owner 解锁 → 通知认领人「拥有者解除了锁定」
+                await _notify(
+                    session,
+                    recipient_uuid=prev_claimant,
+                    actor=player,
+                    category="sheet_released",
+                    title="锁定已被拥有者解除",
+                    body=f"拥有者解除了你对 [{prev_item}] 的锁定",
+                    payload={
+                        "sheet_id": sheet_id,
+                        "sheet_title": sheet.title,
+                        "row_id": row_id,
+                        "item_name": prev_item,
+                    },
+                )
         await session.commit()
     except SheetRowConflict as exc:
         await session.rollback()
@@ -321,11 +494,27 @@ async def reject_row(
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    old_row = current[0]
     # 认领人（自取消备齐）或拥有者（打回）均可；其余 403
-    if current[0].claimant_uuid != player.uuid and not _can_edit(sheet, player):
+    if old_row.claimant_uuid != player.uuid and not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     try:
         row = await sheet_repo.reject_row(session, sheet_id, row_id)
+        if row is not None and old_row.claimant_uuid is not None:
+            await _notify(
+                session,
+                recipient_uuid=old_row.claimant_uuid,
+                actor=player,
+                category="sheet_rejected",
+                title="物品已打回",
+                body=f"[{old_row.item_name}] 已打回，delivered 归零，可重做",
+                payload={
+                    "sheet_id": sheet_id,
+                    "sheet_title": sheet.title,
+                    "row_id": row_id,
+                    "item_name": old_row.item_name,
+                },
+            )
         await session.commit()
     except SheetRowConflict as exc:
         await session.rollback()

@@ -104,6 +104,16 @@ async def get_row(
     return row[0], row[1]
 
 
+async def get_row_by_item(
+    session: AsyncSession, sheet_id: int, item_name: str
+) -> SheetRow | None:
+    """按 (sheet_id, item_name) UNIQUE 锁点查行（upsert 前捕获旧状态用）。"""
+    stmt = select(SheetRow).where(
+        SheetRow.sheet_id == sheet_id, SheetRow.item_name == item_name
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def upsert_row(
     session: AsyncSession,
     sheet_id: int,

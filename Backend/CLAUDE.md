@@ -37,6 +37,8 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | **RS-5** | 一次性 token 软失效（soft revoke） | `issue()` 签发新 token 前先 revoke 同 UUID 未使用旧 token（`revoked_at` 置位）；兑换校验 `revoked_at is null`。保留审计痕迹，不硬删。 |
 | **RS-6** | RateLimiter 单进程内存实现（MVP） | 当前 `auth_service.rate_limiter` 是进程内字典，多 worker 下失效；生产前需迁 Redis。 |
 | **RS-7** | 异步一致性 | SQLAlchemy 2.x async + `pytest-asyncio`；阻塞 IO（如调外部 API）必放 `asyncio` 任务或线程池，不阻塞事件循环。 |
+| **RS-8** | 双通道 `get_current_player`（api/deps.py） | Web 走 `Authorization: Bearer <jwt>`；MCDR 走 `X-Service-Token` + `X-Player-UUID` 代理（`secrets.compare_digest` 校验后查 Player 注入）。**业务层零改动**——RBAC 基于 `Player`，与凭证来源无关。`/sheets/export` 与 `/notifications/*` 仍独占 `require_service_token`（无身份）。**H-2**：Authorization 头存在（即便非 Bearer/过期/非法）只走 JWT 通道报 401，**绝不静默降级**到 service-token。代理命中后落 `service_token_proxy` 审计日志（H-1'，不含 token）。 |
+| **RS-9** | notification-service 契约入口（services/notification_service.py） | 发通知统一走 `notify(session, ...)`，**必须在调用方写端点同一事务的同一 session 内调用**（R-10：业务改库 + 记通知原子，回滚则通知不落库）。`category` 用 String 按 `<domain>_<event>` 扩展；`Notifier` Protocol 预留 Webhook/Discord 扩展点。**C-1**：`mark_delivered/mark_read` 必须带 `recipient_uuid`，SQL WHERE 限定归属，防越权 ack/read 他人；**M-2/M-3**：入口对 title(≤200)/body(≤500) 限长 + 控制字符清洗、payload 序列化 >8KB 截断。详见 [`Docs/architecture/services/notification-service.md`](../Docs/architecture/services/notification-service.md)。 |
 
 ---
 
@@ -57,11 +59,17 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | `POST /auth/exchange` | 前端调用，一次性 token → JWT pair（access + refresh） |
 | `POST /auth/refresh` | refresh token 续签 access |
 | `GET /me` | 当前身份（需 Bearer JWT） |
+| `GET /notifications/pending` | MCDR 轮询拉取未投递通知（service-token，query `player_uuid`） |
+| `POST /notifications/ack` | 批量标**该 player_uuid 名下**通知投递（service-token，body `{player_uuid, ids:[…]}`，C-1 防越权） |
+| `POST /notifications/{id}/read` | 标已读（service-token，query `player_uuid` 归属校验，跨玩家 404；L-2 同步幂等置 delivered_at） |
 
 ### 数据表（users schema）
 - `players`：玩家主身（UUID + current_name + role + whitelist_state）
 - `auth_tokens`：一次性登录 token（含 `expires_at` / `used_at` / `revoked_at`）
 - `jwt_revocations`：JWT 吊销表（refresh 接入待办）
+
+### 数据表（notifications schema）
+- `notifications`：统一通知记录（recipient_uuid FK→users.players.uuid ON DELETE CASCADE / category / title / body / payload jsonb / created_at / delivered_at / read_at；索引 `(recipient_uuid, delivered_at)`）
 
 > 完整 DDL 见 [`Docs/architecture/data-model.md`](../Docs/architecture/data-model.md)。
 
@@ -116,4 +124,4 @@ curl -sS http://localhost:8000/me                   # 应返回 401（未带 JWT
 
 ---
 
-*最后更新：2026-07-02（后端整体导航；热重载工作流基于根 docker-compose.yml 源码挂载 + uvicorn --reload）*
+*最后更新：2026-07-02（加双通道 get_current_player deps + notifications 模块：迁移 0006 / model / repo / service.notify 契约 / API pending·ack·read）*
