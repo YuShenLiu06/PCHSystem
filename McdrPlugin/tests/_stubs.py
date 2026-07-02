@@ -36,6 +36,8 @@ def install_stubs() -> None:
 
     class RAction:
         open_url = "open_url"
+        suggest_command = "suggest_command"
+        run_command = "run_command"
 
     class RText:
         def __init__(self, text="", color=None, styles=None):
@@ -51,9 +53,14 @@ def install_stubs() -> None:
                     self.styles.add(s)
             return self
 
-        def c(self, action, url):
-            self._action = action
-            self._url = url
+        def c(self, action, value):
+            self._click_action = action
+            self._click_value = value
+            return self
+
+        def h(self, *args):
+            # set_hover_text 简化替身：仅缓存参数，不影响 __str__
+            self._hover = args
             return self
 
         def __add__(self, other):

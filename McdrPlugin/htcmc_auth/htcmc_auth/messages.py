@@ -95,6 +95,96 @@ def format_row_line(row: dict) -> str:
     )
 
 
+# === 可点击操作按钮（suggest_command；MC 1.19+ run_command 失效，统一 suggest）===
+
+def rtext_button(label: str, command: str, *, color=RColor.aqua, hover: str = "") -> RText:
+    """可点击操作按钮：点击向聊天栏填入 command（suggest_command），玩家回车执行。
+
+    hover 非空时悬停显示灰色提示。色板见 McdrPlugin/CLAUDE.md §6：
+    green=正向 / red=破坏性 / yellow=谨慎 / aqua=中性。
+    """
+    rt = RText(label, color=color).c(RAction.suggest_command, command)
+    if hover:
+        rt.h(RText(hover, color=RColor.gray))
+    return rt
+
+
+def format_row_clickable(row: dict, sheet_id, *, is_owner: bool) -> RTextList:
+    """格式化单行为可点击 RTextList：行文本 + 按状态/模式/拥有者追加尾部操作按钮。
+
+    完整工具栏方案（与 web 端对齐）：
+      open          → [认领]
+      claimed(lock) → [标备齐][解除]
+      claimed(progress) → [交付][标备齐][解除]
+      done          → [打回]
+    拥有者在任意状态额外追加 [删行]。其余状态/未知 → 仅行文本（无按钮）。
+    """
+    rid = row.get("id")
+    status = str(row.get("status", ""))
+    mode = int(row.get("mode", 0))
+    buttons = []
+    if status == "open":
+        buttons.append(rtext_button(
+            "[认领]", f"!!PCH sheet claim {sheet_id} {rid}",
+            color=RColor.green, hover="认领此行（open→claimed）",
+        ))
+    elif status == "claimed":
+        if mode == 1:  # progress：数量为绝对值，末尾留空格让玩家续输
+            buttons.append(rtext_button(
+                "[交付]", f"!!PCH sheet deliver {sheet_id} {rid} ",
+                color=RColor.aqua,
+                hover="上报交付（数量为绝对值，末尾补数量后回车）",
+            ))
+        buttons.append(rtext_button(
+            "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
+            color=RColor.green, hover="标记此行备齐（lock 快捷 / progress 封顶）",
+        ))
+        buttons.append(rtext_button(
+            "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
+            color=RColor.yellow, hover="解除认领（claimed→open，他人可重新认领）",
+        ))
+    elif status == "done":
+        buttons.append(rtext_button(
+            "[打回]", f"!!PCH sheet reject {sheet_id} {rid}",
+            color=RColor.red, hover="打回（done→claimed，delivered 归零，可重做）",
+        ))
+    if is_owner:
+        buttons.append(rtext_button(
+            "[删行]", f"!!PCH sheet delrow {sheet_id} {rid}",
+            color=RColor.red, hover="删除此行（拥有者）",
+        ))
+
+    seg = [RText(format_row_line(row)), RText("  ")]
+    for i, b in enumerate(buttons):
+        if i > 0:
+            seg.append(RText(" "))
+        seg.append(b)
+    seg.append(RText("\n"))
+    return RTextList(*seg)
+
+
+def format_owner_footer(sheet_id) -> RTextList:
+    """拥有者底部管理栏：新增物品（默认 lock）/ 改标题 / 删表。"""
+    return RTextList(
+        rtext_button(
+            "[新增物品]", f"!!PCH sheet add {sheet_id} ",
+            color=RColor.aqua,
+            hover="新增行（默认 lock；续输：物品 数量 [progress] [排序]）",
+        ),
+        RText(" ", color=RColor.gray),
+        rtext_button(
+            "[改标题]", f"!!PCH sheet rename {sheet_id} ",
+            color=RColor.aqua, hover="修改表标题（续输新标题）",
+        ),
+        RText(" ", color=RColor.gray),
+        rtext_button(
+            "[删表]", f"!!PCH sheet delete {sheet_id}",
+            color=RColor.red, hover="删除整表（级联删行，谨慎）",
+        ),
+        RText("\n", color=RColor.gray),
+    )
+
+
 # === notifications 文案（按 category 映射）===
 # category 清单（与后端 notification_service 一致）：
 #   sheet_claimed / sheet_delivered / sheet_done / sheet_released /
