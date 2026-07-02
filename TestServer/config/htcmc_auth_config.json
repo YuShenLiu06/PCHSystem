@@ -1,0 +1,6 @@
+{
+    "api_url": "http://pchsystem-backend-1:8000",
+    "service_token": "change_me_service_token",
+    "http_timeout_seconds": 5.0,
+    "http_retries": 2
+}

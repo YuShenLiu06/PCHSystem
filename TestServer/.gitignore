@@ -1,0 +1,12 @@
+# 持久化数据（Fabric 服务器文件 + 世界）
+server/
+
+# MCDR 日志与运行时
+logs/
+*.log
+
+# 本地覆盖（不进库）
+config.local.yml
+
+# 构建缓存
+.docker/

@@ -1,0 +1,24 @@
+# MCDR 配置 — 1.20.1 Fabric 测试服务器
+# 红线 S-1 已联网核实：
+#   - Fabric 用 vanilla_handler
+#   - Java 19+ 的 UTF-8 参数：-Dstdout.encoding/-Dstderr.encoding
+#   - 来源: https://docs.mcdreforged.com/en/latest/configuration.html
+language: zh_cn
+working_directory: server
+start_command: java -Xms1G -Xmx2G -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar fabric-server.jar nogui
+handler: vanilla_handler
+encoding: utf8
+decoding: utf8
+rcon:
+  enable: true
+  address: 127.0.0.1
+  port: 25575
+  password: pch_test_rcon
+plugin_directories:
+  - plugins
+check_update: false
+advanced_console: false   # 容器内重定向 stdin/stdout 需关掉
+write_server_output_to_log_file: true
+debug:
+  all: false
+  plugin: true

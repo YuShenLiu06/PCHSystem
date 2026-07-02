@@ -1,0 +1,33 @@
+services:
+  mc-test:
+    build:
+      context: ..           # 项目根，让 Dockerfile 能 COPY McdrPlugin/htcmc_auth
+      dockerfile: TestServer/Dockerfile
+    image: pchsystem-mc-test
+    container_name: pchsystem-mc-test-1
+    ports:
+      - "25565:25565"   # MC 客户端连接（Java Edition）
+      - "25575:25575"   # rcon（可选，调试用）
+    volumes:
+      # Fabric server 工作目录持久化（首次启动会下载 ~300MB 的 MC 文件）
+      - mc-test-data:/mcdr/server
+      # 开发模式：插件源码挂载（context=项目根，所以路径相对 TestServer/ 要 ../）
+      # 改完代码用游戏内 !!MCDR plugin reload htcmc_auth 秒级热重载
+      - ../McdrPlugin/htcmc_auth:/mcdr/plugins/htcmc_auth
+    networks:
+      # 加入后端所在网络，容器内可用 http://pchsystem-backend-1:8000 访问后端
+      - pchsystem_default
+    environment:
+      MC_VERSION: "1.20.1"
+      FABRIC_LOADER_VERSION: "0.19.3"
+      FABRIC_INSTALLER_VERSION: "1.0.1"
+    stdin_open: true   # MCDR 控制台 attach
+    tty: true
+    restart: unless-stopped
+
+volumes:
+  mc-test-data:
+
+networks:
+  pchsystem_default:
+    external: true
