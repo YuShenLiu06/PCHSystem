@@ -51,7 +51,7 @@
 | MC 层 | MCDReforged 插件（仅游戏内客户端，不直连数据库） |
 | Wiki | wiki.js（GraphQL 单向同步） |
 | 部署 | Docker Compose |
-| 关键库 | [`litemapy`](https://github.com/Spindust/litemapy)（投影解析）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，不自研） |
+| 关键库 | [`litemapy`](https://github.com/SmylerMC/litemapy)（投影解析）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，不自研） |
 
 ---
 
@@ -145,7 +145,16 @@ curl http://localhost:8000/healthz
 
 ## 当前状态
 
-M1 + M2 + F1–F4 已完成，V1 后端鉴权链路验证通过（MCDR `!!login` → token → 前端 `/auth` 兑换 JWT → `/me`）。后续阶段规划见 [`Docs/Plans/`](./Docs/Plans/)。
+**v0.3.0 已发布**（2026-07-03，三组件分别打 tag：`backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`）。已落地：
+
+- **鉴权链路**（M1+M2+F1-F4）：MCDR `!!PCH login` → 后端 token → 前端 `/auth` 兑换 JWT → `/me`
+- **双通道鉴权**：Web 走 JWT，MCDR 走 service-token + `X-Player-UUID` 代玩家写（RBAC 等价）
+- **sheets 协作**：Web 与 MC 对等（认领/交付/打回/解除）+ progress 多人贡献者模式 + 轮询自动刷新
+- **投影解析生成表格**：`.litematic` 上传 → litemapy 解析 + 中文翻译 → 一键生成 Sheet
+- **统一通知抽象层**：业务事件 → DB 记库 → MCDR 轮询投递 + 离线补推
+- **MCDR `!!PCH sheet` 命令树**（14 子命令）+ 通知轮询
+
+变更记录见 [`CHANGELOG.md`](./CHANGELOG.md)，后续规划见 [`Docs/Plans/`](./Docs/Plans/)。
 
 ---
 
@@ -159,4 +168,4 @@ M1 + M2 + F1–F4 已完成，V1 后端鉴权链路验证通过（MCDR `!!login`
 
 ---
 
-*最后更新：2026-07-02*
+*最后更新：2026-07-03*

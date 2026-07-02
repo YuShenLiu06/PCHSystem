@@ -11,53 +11,119 @@
 
 ## [Unreleased]
 
-### 文档与计划
-
-#### Added
-
-- `Docs/superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md`：sheets ↔ MCDR 对接 + 统一通知抽象层权威设计（鉴权双通道 service-token + `X-Player-UUID` 代玩家写 / 通知抽象层契约 / 触发规则表 7 类 category / `!!PCH sheet` 命令映射 / 轮询投递与离线补推 / 红线遵循 / MCDR API 依据 URL）。`未提交`
-- `Docs/architecture/services/notification-service.md`：notification-service 通知抽象层**可复用契约**文档（调用契约 `notify(session,…)` 同事务语义 + `category` 枚举注册表与扩展规约 + 数据模型 `notifications.notifications` + `Notifier` Protocol 首期 `DbNotifier` 预留 Webhook/Discord + pending/ack/read 端点契约 + MCDR 投递契约 + 与 alert-service 关系）。`未提交`
-- `Docs/Cheatsheets/dev-cheatsheet.md`：补「后端 FastAPI」段（compose 启停 / 端口表 / 根 `.env` 雷点 / `alembic upgrade head`·`current` / `/healthz`·`/me` 健康检查 / 日志与 pytest）+「前端 Vue3（Vite）」段（`npm run dev/build/preview`·`npx vitest` / `/api` 代理自动剥离前缀 / 联调依赖 backend / `WEB_BASE_URL` 决定回链 / 改 config 不热重载 / `allowedHosts` 外部域名雷点）。`未提交`
+> 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处，发版时固化为 `## [<component>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
 ### Backend
 
-#### Changed
+#### Added
 
-- `Docs/architecture/api/sheets.md` §2：鉴权表新增「Service Token + X-Player-UUID（代玩家）」通道（覆盖 sheets 写端点 + 通知端点，与 JWT 等价，复用 RBAC）；§5 端点表每个写端点说明列补「MCDR 可经 service-token+`X-Player-UUID` 代玩家调用」；§10 迁移表加 `0006_notifications`；新增 §11「MCDR `!!PCH sheet` 命令映射表」（14 条命令→HTTP 端点→角色）；新增 §12「通知端点」（pending/ack/read）。
+- _（待补）_
 
 ### McdrPlugin
 
 #### Added
 
-- `htcmc_auth/messages.py`：sheet 行可点击操作按钮 helper（`rtext_button` 用 `RAction.suggest_command` 点击向聊天栏填命令 + `RText.h` 悬停提示；`format_row_clickable` 按状态×模式×拥有者渲染尾部工具栏——open→`[认领]` / claimed(lock)→`[标备齐][解除]` / claimed(progress)→`[交付][标备齐][解除]` / done→`[打回]`，拥有者追加 `[删行]`；`format_owner_footer` 拥有者底部 `[新增物品][改标题][删表]`），统一色板（green 正向 / red 破坏 / yellow 谨慎 / aqua 中性）遵循 `McdrPlugin/CLAUDE.md` §6；`tests/_stubs.py` `RAction` 补 `suggest_command`/`run_command`、`RText.c` 改 `(action, value)` 签名 + 新增 `h()` hover stub；`tests/test_messages.py` +19 用例（按钮 / 行工具栏全状态分支 / 拥有者底部栏）。配合 `aa3ffb9` 菜单重做落地。`未提交`
-
-#### Changed
-
-- `Docs/architecture/services/mcdr-plugin.md`：命令表加 `!!PCH sheet …` 全套（引用 sheets.md §11）；§3.6 HTTP 客户端修正 `schedule_task` 卸载阻塞的过时描述（与 RS-6 冲突，改「阻塞 HTTP 必须放 `@new_thread`；`schedule_task` 跑 TaskExecutor=主线程不可卸载阻塞」），新增 §3.6.1「service-token + `X-Player-UUID` 代玩家写」、§3.7「sheets 命令树」、§3.8「通知轮询」（在线集合 on_player_joined/left + rcon list 初始化 + 轮询 + ack + 离线补推）；§4 依赖服务表加 sheets / notifications；§5 配置项加 `notify_poll_interval_seconds`/`notify_max_per_poll`；§6 风险表加阻塞误用与轮询延迟两项。
-
-#### Fixed
-
-- `aa3ffb9` 的 `sheet_commands.py` 已 import 并调用 `rtext_button`/`format_row_clickable`/`format_owner_footer`，但函数定义未随该提交进入 `messages.py`（HEAD 加载即 `ImportError: cannot import name 'rtext_button'`）；本次补齐三个函数定义修复插件加载。`未提交`
-- `htcmc_auth/sheet_commands.py`：空列表分支补可点击「新增」快捷指令——① `_sheet_view` 空行时拥有者也曾不显示 `format_owner_footer`（缺 `[新增物品]`，无法便捷新增第一行），现把 footer 提到 if/else 外、空行也渲染（非拥有者仍无管理栏，RBAC 以后端 403 为准）；② `_sheet_list` 空表单（含 `--mine`）只回显 `（无表格）` 无按钮，现追加 `[建表]`（suggest `!!PCH sheet create ` 续输标题）。新增 `tests/test_sheet_commands_render.py`（4 用例，mock `sheet_client` + fake server 锁定空列表渲染行为）。`未提交`
-- 通知轮询延迟 ~12s（预期 2s）：`htcmc_auth/config.json.example` 的 `notify_poll_interval_seconds` 误写 `15.0`，与代码默认 `config.py:10` 的 `2.0` + 5 处架构文档（`notification-service.md`/`mcdr-plugin.md`/`sheets-mcdr-bridge-design.md`）矛盾；运行时 `config.json` 被 `.gitignore` 忽略、部署从 example 复制 → 实际生效 15s，`notifier.py:153` `interval = max(1.0, cfg.notify_poll_interval_seconds)` 循环节拍随之变 15s，单次 claim 后另一玩家在单个 [0, 15s] 窗口内才被轮询到。改回 `2.0`。**防御加固**：① `htcmc_auth/__init__.py` `on_load` 追加 `serv.logger.info("notifier poll interval = %ss (max_per_poll = %s)", ...)`，部署后从日志即可确认生效值（防 example/默认值漂移被静默吞掉）；② 新增 `tests/test_config.py` 一致性测试，断言 example 的 4 个行为参数（`http_timeout_seconds`/`http_retries`/`notify_poll_interval_seconds`/`notify_max_per_poll`）与 `HtcmcAuthConfig` 默认值一致（排除 `api_url`/`service_token` 部署敏感字段），CI 拦截未来漂移。`load_config_simple` 缺失字段回退类默认已联网核实（<https://docs.mcdreforged.com/en/latest/code_references/utils.html>）。`未提交`
+- _（待补）_
 
 ### Frontend
 
-#### Changed
+#### Added
 
-- `Frontend/vite.config.ts`：`server.allowedHosts` 加 `dev-git.u3071783.nyat.app`，允许经反代/tunnel 的外部域名访问 dev server（Vite 默认拦截防 DNS rebinding；仅 dev，生产走 `vite build` 静态产物不受影响）。`未提交`
+- _（待补）_
 
-### 项目级
-
-#### Changed
-
-- `Docs/architecture.md`：§2.1 三端流程图 `MCDR → API` 边加注「（写：service-token + X-Player-UUID 代玩家）」+ 核心约束补 MCDR 代玩家写说明；§5 服务地图 mermaid 加 `notification-service` 节点（MCDR/SCORE/PROJ → NOTIFY 边）+ 服务表加一行（职责：业务事件→玩家通知记库与投递，文档链接 notification-service.md）；§7 新增「7.5 sheets 协作（Web ↔ MC 对等 + 通知流转）」sequenceDiagram（认领→后端事务写 row+notify→轮询拉取→tell 拥有者；owner reject→notify 认领人→认领人上线补推）。
-
-### Security
+### 文档与计划
 
 #### Added
 
-- service-token 代玩家写**安全加固**（`MCDR_SERVICE_TOKEN` 等同「全员 root 凭据」，详见 [`Docs/architecture/services/notification-service.md`](Docs/architecture/services/notification-service.md) §7）：① 后端对每次 service-token 代玩家写记 `service_token_proxy` 审计日志（`{timestamp, player_uuid, http_path, client_ip}`，**不含 token 本身**）；② `POST /notifications/ack` 加 `player_uuid` 归属校验（body 增 `player_uuid`，与通知 `recipient_uuid` 一致方可 ack，防越权 ack 他人通知）；③ `POST /notifications/{id}/read` 加 `player_uuid` query 归属校验（同上，防越权 read）；④ `notify()` 对 title/body 限长清洗 + payload 设 8KB 上限（防滥用与异常体积）；⑤ `GET /notifications/pending` 的 `limit` 上限收紧至 50（原 100）。引用根 CLAUDE.md R-11；运维侧缓解（网络隔离 / secrets 注入 / ≥32 字节 / 定期轮换）见 notification-service.md §7.2。
+- _（待补）_
+
+---
+
+## [backend-v0.3.0] - 2026-07-03
+
+### Added
+
+- **投影解析模块**（`app/services/parsing/`）：`MaterialParser` / `ItemTranslator` 双 ABC（可扩展 `.schem/.nbt` 与其它翻译源）；`LitematicParser` 基于 [`litemapy`](https://github.com/SmylerMC/litemapy)（逐体素 `.id` 计数，R-6 天然满足），容器读 vanilla `Items`；`LangJsonTranslator` 加载内置 `lang/*.zh_cn.json` 按 `block.→item.` 候选查表。`7d1f618`
+- `POST /parsing/litematic`：multipart 上传 `.litematic` → 解析 + 中文翻译 → 分组预览（不落库；`asyncio.to_thread` 不阻塞事件循环）。`7d1f618`
+- `POST /sheets/from-items`：一次性建表 + 批量行（`mode` 默认 lock，items ≤2000），零迁移复用 sheets schema。`7d1f618`
+- 内置 vanilla（MC 1.20.1）+ Create（6.0.8/1.20.1）中文语言文件（SHA1 校验）；config 加 `litematic_max_upload_bytes`；openapi.json 重新生成。`7d1f618`
+- **sheets MC 代玩家写通道 + 统一通知抽象层**：迁移 `0006_notifications`（schema/表/FK CASCADE/索引，可逆）；notification 模型/repo/service，`notify(session,…)` 同事务原子（R-10），`Notifier` Protocol 预留 Webhook/Discord 扩展点。`e55f1c6`
+- **双通道鉴权 `get_current_player`**（`api/deps.py`）：Bearer JWT 优先，否则 `X-Service-Token` + `X-Player-UUID` 代玩家加载 Player 注入；Authorization 头存在只走 JWT 通道、不静默降级（H-2）；复用现有 RBAC，业务层零改动。`e55f1c6`
+- notifications API `pending`/`ack`/`read`：`recipient_uuid` 归属校验防越权 ack/read（C-1）；`limit ≤ 50`。`e55f1c6`
+- sheets 各写端点同事务挂钩 `notify`（认领/交付/打回/解除/数量变更/删除 → 认领人或拥有者；`actor == recipient` 跳过）。`e55f1c6`
+- **sheets progress 多人贡献者**：迁移 `0007_sheet_row_contributors`（建贡献者表）+ `0008_sheet_rows_contributed_qty`（加 `contributed_qty`，按贡献量排序显示）；progress 行不再单人锁定，改为多人贡献者列表（聚合众筹）。`093e6af`
+- `POST /sheets/rows/{id}/contribute`（增量上交，任意玩家）+ `PATCH /sheets/rows/{id}/progress`（owner 设绝对值，不动贡献者）；`need=0` 视为无目标永不 done；`claim`/`delivery`/`reject` 对 progress 行返 409。`093e6af`
+
+### Changed
+
+- `pyproject.toml` 显式标注 `litemapy>=0.11.0b0`（PyPI 仅有 pre-release，`pip` 默认不匹配 `>=0.11`）。`fdef446`
+
+### Fixed
+
+- `litemapy>=0.11` 版本约束在 PyPI 仅有 pre-release（`0.11.0b0`）时 `pip` 默认不接受，导致安装失败；显式标注 `>=0.11.0b0` 修复。`fdef446`
+
+### Security
+
+- **service-token 代玩家写加固**（`MCDR_SERVICE_TOKEN` 等同「全员 root 凭据」）：① 后端对每次代玩家写记 `service_token_proxy` 审计日志（`{timestamp, player_uuid, http_path, client_ip}`，**不含 token 本身**）；② `POST /notifications/ack` body 加 `player_uuid` 归属校验，防越权 ack 他人通知；③ `POST /notifications/{id}/read` 加 `player_uuid` query 归属校验，防越权 read；④ `notify()` 对 title(≤200)/body(≤500) 限长清洗 + payload 设 8KB 上限；⑤ `GET /notifications/pending` 的 `limit` 上限收紧至 50（原 100）；⑥ `MCDR_SERVICE_TOKEN` 启动 fail-fast 校验。引用根 CLAUDE.md R-11；运维缓解见 [`Docs/architecture/services/notification-service.md`](Docs/architecture/services/notification-service.md) §7。`e55f1c6`
+
+---
+
+## [mcdr-v0.3.0] - 2026-07-03
+
+### Added
+
+- **`!!PCH sheet` 命令树 + 通知轮询**（14 子命令）：`sheet_client`（sheets + notifications HTTP，`X-Service-Token` + `X-Player-UUID` 双头，重试 + 哨兵）；`sheet_commands`（`@new_thread` + `server.tell` 回执，403/404/409 中文文案）；`notifier`（在线字典 `on_player_joined`/`on_player_left` + rcon list 初始化 + `@new_thread` 轮询 + ack + 离线补推）；事件监听 + 线程生命周期（reload 新 `Event` 防双循环）；config 加 `notify_poll_interval_seconds`/`notify_max_per_poll`。`490d17d`
+- **deliver 按 mode 分流 + 贡献者显示**：progress→`contribute`（增量，不要求认领），lock→`delivery`（绝对值）；view 按钮 progress·open 显 `[交付]`、done 显 `[解除]`（不显打回）；`format_row_line` progress 行显示贡献者前两位 + 省略号（按 `contributed_qty` desc）；`sheet_client` 加 `contribute_row`/`set_row_progress`。`9a7c0fa`
+- **sheet 可点击按钮 helper**（`messages.py`）：`rtext_button`（`RAction.suggest_command` 点击填命令 + `RText.h` 悬停提示）；`format_row_clickable`（状态×模式×拥有者尾部工具栏——open→`[认领]` / claimed(lock)→`[标备齐][解除]` / claimed(progress)→`[交付][标备齐][解除]` / done→`[打回]`，拥有者追加 `[删行]`）；`format_owner_footer`（拥有者底部 `[新增物品][改标题][删表]`）；统一色板遵循 `McdrPlugin/CLAUDE.md` §6。`d57cf0c`
+
+### Changed
+
+- **sheet view 特权按钮按查看者身份显隐**（UUID 为主、名字兜底），对齐后端 RBAC：lock claimed `[标备齐]` 仅认领人；`[解除]` 认领人 or owner；lock done `[打回]` 认领人 or owner；progress 协作按钮任意；`is_owner` 升级为 `owner_uuid` 匹配。`acdd348`
+- **`!!PCH` / `!!PCH sheet` 菜单重做**：gold 标题 / aqua 已上线命令等宽对齐 + 可点击 suggest / gray 开发中折叠 / yellow hover 参数签名；移除淹没的 8 条黄色 stub；统一色板（标题 gold+bold / 命令名 aqua / 描述 gray / 强调 yellow）。`f269fa4` · `0976216`
+
+### Fixed
+
+- `f269fa4` 的 `sheet_commands.py` 已 import `rtext_button`/`format_row_clickable`/`format_owner_footer` 但函数定义未随提交进入 `messages.py`（HEAD 加载即 `ImportError: cannot import name 'rtext_button'`）；`d57cf0c` 补齐三函数定义 + `tests/_stubs.py` RAction 补 `suggest_command`/`run_command`、`RText.c` 改 `(action, value)` 签名 + 新增 `h()` hover stub + `tests/test_messages.py` +19 用例，修复插件加载。
+- **`!!PCH sheet add/set` 的 mode/sort 改为可选**（默认 lock/0）：原命令树把 `_sheet_upsert` 只挂在 `lock|progress` 字面量及其 sort 子节点，玩家必须输入 mode 字面量；否则解析在 `Integer("need")` 节点终止、无回调触发，MCDR 回显「未知命令」。改为给 `add`/`set` 两块的 `Integer("need")` 挂 `.runs(_sheet_upsert)`；handler 已有默认（mode=lock/sort=0），现有合法输入零回归。S-1 联网核实命令解析「在某节点终止即触发该节点回调」（<https://docs.mcdreforged.com/en/latest/plugin_dev/command.html>）。`4b7f99a`
+- **通知体验修复**（4 项）：① 7 个通知模板全部加 `{sheet_title}`，「B 认领了 [铁锭]」→「B 认领了 [清单] 的 [铁锭]」；② `ack_notifications` body 从 `{ids}` → `{player_uuid, ids}`（后端 `NotificationAckRequest` 必填，防越权 ack；曾因缺 `player_uuid` 致 422 → `delivered_at` 永不置位 → 通知刷屏）；③ ack 结果判定从 `is None` → `not isinstance(dict)`（`HttpError(422)` 等也算失败留 warning）；④ `_sheet_list` 空表单追加 `[建表]`、`_sheet_view` 空行也渲染 `format_owner_footer`（拥有者空表可见 `[新增物品]`）。`588e249`
+- **通知轮询延迟 ~12s**（预期 2s）：`config.json.example` 的 `notify_poll_interval_seconds` 误写 `15.0`，与 `config.py` 默认 `2.0` + 5 处架构文档矛盾；运行时从 example 复制 → 实际生效 15s。改回 `2.0`；`on_load` 追加日志打印生效 interval/max_per_poll（防漂移被静默吞掉）；新增 `tests/test_config.py` 一致性测试断言 example 的 4 个行为参数与 `HtcmcAuthConfig` 默认一致（CI 拦截漂移）。`4a098c0` · `588e249`
+
+---
+
+## [frontend-v0.3.0] - 2026-07-03
+
+### Added
+
+- **投影解析上传页**（`views/parsing/LitematicImport.vue`）：`el-upload` → 两组 `el-table` 预览（方块/容器，可编辑数量/勾选）→ 按组生成 Sheet（mode=lock，sort_order=索引）；`api/parsing.ts` `previewLitematic`（multipart）+ 类型；`sheets.ts` 加 `createSheetFromItems`；router 加 `/parsing/litematic` + App.vue 导航；vitest 33 用例。`7381d20`
+- **sheets 列表/详情轮询自动刷新**：`usePolling` composable（递归 setTimeout、Page Visibility 后台暂停、连续失败指数退避上限 60s、卸载清理、in-flight 重入保护）；`SheetList` 10s 轮询 list；`SheetEditor` 1s 轮询 + `silentRefresh`（只换展示数据不动 `rowDrafts`/`titleDraft`，保护正在编辑的草稿）；附 `usePolling` 单元测试 6 例。`0886e64`
+- **progress 上交材料/调整进度 + 草稿补齐**：progress 行无认领改「上交材料」（增量）；owner 新增「调整进度」（设绝对值）替代「解除锁定」；`silentRefresh` 补初始化新行草稿（修复 MCDR 创建的行在 web 不可编辑）。`8b93357`
+
+### Changed
+
+- `vite.config.ts` `server.allowedHosts` 加 `dev-git.u3071783.nyat.app`，允许经反代/tunnel 域名访问 dev server（Vite 默认拦截防 DNS rebinding；仅 dev，生产走 `vite build` 静态产物不受影响）。`c1922ca`
+
+### Fixed
+
+- 拥有者看自己表的 claimed 行原本「放弃」与「解除锁定」都绑 `onRelease`、重复且「放弃」对拥有者语义不对；认领人的「放弃」按钮加 `v-if="!canEdit"`，拥有者只留「解除锁定」，非拥有者认领人仍显示「放弃」。RBAC 仍以后端为准（R-9，仅可见性）。`442520b`
+
+---
+
+### 文档与计划（v0.3.0 跨组件）
+
+#### Added
+
+- `Docs/superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md`：sheets ↔ MCDR 对接 + 统一通知抽象层权威设计（鉴权双通道 / 通知抽象层契约 / 触发规则表 7 类 category / `!!PCH sheet` 命令映射 / 轮询投递与离线补推 / 红线遵循 / MCDR API 依据 URL）。`9203283`
+- `Docs/architecture/services/notification-service.md`：notification-service 通知抽象层**可复用契约**文档（`notify(session,…)` 同事务语义 + `category` 枚举注册表与扩展规约 + 数据模型 `notifications.notifications` + `Notifier` Protocol 首期 `DbNotifier` 预留 Webhook/Discord + pending/ack/read 端点契约 + MCDR 投递契约 + 与 alert-service 关系 + §7 service-token 安全运维要点）。`9203283`
+- `Docs/architecture/api/parsing.md`：投影解析 API 权威参考（端点 + ABC 架构 + 翻译数据来源 S-1 + 限制）；`sheets.md` §5.1 追加 `POST /sheets/from-items`；`Backend/CLAUDE.md` §2/§4 更新（parsing 纳入后端职责 + 端点表）。`3207ae1`
+- `Docs/Cheatsheets/dev-cheatsheet.md`：补「后端 FastAPI」段（compose 启停 / 端口表 / 根 `.env` 雷点 / `alembic upgrade head`·`current` / `/healthz`·`/me` 健康检查 / 日志与 pytest）+「前端 Vue3（Vite）」段（`npm run dev/build/preview`·`npx vitest` / `/api` 代理剥离前缀 / 联调依赖 backend / `WEB_BASE_URL` / `allowedHosts` 雷点）+「环境变量」段（12 变量 AUTO-GENERATED 表）。`c1922ca` · `8f1ffb6`
+- `Docs/RUNBOOK.md`：dev/staging 运维手册（拓扑 / 部署 / 健康检查 / 排错 / 回滚）。`8f1ffb6`
+
+#### Changed
+
+- `Docs/architecture.md`：§2.1 三端流程图 `MCDR → API` 边加注「（写：service-token + X-Player-UUID 代玩家）」；§5 服务地图 mermaid 加 `notification-service` 节点 + 服务表加一行；§7 新增「7.5 sheets 协作（Web ↔ MC 对等 + 通知流转）」sequenceDiagram。`9203283`
+- `Docs/architecture/api/sheets.md`：§2 鉴权表新增「Service Token + X-Player-UUID（代玩家）」通道；§5 端点表每个写端点说明列补「MCDR 可经 service-token+`X-Player-UUID` 代玩家调用」；§10 迁移表加 `0006_notifications`；新增 §11「MCDR `!!PCH sheet` 命令映射表」+ §12「通知端点」。`9203283`
+- `Docs/architecture/services/mcdr-plugin.md`：命令表加 `!!PCH sheet …` 全套；§3.6 修正 `schedule_task` 卸载阻塞的过时描述（与 RS-6 冲突）；新增 §3.6.1「service-token + `X-Player-UUID` 代玩家写」、§3.7「sheets 命令树」、§3.8「通知轮询」；§4 依赖服务表加 sheets/notifications；§5 配置项加 `notify_poll_interval_seconds`/`notify_max_per_poll`；§6 风险表加阻塞误用与轮询延迟两项。`9203283` · `4a098c0`
+- README / 根 CLAUDE.md / CONTRIBUTING.md：compose 实际仅 postgres+backend（wiki.js 标注规划中）；三端去「规划中」标实现进度，补 TestServer/CHANGELOG；根 CLAUDE.md §7 任务状态刷新到 07-02；CONTRIBUTING.md §3 PR 自检改为贴合现实；根 CLAUDE.md `litemapy` 链接 Spindust→SmylerMC 修正（S-1）。`8f1ffb6` · `3207ae1`
 
 ---
 
@@ -199,12 +265,8 @@
 
 ---
 
-## 版本化策略（待启动）
+## 版本化策略
 
-首次发版前，各组件按以下节奏独立打 tag：
+**v0.3.0 已发布**（2026-07-03，三组件分别打 tag：`backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`，首个真正打 git tag 的版本）。历史 `[v0.1.0]` / `[v0.2.0]` 段为文档预归档（git tag 由开发机补打）。
 
-- `backend-v0.1.0`：B1-B16 跑完、OpenAPI 契约冻结（B16）
-- `mcdr-v0.1.0`：M1-M2 完成、可发布到 MCDR 插件仓库
-- `frontend-v0.1.0`：F1-F4 完成、首屏可访问
-
-打 tag 时把对应 `[Unreleased]` 段落固化为 `## [backend-v0.1.0] - YYYY-MM-DD` 等具名版本段，并重置 `[Unreleased]`。
+后续按 [`CONTRIBUTING.md`](./CONTRIBUTING.md) §4 维护：三端各自独立 SemVer，tag 形如 `<component>-vX.Y.Z`，发版时把对应 `[Unreleased]` 段固化为 `## [<component>-vX.Y.Z] - YYYY-MM-DD` 并重置 `[Unreleased]`。
