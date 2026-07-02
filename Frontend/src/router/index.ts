@@ -8,6 +8,7 @@ export const router = createRouter({
     { path: '/me', component: () => import('../views/Me.vue') },
     { path: '/sheets', component: () => import('../views/sheets/SheetList.vue') },
     { path: '/sheets/:id', component: () => import('../views/sheets/SheetEditor.vue') },
+    { path: '/parsing/litematic', component: () => import('../views/parsing/LitematicImport.vue') },
     { path: '/', redirect: '/me' },
   ],
 })

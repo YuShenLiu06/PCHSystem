@@ -44,6 +44,19 @@ export interface RowUpsertRequest {
   sort_order?: number
 }
 
+// mode: 0=lock（默认）| 1=progress，与 RowUpsertRequest 同语义；用于 from-items 批量建表
+export interface SheetItemIn {
+  item_name: string
+  need_qty: number
+  mode?: number
+  sort_order?: number
+}
+
+export interface SheetFromItemsRequest {
+  title: string
+  items: SheetItemIn[]
+}
+
 /** GET /sheets —— owner 传 "me" 只看自己，省略看全部 */
 export async function listSheets(owner?: 'me' | string): Promise<SheetSummary[]> {
   const { data } = await http.get<SheetSummary[]>('/sheets', {
@@ -63,6 +76,12 @@ export async function getSheet(id: number, format?: 'csv'): Promise<SheetDetail 
 /** POST /sheets —— 建表，owner=current，返回 SheetDetail（含空 rows） */
 export async function createSheet(title: string): Promise<SheetDetail> {
   const { data } = await http.post<SheetDetail>('/sheets', { title })
+  return data
+}
+
+/** POST /sheets/from-items —— 按材料清单一次性建表+批量行（mode 默认 lock），返回新建表详情 */
+export async function createSheetFromItems(body: SheetFromItemsRequest): Promise<SheetDetail> {
+  const { data } = await http.post<SheetDetail>('/sheets/from-items', body)
   return data
 }
 
