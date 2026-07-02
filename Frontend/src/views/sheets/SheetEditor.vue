@@ -10,6 +10,8 @@ import {
   deleteRow,
   claimRow,
   setRowDelivery,
+  contributeRow,
+  setRowProgress,
   releaseRow,
   rejectRow,
   type SheetDetail,
@@ -126,7 +128,21 @@ async function load(): Promise<void> {
 // 失败直接抛出，交由 usePolling 走 onError + 退避。
 async function silentRefresh(): Promise<void> {
   if (!sheet.value) return // 首载尚未完成则不抢跑
-  sheet.value = await fetchSheet(sheetId.value)
+  const data = await fetchSheet(sheetId.value)
+  // 轮询可能拉到新增行（如 MCDR 游戏内 !!PCH sheet add 创建），需补初始化其草稿，
+  // 否则模板 rowDrafts[row.id] 为 undefined → 整行回退纯文本、不可编辑。
+  // 已有草稿保留不动（拥有者正在编辑的内容不被覆盖）。
+  for (const r of data.rows) {
+    if (!rowDrafts.value[r.id]) {
+      rowDrafts.value[r.id] = {
+        item_name: r.item_name,
+        need_qty: r.need_qty,
+        mode: r.mode,
+        sort_order: r.sort_order,
+      }
+    }
+  }
+  sheet.value = data
 }
 
 async function onSaveTitle(): Promise<void> {
@@ -221,39 +237,61 @@ async function onClaim(row: RowDetail): Promise<void> {
   }
 }
 
-// 认领人上报交付/标备齐：
-// - lock 模式：直接 PATCH delivered_qty = need（一次性标备齐 → done）
-// - progress 模式：ElMessageBox.prompt 输入本次交付量，累加后上报
+// lock 认领人：一次性标备齐（delivered_qty = need → done）
+// progress 行不再走这里——任意玩家通过 onContribute 上交材料
 async function onSetDelivery(row: RowDetail): Promise<void> {
-  if (row.mode === MODE_LOCK) {
-    try {
-      await setRowDelivery(sheetId.value, row.id, row.need_qty)
-      sheet.value = await fetchSheet(sheetId.value)
-      ElMessage.success('已标记备齐')
-    } catch (e: unknown) {
-      ElMessage.error(errorMessage(e))
-    }
-    return
-  }
-  // progress 模式
   try {
-    const { value } = await ElMessageBox.prompt('请输入本次上报交付数量', '上报交付', {
-      confirmButtonText: '上报',
+    await setRowDelivery(sheetId.value, row.id, row.need_qty)
+    sheet.value = await fetchSheet(sheetId.value)
+    ElMessage.success('已标记备齐')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e))
+  }
+}
+
+// progress 行：任意登录玩家上交材料（累加 delivered_qty，自动汇总到 contributors）
+async function onContribute(row: RowDetail): Promise<void> {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入本次上交数量', '上交材料', {
+      confirmButtonText: '上交',
       cancelButtonText: '取消',
       inputPlaceholder: `还需 ${Math.max(row.need_qty - row.delivered_qty, 0)}`,
       inputValidator: (input: string) => {
         const n = Number(input)
-        if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return '请输入非负整数'
+        if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) return '请输入 >=1 的整数'
         return true
       },
     })
-    const delta = Number(value)
-    const next = Math.min(row.delivered_qty + delta, row.need_qty)
-    await setRowDelivery(sheetId.value, row.id, next)
+    const qty = Number(value)
+    await contributeRow(sheetId.value, row.id, qty)
     sheet.value = await fetchSheet(sheetId.value)
-    ElMessage.success('已上报交付')
+    ElMessage.success('已上交材料')
   } catch (e: unknown) {
-    // 用户取消 prompt 抛出 'cancel' 字符串，不算错误
+    // 用户取消 prompt 抛出 'cancel'/'close' 字符串，不算错误
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(errorMessage(e))
+  }
+}
+
+// progress 行：拥有者直接调整进度（绝对值，可增可减；不动贡献者名单，保留上交历史）
+async function onAdjustProgress(row: RowDetail): Promise<void> {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的已交付数量（绝对值）', '调整进度', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: String(row.delivered_qty),
+      inputPlaceholder: `需求 ${row.need_qty}`,
+      inputValidator: (input: string) => {
+        const n = Number(input)
+        if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return '请输入 >=0 的整数'
+        return true
+      },
+    })
+    const deliveredQty = Number(value)
+    await setRowProgress(sheetId.value, row.id, deliveredQty)
+    sheet.value = await fetchSheet(sheetId.value)
+    ElMessage.success('进度已调整')
+  } catch (e: unknown) {
     if (e === 'cancel' || e === 'close') return
     ElMessage.error(errorMessage(e))
   }
@@ -390,11 +428,26 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
             <span v-else>{{ row.mode === 1 ? '进度' : '锁定' }}</span>
           </template>
         </el-table-column>
-        <!-- 认领者列：open 显「—」 -->
-        <el-table-column label="认领者" width="120">
+        <!-- 认领者/贡献者列：lock 显单人 claimant_name；progress 显 contributors 多人 tag -->
+        <el-table-column label="认领者" width="160">
           <template #default="{ row }">
-            <span v-if="row.claimant_name">{{ row.claimant_name }}</span>
-            <span v-else style="color: #aaa;">—</span>
+            <template v-if="row.mode === MODE_PROGRESS">
+              <template v-if="row.contributors && row.contributors.length">
+                <el-tag
+                  v-for="c in row.contributors"
+                  :key="c.player_uuid"
+                  size="small"
+                  style="margin: 2px;"
+                >
+                  {{ c.player_name }}
+                </el-tag>
+              </template>
+              <span v-else style="color: #aaa;">—</span>
+            </template>
+            <template v-else>
+              <span v-if="row.claimant_name">{{ row.claimant_name }}</span>
+              <span v-else style="color: #aaa;">—</span>
+            </template>
           </template>
         </el-table-column>
         <!-- 状态列：el-tag，open 灰/claimed 蓝/done 绿 -->
@@ -440,19 +493,21 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
               <el-button type="primary" size="small" @click="onSaveRow(row)">保存</el-button>
               <el-button type="danger" size="small" @click="onDeleteRow(row)">删除</el-button>
             </template>
-            <!-- 任意玩家 × open → 认领 -->
-            <el-button v-if="row.status === 'open' && auth.player" size="small" type="primary" @click="onClaim(row)">认领</el-button>
-            <!-- 认领人 × claimed → 标备齐/上报交付 + 放弃 -->
-            <template v-if="isClaimant(row) && row.status === 'claimed'">
-              <el-button size="small" type="success" @click="onSetDelivery(row)">
-                {{ row.mode === MODE_PROGRESS ? '上报交付' : '标备齐' }}
-              </el-button>
+            <!-- lock 任意玩家 × open → 认领（progress 行无认领按钮，改为上交材料） -->
+            <el-button v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" size="small" type="primary" @click="onClaim(row)">认领</el-button>
+            <!-- progress 任意玩家 × 非 done → 上交材料 -->
+            <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+            <!-- lock 认领人 × claimed → 标备齐 + 放弃 -->
+            <template v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'">
+              <el-button size="small" type="success" @click="onSetDelivery(row)">标备齐</el-button>
               <el-button v-if="!canEdit" size="small" @click="onRelease(row)">放弃</el-button>
             </template>
-            <!-- 拥有者 × claimed|done → 解除锁定 -->
-            <el-button v-if="canEdit && (row.status === 'claimed' || row.status === 'done')" size="small" plain @click="onRelease(row)">解除锁定</el-button>
-            <!-- 认领人|拥有者 × done → 打回（合并原「取消备齐」，done→claimed, delivered 归零） -->
-            <el-button v-if="(isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" plain @click="onReject(row)">打回</el-button>
+            <!-- 拥有者 × lock & claimed|done → 解除锁定（progress 行改用「调整进度」） -->
+            <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" size="small" plain @click="onRelease(row)">解除锁定</el-button>
+            <!-- 拥有者 × progress → 调整进度（直接设 delivered_qty 绝对值，可增可减，不动贡献者名单） -->
+            <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" plain @click="onAdjustProgress(row)">调整进度</el-button>
+            <!-- 认领人|拥有者 × done × lock → 打回（progress 无打回语义） -->
+            <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" plain @click="onReject(row)">打回</el-button>
           </template>
         </el-table-column>
       </el-table>

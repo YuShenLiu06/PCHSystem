@@ -14,8 +14,10 @@ export interface SheetDetail extends SheetSummary {
   rows: RowDetail[]
 }
 
-// mode: 0=lock（锁定/二元备齐），1=progress（进度/跟踪 delivered_qty）
-// status: open（未认领）| claimed（认领中）| done（已备齐）
+// mode: 0=lock（锁定/二元备齐），1=progress（进度/聚合众筹，多人贡献者列表）
+// status: open（未认领/未交付）| claimed（认领中/部分交付）| done（已备齐）
+// progress 行：claimant_uuid 恒为 null，contributors 列出所有贡献过的玩家（聚合）
+// lock 行：contributors 恒为空数组，由 claimant_uuid 单人锁定
 export interface RowDetail {
   id: number
   item_name: string
@@ -25,6 +27,7 @@ export interface RowDetail {
   claimant_uuid: string | null
   claimant_name: string | null
   delivered_qty: number
+  contributors: { player_uuid: string; player_name: string }[]
   sort_order: number
   updated_at: string
 }
@@ -111,6 +114,20 @@ export async function claimRow(id: number, rowId: number): Promise<RowDetail> {
 /** PATCH /sheets/{id}/rows/{rowId}/delivery —— 认领人上报交付量（>=need 自动 done），body {delivered_qty} */
 export async function setRowDelivery(id: number, rowId: number, deliveredQty: number): Promise<RowDetail> {
   const { data } = await http.patch<RowDetail>(`/sheets/${id}/rows/${rowId}/delivery`, {
+    delivered_qty: deliveredQty,
+  })
+  return data
+}
+
+/** POST /sheets/{id}/rows/{rowId}/contribute —— progress 行专用：任意登录玩家累加交付（body {qty}，qty>=1） */
+export async function contributeRow(id: number, rowId: number, qty: number): Promise<RowDetail> {
+  const { data } = await http.post<RowDetail>(`/sheets/${id}/rows/${rowId}/contribute`, { qty })
+  return data
+}
+
+/** PATCH /sheets/{id}/rows/{rowId}/progress —— 拥有者/admin 直接修正 progress 行进度（body {delivered_qty}，绝对值可增可减，不动贡献者） */
+export async function setRowProgress(id: number, rowId: number, deliveredQty: number): Promise<RowDetail> {
+  const { data } = await http.patch<RowDetail>(`/sheets/${id}/rows/${rowId}/progress`, {
     delivered_qty: deliveredQty,
   })
   return data
