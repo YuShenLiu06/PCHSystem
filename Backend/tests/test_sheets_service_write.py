@@ -433,3 +433,155 @@ def test_config_accepts_non_empty_service_token():
 
     s = Settings(mcdr_service_token="non_empty_secret")
     assert s.mcdr_service_token == "non_empty_secret"
+
+
+# ---------- 6. progress 行：contribute（service-token 通道等价） ----------
+async def _svc_contribute(client, headers, sid, rid, qty):
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/contribute",
+        json={"qty": qty},
+        headers=headers,
+    )
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_service_token_channel_contribute_equivalent(client):
+    """service-token + X-Player-UUID 代玩家 contribute，与 JWT 通道等价。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+
+    resp = await _svc_contribute(client, _svc_headers(bob), sid, rid, 4)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["delivered_qty"] == 4
+    assert body["status"] == "claimed"
+    assert body["contributors"] == [{"player_uuid": str(bob), "player_name": "bob"}]
+
+
+@pytest.mark.asyncio
+async def test_service_token_contribute_lock_row_conflict(client):
+    """lock 行经 service-token contribute → 409。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=0))["id"]
+    resp = await _svc_contribute(client, _svc_headers(bob), sid, rid, 1)
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_service_token_contribute_done_row_conflict(client):
+    """progress 行 done 后 service-token contribute → 409。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+    await _svc_contribute(client, _svc_headers(bob), sid, rid, 10)
+    resp = await _svc_contribute(client, _svc_headers(bob), sid, rid, 1)
+    assert resp.status_code == 409
+
+
+# ---------- 7. contribute 通知 owner（sheet_delivered / sheet_done） ----------
+@pytest.mark.asyncio
+async def test_contribute_partial_notifies_owner_delivered_with_delta(client):
+    """部分上交 → owner 收 sheet_delivered，payload 含 delta/delivered/need。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+
+    resp = await _svc_contribute(client, _svc_headers(bob), sid, rid, 3)
+    assert resp.status_code == 200
+
+    notes = await _fetch_notifications(owner)
+    delivered = [n for n in notes if n.category == "sheet_delivered"]
+    assert len(delivered) == 1
+    n = delivered[0]
+    assert n.recipient_uuid == owner
+    assert n.payload["delta"] == 3
+    assert n.payload["delivered"] == 3
+    assert n.payload["need"] == 10
+    assert n.payload["item_name"] == "iron"
+    assert n.payload["sheet_id"] == sid
+    assert n.payload["actor_name"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_contribute_meets_need_notifies_owner_done(client):
+    """累计 >= need → owner 收 sheet_done（非 sheet_delivered），payload 含 delta。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+
+    await _svc_contribute(client, _svc_headers(bob), sid, rid, 10)
+
+    notes = await _fetch_notifications(owner)
+    assert any(n.category == "sheet_done" for n in notes)
+    done = [n for n in notes if n.category == "sheet_done"][0]
+    assert done.payload["delta"] == 10
+    assert done.payload["delivered"] == 10
+    assert done.payload["need"] == 10
+
+
+@pytest.mark.asyncio
+async def test_contribute_does_not_notify_contributor_self(client):
+    """actor==贡献者（bob），bob 不应收到自己的上交通知。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+
+    await _svc_contribute(client, _svc_headers(bob), sid, rid, 3)
+
+    assert (await _fetch_notifications(bob)) == []
+
+
+# ---------- 8. 删 progress 行 / 删表 → 通知贡献者 sheet_row_deleted ----------
+@pytest.mark.asyncio
+async def test_delete_progress_row_notifies_contributors(client):
+    """删 progress 行：每位贡献者收 sheet_row_deleted。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    carol = await _seed("carol")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+    await _svc_contribute(client, _svc_headers(bob), sid, rid, 3)
+    await _svc_contribute(client, _svc_headers(carol), sid, rid, 4)
+
+    resp = await client.delete(
+        f"/sheets/{sid}/rows/{rid}", headers=_svc_headers(owner)
+    )
+    assert resp.status_code == 204
+
+    bob_notes = await _fetch_notifications(bob)
+    carol_notes = await _fetch_notifications(carol)
+    assert len(bob_notes) == 1
+    assert bob_notes[0].category == "sheet_row_deleted"
+    assert "贡献" in bob_notes[0].body
+    assert len(carol_notes) == 1
+    assert carol_notes[0].category == "sheet_row_deleted"
+
+
+@pytest.mark.asyncio
+async def test_delete_sheet_with_progress_rows_notifies_contributors(client):
+    """删整张表：progress 行的贡献者各收一条 sheet_row_deleted。"""
+    owner = await _seed("alice")
+    bob = await _seed("bob")
+    carol = await _seed("carol")
+    sid = await _create_sheet(client, _jwt_headers(owner))
+    r1 = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10, mode=1))["id"]
+    r2 = (await _upsert(client, _jwt_headers(owner), sid, "gold", 5, mode=1))["id"]
+    await _svc_contribute(client, _svc_headers(bob), sid, r1, 3)
+    await _svc_contribute(client, _svc_headers(carol), sid, r2, 2)
+
+    resp = await client.delete(f"/sheets/{sid}", headers=_svc_headers(owner))
+    assert resp.status_code == 204
+
+    bob_notes = await _fetch_notifications(bob)
+    carol_notes = await _fetch_notifications(carol)
+    assert len(bob_notes) == 1 and bob_notes[0].category == "sheet_row_deleted"
+    assert len(carol_notes) == 1 and carol_notes[0].category == "sheet_row_deleted"

@@ -378,3 +378,291 @@ async def test_get_row_returns_none_for_missing():
     sid, _ = await _make_row()
     async with async_session_factory() as s:
         assert await sheet_repo.get_row(s, sid, 999999) is None
+
+
+# ---------- progress / 多人贡献者 ----------
+
+
+async def _make_progress_row(need_qty: int = 10) -> tuple[int, int]:
+    """seed 一张表 + 一行（mode=progress, open），返回 (sheet_id, row_id)。"""
+    return await _make_row(need_qty=need_qty, mode=1)
+
+
+@pytest.mark.asyncio
+async def test_contribute_accumulates_and_transitions_to_done():
+    """progress 行：增量累加 delivered；到 need 转 done；可超额；幂等加贡献者。"""
+    sid, rid = await _make_progress_row(need_qty=10)
+    alice = await _seed_player("alice")
+    bob = await _seed_player("bob")
+
+    # alice 上交 4 → claimed（0 < 4 < 10）
+    async with async_session_factory() as s:
+        row = await sheet_repo.contribute_row(s, sid, rid, alice, 4)
+        await s.commit()
+        assert row.delivered_qty == 4
+        assert row.status == "claimed"
+        assert row.claimant_uuid is None  # progress 不变量
+
+    # alice 再次上交 8 → delivered 12（超额），转 done（>=need）
+    async with async_session_factory() as s:
+        row = await sheet_repo.contribute_row(s, sid, rid, alice, 8)
+        await s.commit()
+        assert row.delivered_qty == 12  # 不封顶
+        assert row.status == "done"
+
+    # bob 也上交一次（行已 done 不影响幂等加贡献者记录——见 test_contribute_on_done_raises）
+    # 这里在 done 之前先验证幂等：alice 两次 contribute 应只贡献一条记录
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid])
+        alice_entries = [pu for pu, _name in contribs.get(rid, []) if pu == alice]
+        assert len(alice_entries) == 1  # 幂等：同玩家多次只一条
+
+
+@pytest.mark.asyncio
+async def test_contribute_on_lock_row_raises_conflict():
+    """contribute 仅适用于 progress 行；lock 行（mode=0）raise SheetRowConflict。"""
+    sid, rid = await _make_row(need_qty=10, mode=0)  # lock 行
+    alice = await _seed_player("alice")
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.contribute_row(s, sid, rid, alice, 1)
+
+
+@pytest.mark.asyncio
+async def test_contribute_on_done_row_raises_conflict():
+    """progress 行一旦 done 不再收上交（防超 need 后还能灌）。"""
+    sid, rid = await _make_progress_row(need_qty=5)
+    alice = await _seed_player("alice")
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid, alice, 5)  # → done
+        await s.commit()
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.contribute_row(s, sid, rid, alice, 1)
+
+
+@pytest.mark.asyncio
+async def test_claim_on_progress_row_raises_conflict_but_lock_works():
+    """progress 行禁止 claim；lock 行 open→claimed 仍正常。"""
+    # progress 行 → raise
+    sid_p, rid_p = await _make_progress_row(need_qty=10)
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.claim_row(s, sid_p, rid_p, claimant)
+
+    # lock 行 → open → claimed
+    sid_l, rid_l = await _make_row(need_qty=10, mode=0)
+    async with async_session_factory() as s:
+        row = await sheet_repo.claim_row(s, sid_l, rid_l, claimant)
+        await s.commit()
+        assert row.status == "claimed"
+        assert row.claimant_uuid == claimant
+
+
+@pytest.mark.asyncio
+async def test_set_row_delivery_on_progress_row_raises_conflict():
+    """progress 行用 contribute 管 delivered，set_row_delivery 禁用。"""
+    sid, rid = await _make_progress_row(need_qty=10)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.set_row_delivery(s, sid, rid, 5)
+
+
+@pytest.mark.asyncio
+async def test_set_row_progress_overrides_delivered_and_keeps_contributors():
+    """progress 行 owner 直接设绝对值：按新值重算 status，**不动 contributors**（保留下交历史）。"""
+    sid, rid = await _make_progress_row(need_qty=10)
+    alice = await _seed_player("alice")
+    # 先 alice 上交 4（claimed + contributors=[alice]）
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid, alice, 4)
+        await s.commit()
+
+    # owner 调整为 8（绝对值）→ 仍 claimed
+    async with async_session_factory() as s:
+        row = await sheet_repo.set_row_progress(s, sid, rid, 8)
+        await s.commit()
+        assert row.delivered_qty == 8
+        assert row.status == "claimed"
+        assert row.claimant_uuid is None  # progress 不变量保持
+
+    # 调到 10 → done
+    async with async_session_factory() as s:
+        row = await sheet_repo.set_row_progress(s, sid, rid, 10)
+        await s.commit()
+        assert row.status == "done"
+
+    # 回退到 0 → open，但 contributors 保留（上交历史不因 owner 调整而清）
+    async with async_session_factory() as s:
+        row = await sheet_repo.set_row_progress(s, sid, rid, 0)
+        await s.commit()
+        assert row.delivered_qty == 0
+        assert row.status == "open"
+        contribs = await sheet_repo.list_contributors(s, [rid])
+        assert len(contribs.get(rid, [])) == 1
+        assert contribs[rid][0][0] == alice
+
+
+@pytest.mark.asyncio
+async def test_set_row_progress_on_lock_row_raises_conflict():
+    """lock 行用 set_row_delivery；set_row_progress 仅 progress。"""
+    sid, rid = await _make_row(need_qty=10, mode=0)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.set_row_progress(s, sid, rid, 5)
+
+
+@pytest.mark.asyncio
+async def test_reject_on_progress_row_raises_conflict():
+    """progress 行无 reject（用 release 重置）；调用 raise SheetRowConflict。"""
+    sid, rid = await _make_progress_row(need_qty=10)
+    alice = await _seed_player("alice")
+    # 先 contribute 让行有进度（status=claimed），再尝试 reject
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid, alice, 3)
+        await s.commit()
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.reject_row(s, sid, rid)
+
+
+@pytest.mark.asyncio
+async def test_release_progress_clears_delivered_and_contributors():
+    """progress 行 release：delivered=0 / contributors 空 / status=open。"""
+    sid, rid = await _make_progress_row(need_qty=10)
+    alice = await _seed_player("alice")
+    bob = await _seed_player("bob")
+    # 建进度 + 两个贡献者
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid, alice, 4)
+        await sheet_repo.contribute_row(s, sid, rid, bob, 3)
+        await s.commit()
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid])
+        assert len(contribs.get(rid, [])) == 2
+    # release
+    async with async_session_factory() as s:
+        row = await sheet_repo.release_row(s, sid, rid)
+        await s.commit()
+        assert row.status == "open"
+        assert row.delivered_qty == 0
+        assert row.claimant_uuid is None
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid])
+        assert contribs.get(rid, []) == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_progress_mode_change_resets_and_same_mode_preserves():
+    """progress 行：mode 变化（progress→lock）重置协作；mode 不变保留进度按新 need 封顶。
+
+    用两行独立验证两条分支，避免一条行先后经历 mode 切换后无法再 contribute。
+    """
+    sid, rid_reset = await _make_progress_row(need_qty=10)
+    alice = await _seed_player("alice")
+    bob = await _seed_player("bob")
+
+    # ===== 分支 1：mode 变化 progress(1)→lock(0) → 重置 =====
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid_reset, alice, 4)
+        await sheet_repo.contribute_row(s, sid, rid_reset, bob, 3)
+        await s.commit()
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, sid, "x", 100, 0, 0)
+        await s.commit()
+        assert row.mode == 0
+        assert row.status == "open"
+        assert row.claimant_uuid is None
+        assert row.delivered_qty == 0
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid_reset])
+        assert contribs.get(rid_reset, []) == []
+
+    # ===== 分支 2：mode 不变（仍 progress），改 need 封顶 delivered =====
+    sid2, rid_keep = await _make_progress_row(need_qty=10)
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid2, rid_keep, alice, 6)
+        await s.commit()
+    # need 从 10 改到 5（< delivered 6），mode 仍 progress → 封顶到 5，status=done
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, sid2, "x", 5, 1, 0)
+        await s.commit()
+        assert row.mode == 1
+        assert row.delivered_qty == 5  # 封顶
+        assert row.status == "done"
+    # contributors 保留（mode 未变，未触发 clear）
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid_keep])
+        assert len(contribs.get(rid_keep, [])) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_contributors_aggregates_multiple_rows_ordered_by_joined_at():
+    """多行 × 多贡献者聚合，每行内部按 joined_at 升序。"""
+    sid, rid_a = await _make_progress_row(need_qty=100)
+    # 同表再加一个 progress 行
+    async with async_session_factory() as s:
+        row_b = await sheet_repo.upsert_row(s, sid, "y", 100, 1, 1)
+        await s.commit()
+        rid_b = row_b.id
+
+    alice = await _seed_player("alice")
+    bob = await _seed_player("bob")
+    carol = await _seed_player("carol")
+
+    # rid_a: alice → bob → carol（按 contribute 顺序，joined_at 升序）
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid_a, alice, 1)
+        await s.commit()
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid_a, bob, 1)
+        await s.commit()
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid_a, carol, 1)
+        await s.commit()
+
+    # rid_b: carol → alice（不同顺序，验证每行独立排序）
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid_b, carol, 1)
+        await s.commit()
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid_b, alice, 1)
+        await s.commit()
+
+    # 批量查两行
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid_a, rid_b])
+        # 两行都有结果
+        assert set(contribs.keys()) == {rid_a, rid_b}
+        # rid_a 顺序：alice, bob, carol
+        names_a = [name for _pu, name in contribs[rid_a]]
+        assert names_a == ["alice", "bob", "carol"]
+        # rid_b 顺序：carol, alice
+        names_b = [name for _pu, name in contribs[rid_b]]
+        assert names_b == ["carol", "alice"]
+        # 返回的 uuid 与 name 配对一致
+        for entries in contribs.values():
+            for pu, name in entries:
+                assert isinstance(pu, uuid.UUID)
+
+
+@pytest.mark.asyncio
+async def test_list_contributors_empty_input_returns_empty_dict():
+    """空 row_ids 入参 → 空 dict（不查 DB）。"""
+    async with async_session_factory() as s:
+        assert await sheet_repo.list_contributors(s, []) == {}
+
+
+@pytest.mark.asyncio
+async def test_list_contributors_missing_row_returns_no_entry():
+    """查询不存在的 row_id → 该 key 不出现在结果中。"""
+    alice = await _seed_player("alice")
+    sid, rid = await _make_progress_row(need_qty=10)
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid, alice, 1)
+        await s.commit()
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid, 999999])
+        assert set(contribs.keys()) == {rid}
+        assert contribs[rid]  # 已有贡献者

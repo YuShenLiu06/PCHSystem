@@ -23,6 +23,25 @@ class RowDeliveryRequest(BaseModel):
     delivered_qty: int = Field(ge=0)
 
 
+class RowContributeRequest(BaseModel):
+    """progress 模式增量上交（任意登录玩家）。qty 为本次新增交付量。"""
+
+    qty: int = Field(ge=1)
+
+
+class RowProgressRequest(BaseModel):
+    """progress 模式 owner 直接修正进度（绝对值，可增可减）。仅表拥有者/admin。"""
+
+    delivered_qty: int = Field(ge=0)
+
+
+class RowContributor(BaseModel):
+    """progress 行的贡献者（上交过材料的玩家）。"""
+
+    player_uuid: UUID
+    player_name: str
+
+
 class RowDetail(BaseModel):
     id: int
     item_name: str
@@ -32,6 +51,7 @@ class RowDetail(BaseModel):
     claimant_uuid: UUID | None
     claimant_name: str | None
     delivered_qty: int
+    contributors: list[RowContributor] = []
     sort_order: int
     updated_at: datetime
 
