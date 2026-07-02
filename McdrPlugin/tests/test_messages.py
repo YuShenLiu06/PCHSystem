@@ -26,46 +26,54 @@ class FormatNotificationTest(unittest.TestCase):
         n = {
             "id": 1,
             "category": "sheet_claimed",
-            "payload": {"actor_name": "玩家B", "item_name": "铁锭"},
+            "payload": {"actor_name": "玩家B", "item_name": "铁锭", "sheet_title": "202工程"},
         }
         s = str(format_notification(n))
         self.assertIn("玩家B", s)
-        self.assertIn("铁锭", s)
+        self.assertIn("[202工程] 的 [铁锭]", s)  # [清单名] 的 [物品名]
         self.assertTrue(s.startswith("§a"), s)
 
     def test_sheet_delivered(self):
         n = {
             "category": "sheet_delivered",
-            "payload": {"actor_name": "玩家B", "item_name": "铁锭", "delivered": 32, "need": 64},
+            "payload": {
+                "actor_name": "玩家B", "item_name": "铁锭",
+                "sheet_title": "202工程", "delivered": 32, "need": 64,
+            },
         }
         s = str(format_notification(n))
         self.assertIn("32/64", s)
+        self.assertIn("[202工程] 的 [铁锭]", s)
         self.assertTrue(s.startswith("§e"), s)
 
     def test_sheet_done_uses_green(self):
-        n = {"category": "sheet_done", "payload": {"actor_name": "A", "item_name": "X"}}
+        n = {"category": "sheet_done", "payload": {"actor_name": "A", "item_name": "X", "sheet_title": "清单S"}}
         s = str(format_notification(n))
+        self.assertIn("[清单S] 的 [X]", s)
         self.assertTrue(s.startswith("§a"), s)
 
     def test_sheet_rejected_uses_red(self):
-        n = {"category": "sheet_rejected", "payload": {"item_name": "X"}}
+        n = {"category": "sheet_rejected", "payload": {"item_name": "X", "sheet_title": "清单R"}}
         s = str(format_notification(n))
         self.assertTrue(s.startswith("§c"), s)
         self.assertIn("打回", s)
+        self.assertIn("[清单R] 的 [X]", s)
 
     def test_sheet_qty_changed(self):
         n = {
             "category": "sheet_qty_changed",
-            "payload": {"item_name": "铁锭", "old": 64, "new": 32},
+            "payload": {"item_name": "铁锭", "sheet_title": "清单Q", "old": 64, "new": 32},
         }
         s = str(format_notification(n))
         self.assertIn("32", s)
         self.assertIn("64", s)
+        self.assertIn("[清单Q] 的 [铁锭]", s)
 
     def test_sheet_row_deleted(self):
-        n = {"category": "sheet_row_deleted", "payload": {"item_name": "铁锭"}}
+        n = {"category": "sheet_row_deleted", "payload": {"item_name": "铁锭", "sheet_title": "清单D"}}
         s = str(format_notification(n))
         self.assertIn("删除", s)
+        self.assertIn("[清单D] 的 [铁锭]", s)
         self.assertTrue(s.startswith("§c"), s)
 
     def test_unknown_category_falls_back_to_title(self):
@@ -75,9 +83,10 @@ class FormatNotificationTest(unittest.TestCase):
 
     def test_missing_payload_fields_dont_crash(self):
         n = {"category": "sheet_claimed", "payload": {}}
-        # 不应抛异常
+        # 不应抛异常；缺 sheet_title / item_name / actor_name 时降级为占位符
         s = str(format_notification(n))
         self.assertIsInstance(s, str)
+        self.assertIn("[?] 的 [?]", s)
 
 
 class FormatRowLineTest(unittest.TestCase):

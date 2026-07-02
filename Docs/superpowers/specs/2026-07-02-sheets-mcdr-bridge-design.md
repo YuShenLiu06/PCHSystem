@@ -203,10 +203,10 @@ class DiscordNotifier:      # 触发：配置 bot webhook；配置占位 discord
   - `on_player_joined(server, player, info)` → 加入集合
   - `on_player_left(server, player)` → 移出集合
   - 插件加载时若服务端已启动，用 `server.rcon_query('list')` 解析初始化（兜底）
-- **轮询循环**（每 `notify_poll_interval_seconds` 秒，默认 15.0）：
+- **轮询循环**（每 `notify_poll_interval_seconds` 秒，默认 2.0）：
   1. 对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll`
   2. 逐条 `server.tell(player, format_notification(n))`
-  3. 成功后 `POST /notifications/ack {ids}`
+  3. 成功后 `POST /notifications/ack {player_uuid, ids}`
 - **`on_player_joined` 补推**：玩家上线立即为该玩家拉一次 pending 并投递（离线期间堆积的补推）。
 - **`!!PCH sheet notify list`**：主动拉取并分页回显（玩家想看历史/未读）。
 - **离线处理**：通知仅落库后端；MCDR 不持久化，重启后靠上线拉取恢复。
@@ -214,7 +214,7 @@ class DiscordNotifier:      # 触发：配置 bot webhook；配置占位 discord
 ### 7.2 配置（`config.py` 加字段）
 
 ```python
-notify_poll_interval_seconds: float = 15.0
+notify_poll_interval_seconds: float = 2.0
 notify_max_per_poll: int = 20
 ```
 

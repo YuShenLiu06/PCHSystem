@@ -140,9 +140,9 @@ def _do_claim(server, player, sheet_id, row_id):
 | 阶段 | 实现 |
 |---|---|
 | 在线集合维护 | `on_player_joined(server, player, info)` 加入 / `on_player_left(server, player)` 移出；插件加载时若服务端已启动，用 `server.rcon_query('list')` 解析初始化（兜底，`get_online_players` 不在通用 API） |
-| 后台轮询 | `on_load` 启动 `@new_thread('htcmc_sheet_notifier')` 循环；`on_unload` 设停止位退出；每 `notify_poll_interval_seconds`（默认 15.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll` |
+| 后台轮询 | `on_load` 启动 `@new_thread('htcmc_sheet_notifier')` 循环；`on_unload` 设停止位退出；每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll` |
 | 逐条投递 | `server.tell(player, format_notification(n))` |
-| ack | 投递成功后 `POST /notifications/ack {ids}`（幂等） |
+| ack | 投递成功后 `POST /notifications/ack {player_uuid, ids}`（幂等） |
 | 上线补推 | `on_player_joined` 立即为该玩家拉一次 pending（离线期间堆积的补推） |
 | 主动查看 | `!!PCH sheet notify list` 拉取并分页回显 |
 | 离线处理 | 通知仅落库后端；MCDR 不持久化，重启后靠上线拉取恢复 |
@@ -165,7 +165,7 @@ def _do_claim(server, player, sheet_id, row_id):
 ## 5. 所属数据表
 
 **不直连业务库。** 本地仅：
-- `config/config.yml`：`api_url`、`service_token`、`rcon` 设置、命令前缀开关、`notify_poll_interval_seconds`（默认 15.0）、`notify_max_per_poll`（默认 20）。
+- `config/config.yml`：`api_url`、`service_token`、`rcon` 设置、命令前缀开关、`notify_poll_interval_seconds`（默认 2.0）、`notify_max_per_poll`（默认 20）。
 - 可选缓存：玩家信息短时缓存（减少重复 `GET /players/me`）。
 
 ## 6. 风险与待确认
@@ -178,7 +178,7 @@ def _do_claim(server, player, sheet_id, row_id):
 | scoreboard prefix 显示效果 | Fabric+Carpet 下聊天/Tab 前缀实际渲染 | 待真机验证；不达标则引入 Fabric 前缀 mod |
 | Title Prefix Handler 兼容性 | 与 Carpet 等共存 | 部署时回归玩家名解析 |
 | 阻塞 HTTP 误用 `schedule_task` | 卡住 MCDR 主循环（RS-6） | 全部走 `@new_thread`；详见 §3.6 |
-| 通知轮询延迟 | 默认 15s 周期 | 可调 `notify_poll_interval_seconds`；紧急叠加 webhook（预留） |
+| 通知轮询延迟 | 默认 2s 周期 | 可调 `notify_poll_interval_seconds`；紧急叠加 webhook（预留） |
 | 离线通知补推 | 离线堆积 | 上线 `on_player_joined` 立即拉取 + 分页 |
 
 > 待确认：服务端 RCON 已启用且端口/密码配置；Carpet 是否影响 `/data get block` 输出格式。

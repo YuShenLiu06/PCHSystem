@@ -144,7 +144,8 @@ class SheetClientTest(unittest.TestCase):
         with mock.patch.object(sc.requests, "request", side_effect=_capture):
             out = sc.ack_notifications(_cfg(), self.UUID, [1, 2])
         self.assertEqual(captured["method"], "POST")
-        self.assertEqual(captured["json"], {"ids": [1, 2]})
+        # body 必须带 player_uuid（后端 NotificationAckRequest 必填，防越权 ack）+ ids
+        self.assertEqual(captured["json"], {"player_uuid": self.UUID, "ids": [1, 2]})
         self.assertEqual(out, {"acked": 2})
 
     def test_url_strips_trailing_slash(self):

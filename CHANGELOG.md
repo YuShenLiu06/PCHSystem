@@ -38,6 +38,7 @@
 #### Fixed
 
 - `aa3ffb9` 的 `sheet_commands.py` 已 import 并调用 `rtext_button`/`format_row_clickable`/`format_owner_footer`，但函数定义未随该提交进入 `messages.py`（HEAD 加载即 `ImportError: cannot import name 'rtext_button'`）；本次补齐三个函数定义修复插件加载。`未提交`
+- `htcmc_auth/sheet_commands.py`：空列表分支补可点击「新增」快捷指令——① `_sheet_view` 空行时拥有者也曾不显示 `format_owner_footer`（缺 `[新增物品]`，无法便捷新增第一行），现把 footer 提到 if/else 外、空行也渲染（非拥有者仍无管理栏，RBAC 以后端 403 为准）；② `_sheet_list` 空表单（含 `--mine`）只回显 `（无表格）` 无按钮，现追加 `[建表]`（suggest `!!PCH sheet create ` 续输标题）。新增 `tests/test_sheet_commands_render.py`（4 用例，mock `sheet_client` + fake server 锁定空列表渲染行为）。`未提交`
 - 通知轮询延迟 ~12s（预期 2s）：`htcmc_auth/config.json.example` 的 `notify_poll_interval_seconds` 误写 `15.0`，与代码默认 `config.py:10` 的 `2.0` + 5 处架构文档（`notification-service.md`/`mcdr-plugin.md`/`sheets-mcdr-bridge-design.md`）矛盾；运行时 `config.json` 被 `.gitignore` 忽略、部署从 example 复制 → 实际生效 15s，`notifier.py:153` `interval = max(1.0, cfg.notify_poll_interval_seconds)` 循环节拍随之变 15s，单次 claim 后另一玩家在单个 [0, 15s] 窗口内才被轮询到。改回 `2.0`。**防御加固**：① `htcmc_auth/__init__.py` `on_load` 追加 `serv.logger.info("notifier poll interval = %ss (max_per_poll = %s)", ...)`，部署后从日志即可确认生效值（防 example/默认值漂移被静默吞掉）；② 新增 `tests/test_config.py` 一致性测试，断言 example 的 4 个行为参数（`http_timeout_seconds`/`http_retries`/`notify_poll_interval_seconds`/`notify_max_per_poll`）与 `HtcmcAuthConfig` 默认值一致（排除 `api_url`/`service_token` 部署敏感字段），CI 拦截未来漂移。`load_config_simple` 缺失字段回退类默认已联网核实（<https://docs.mcdreforged.com/en/latest/code_references/utils.html>）。`未提交`
 
 ### Frontend

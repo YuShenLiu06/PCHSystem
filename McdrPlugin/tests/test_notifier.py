@@ -173,6 +173,20 @@ class DeliverForPlayerTest(unittest.TestCase):
                 notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
         self.assertTrue(server.tell.called)
 
+    def test_ack_http_error_does_not_raise(self):
+        # ack 返回 HttpError（如 body 契约偏差致 422）→ 不抛、tell 仍发生、留 warning。
+        # 回归用例：曾因 ack body 缺 player_uuid 致 422，delivered_at 永不置位 → 通知刷屏。
+        notifier.configure(_cfg())
+        server = mock.Mock()
+        http_err = notifier.sheet_client.HttpError(status=422, detail="player_uuid missing")
+        with mock.patch.object(notifier.sheet_client, "pending_notifications", return_value=[
+            {"id": 1, "category": "sheet_claimed", "payload": {"actor_name": "B", "item_name": "i"}}
+        ]):
+            with mock.patch.object(notifier.sheet_client, "ack_notifications", return_value=http_err):
+                # 不应抛
+                notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
+        self.assertTrue(server.tell.called)
+
 
 if __name__ == "__main__":
     unittest.main()

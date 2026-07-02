@@ -298,8 +298,8 @@ sequenceDiagram
     Note over MCDR,O: 后台轮询拉取 + tell 拥有者
     MCDR->>API: GET /notifications/pending?player_uuid=<owner>
     API-->>MCDR: [{category:sheet_claimed, ...}]
-    MCDR->>O: server.tell: 「B 认领了 [铁锭]」
-    MCDR->>API: POST /notifications/ack {ids}
+    MCDR->>O: server.tell: 「B 认领了 [清单名] 的 [铁锭]」
+    MCDR->>API: POST /notifications/ack {player_uuid, ids}
 
     Note over O,BO: 拥有者打回 → 认领人收到通知
     O->>API: POST /sheets/{sid}/rows/{rid}/reject<br/>(JWT 或 service-token+UUID)
@@ -310,8 +310,8 @@ sequenceDiagram
     BO->>MCDR: 上线事件 on_player_joined
     MCDR->>API: GET /notifications/pending?player_uuid=<B>
     API-->>MCDR: [{category:sheet_rejected, ...}]
-    MCDR->>BO: server.tell: 「[铁锭] 已打回，可重做」
-    MCDR->>API: POST /notifications/ack {ids}
+    MCDR->>BO: server.tell: 「[清单名] 的 [铁锭] 已打回，可重做」
+    MCDR->>API: POST /notifications/ack {player_uuid, ids}
 ```
 
 > 详细：[`api/sheets.md`](./architecture/api/sheets.md) §11/§12、[`services/notification-service.md`](./architecture/services/notification-service.md)、[`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md)「通知轮询」。

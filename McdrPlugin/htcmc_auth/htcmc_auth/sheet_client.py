@@ -203,5 +203,14 @@ def pending_notifications(
 
 
 def ack_notifications(cfg: HtcmcAuthConfig, player_uuid: str, ids: list) -> SheetOutcome:
-    """POST /notifications/ack {ids:[...]} → 成功返回 {} 或 {acked: n}。"""
-    return _request(cfg, "POST", "/notifications/ack", player_uuid, json_body={"ids": list(ids)})
+    """POST /notifications/ack {player_uuid, ids} → 成功返回 {} 或 {acked: n}。
+
+    body 必须带 player_uuid（后端 NotificationAckRequest 必填，用于归属校验防越权 ack）。
+    """
+    return _request(
+        cfg,
+        "POST",
+        "/notifications/ack",
+        player_uuid,
+        json_body={"player_uuid": player_uuid, "ids": list(ids)},
+    )

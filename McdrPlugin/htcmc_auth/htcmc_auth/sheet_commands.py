@@ -192,7 +192,15 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
         def _show(data):
             if not data:
                 line = SHEET_LIST_MINE + " " + SHEET_LIST_EMPTY if mine else SHEET_LIST_EMPTY
-                server.tell(player_name, RTextList(RText(SHEET_HEAD), RText(line)))
+                server.tell(player_name, RTextList(
+                    RText(SHEET_HEAD),
+                    RText(line),
+                    RText("\n"),
+                    rtext_button(
+                        "[建表]", "!!PCH sheet create ",
+                        color=RColor.aqua, hover="新建一张表（续输标题）",
+                    ),
+                ))
                 return
             parts = [RText(SHEET_HEAD)]
             if mine:
@@ -247,11 +255,12 @@ def _sheet_view(src, ctx):
             )), RText("\n")]
             if not rows:
                 parts.append(RText(SHEET_DETAIL_EMPTY))
+                parts.append(RText("\n"))
             else:
                 for r in rows:
                     parts.append(format_row_clickable(r, sheet_id, is_owner=is_owner))
-                if is_owner:
-                    parts.append(format_owner_footer(sheet_id))
+            if is_owner:
+                parts.append(format_owner_footer(sheet_id))
             server.tell(player_name, RTextList(*parts))
 
         _resolve(server, player_name, outcome, on_success=_show)

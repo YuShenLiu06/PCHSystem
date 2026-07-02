@@ -191,13 +191,13 @@ def format_owner_footer(sheet_id) -> RTextList:
 #   sheet_rejected / sheet_qty_changed / sheet_row_deleted
 # §码：成功 §a、提醒 §e、打回/删除 §c
 _NOTIFY_TEMPLATES = {
-    "sheet_claimed": "§a{actor} 认领了 [{item}]",
-    "sheet_delivered": "§e{actor} 上报交付 {delivered}/{need} [{item}]",
-    "sheet_done": "§a{actor} 已备齐 [{item}]",
-    "sheet_released": "§e{actor} 取消了对 [{item}] 的认领",
-    "sheet_rejected": "§c[{item}] 已打回，delivered 归零，可重做",
-    "sheet_qty_changed": "§e[{item}] 所需数量变为 {new}（原 {old}），delivered 已按需封顶",
-    "sheet_row_deleted": "§c[{item}] 已被拥有者删除，认领取消",
+    "sheet_claimed": "§a{actor} 认领了 [{sheet_title}] 的 [{item}]",
+    "sheet_delivered": "§e{actor} 上报交付 {delivered}/{need} [{sheet_title}] 的 [{item}]",
+    "sheet_done": "§a{actor} 已备齐 [{sheet_title}] 的 [{item}]",
+    "sheet_released": "§e{actor} 取消了对 [{sheet_title}] 的 [{item}] 的认领",
+    "sheet_rejected": "§c[{sheet_title}] 的 [{item}] 已打回，delivered 归零，可重做",
+    "sheet_qty_changed": "§e[{sheet_title}] 的 [{item}] 所需数量变为 {new}（原 {old}），delivered 已按需封顶",
+    "sheet_row_deleted": "§c[{sheet_title}] 的 [{item}] 已被拥有者删除，认领取消",
 }
 _NOTIFY_DEFAULT = "§7{title}"
 
@@ -212,11 +212,12 @@ def format_notification(n: dict) -> Any:
     payload = n.get("payload") or {}
     tpl = _NOTIFY_TEMPLATES.get(category)
     if tpl is not None:
-        # payload 形如 {item_name, actor_name, old, new, delivered, need}
+        # payload 形如 {sheet_title, item_name, actor_name, old, new, delivered, need}
         try:
             text = tpl.format(
                 actor=payload.get("actor_name") or "某人",
                 item=payload.get("item_name") or "?",
+                sheet_title=payload.get("sheet_title") or "?",
                 delivered=payload.get("delivered", "?"),
                 need=payload.get("need", "?"),
                 old=payload.get("old", "?"),

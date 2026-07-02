@@ -241,9 +241,9 @@ class Notifier(Protocol):
 | 阶段 | 动作 |
 |---|---|
 | **在线集合维护** | `on_player_joined` 加入集合 / `on_player_left` 移出；插件加载时 `server.rcon_query('list')` 初始化兜底 |
-| **后台轮询** | `@new_thread('htcmc_sheet_notifier')` 循环，每 `notify_poll_interval_seconds`（默认 15.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll`（默认 20） |
+| **后台轮询** | `@new_thread('htcmc_sheet_notifier')` 循环，每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll`（默认 20） |
 | **逐条投递** | `server.tell(player, format_notification(n))` |
-| **ack** | 投递成功后 `POST /notifications/ack {ids}` |
+| **ack** | 投递成功后 `POST /notifications/ack {player_uuid, ids}` |
 | **上线补推** | `on_player_joined` 立即为该玩家拉一次 pending（离线期间堆积的补推） |
 | **主动查看** | `!!PCH sheet notify list` 拉取并分页回显 |
 | **离线处理** | 通知仅落库后端；MCDR 不持久化，重启后靠上线拉取恢复 |
@@ -277,7 +277,7 @@ alert-service 文档（[`alert-service.md`](./alert-service.md) §3.1）曾有 `
 | 项 | 说明 | 缓解 |
 |---|---|---|
 | **service-token 泄露** | 等同全员 root（冒充任意 player 写 + 越权读/ack 通知） | §7 全套缓解（网络隔离 + secrets 注入 + ≥32 字节 + 轮换 + 审计日志 + 归属校验） |
-| 轮询延迟 | 默认 15s 投递周期 | 可调 `notify_poll_interval_seconds`；紧急通知可叠加 `WebhookNotifier` |
+| 轮询延迟 | 默认 2s 投递周期 | 可调 `notify_poll_interval_seconds`；紧急通知可叠加 `WebhookNotifier` |
 | 离线堆积 | 离线玩家通知全落库 | 上线补推 + 客户端分页；超长可考虑 TTL 清理（首期不做） |
 | 并发 ack | 重复 ack 幂等 | `mark_delivered` 只在 `delivered_at IS NULL` 时置位 |
 | payload 体积 | jsonb 无上限约束 | 调用方自律（结构化字段，非全量业务对象）+ payload 8KB 上限（后端加固） |

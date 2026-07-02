@@ -136,10 +136,12 @@ def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: HtcmcAu
         if nid is not None:
             ids.append(nid)
     if ids:
-        # ack 失败不致命：下次轮询会再拉到（pending 是 delivered_at IS NULL）
+        # ack 失败不致命：下次轮询会再拉到（pending 是 delivered_at IS NULL）。
+        # 但必须留 warning：HttpError(422 等)/哨兵/None 都不算成功，避免契约偏差被静默吞掉
+        # （曾因 body 缺 player_uuid 致 422，delivered_at 永不置位 → 通知刷屏）。
         ack_outcome = sheet_client.ack_notifications(cfg, player_uuid, ids)
-        if ack_outcome is None:
-            _log.warning("ack failed for %s (ids=%s)", player_name, ids)
+        if not isinstance(ack_outcome, dict):
+            _log.warning("ack failed for %s (ids=%s): %r", player_name, ids, ack_outcome)
 
 
 def run(server, cfg: HtcmcAuthConfig, stop_event: threading.Event) -> None:
