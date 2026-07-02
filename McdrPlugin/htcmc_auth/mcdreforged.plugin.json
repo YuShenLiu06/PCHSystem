@@ -1,0 +1,12 @@
+{
+  "id": "htcmc_auth",
+  "version": "0.1.0",
+  "name": "HTCMC Auth",
+  "description": "HTCMC PCH 游戏内命令（!!PCH login/bind/submit/project/score/rank/title/info）",
+  "author": "HTCMC",
+  "link": "https://github.com/gubaiovo/MCDR_uuid_api_remake",
+  "dependencies": {
+    "mcdreforged": ">=2.14.0",
+    "uuid_api_remake": "*"
+  }
+}
