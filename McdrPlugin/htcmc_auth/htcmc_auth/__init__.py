@@ -52,6 +52,12 @@ def on_load(serv: PluginServerInterface, prev):
     _notifier_stop = threading.Event()
     _start_notifier(serv)
     serv.logger.info("HTCMC Auth loaded (commands under !!PCH, sheets + notifier)")
+    # 打印实际生效的轮询参数，便于部署后从日志确认（防 example/默认值漂移被静默吞掉）
+    serv.logger.info(
+        "notifier poll interval = %ss (max_per_poll = %s)",
+        CONFIG.notify_poll_interval_seconds,
+        CONFIG.notify_max_per_poll,
+    )
 
 
 def on_unload(serv: PluginServerInterface):
