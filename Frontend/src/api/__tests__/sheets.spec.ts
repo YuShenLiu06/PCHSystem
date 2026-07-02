@@ -23,6 +23,10 @@ import {
   deleteRow,
   exportSheetCSV,
   exportAllCSV,
+  claimRow,
+  setRowDelivery,
+  releaseRow,
+  rejectRow,
 } from '../../api/sheets'
 
 const mocked = http as unknown as {
@@ -41,6 +45,30 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// 新契约 fixture：SheetSummary/SheetDetail 含 owner_name；RowDetail 去掉 done_flag、
+// 含 mode/status/claimant_uuid/claimant_name/delivered_qty。
+const sheetSummary = {
+  id: 1,
+  owner_uuid: 'u',
+  owner_name: 'Steve',
+  title: 't',
+  created_at: '',
+  updated_at: '',
+}
+
+const rowDetail = {
+  id: 10,
+  item_name: 'iron',
+  need_qty: 64,
+  mode: 0,
+  status: 'open',
+  claimant_uuid: null,
+  claimant_name: null,
+  delivered_qty: 0,
+  sort_order: 1,
+  updated_at: '',
+}
+
 describe('sheets API client', () => {
   describe('listSheets', () => {
     it('无参数时不带 query', async () => {
@@ -58,7 +86,7 @@ describe('sheets API client', () => {
 
   describe('getSheet', () => {
     it('默认返回 SheetDetail JSON', async () => {
-      const detail = { id: 1, owner_uuid: 'u', title: 't', created_at: '', updated_at: '', rows: [] }
+      const detail = { ...sheetSummary, rows: [] }
       mocked.get.mockResolvedValue({ data: detail })
       const result = await getSheet(1)
       expect(mocked.get).toHaveBeenCalledWith('/sheets/1', { params: undefined })
@@ -75,7 +103,7 @@ describe('sheets API client', () => {
 
   describe('createSheet', () => {
     it('POST /sheets 带 title', async () => {
-      const detail = { id: 1, owner_uuid: 'u', title: '新建', created_at: '', updated_at: '', rows: [] }
+      const detail = { ...sheetSummary, title: '新建', rows: [] }
       mocked.post.mockResolvedValue({ data: detail })
       const result = await createSheet('新建')
       expect(mocked.post).toHaveBeenCalledWith('/sheets', { title: '新建' })
@@ -85,7 +113,7 @@ describe('sheets API client', () => {
 
   describe('patchSheet', () => {
     it('PATCH /sheets/{id} 带 title', async () => {
-      const detail = { id: 1, owner_uuid: 'u', title: '改', created_at: '', updated_at: '', rows: [] }
+      const detail = { ...sheetSummary, title: '改', rows: [] }
       mocked.patch.mockResolvedValue({ data: detail })
       await patchSheet(1, '改')
       expect(mocked.patch).toHaveBeenCalledWith('/sheets/1', { title: '改' })
@@ -101,22 +129,26 @@ describe('sheets API client', () => {
   })
 
   describe('upsertRow', () => {
-    it('PUT /sheets/{id}/rows 带完整 body', async () => {
-      const row = { id: 10, item_name: 'iron', need_qty: 64, done_flag: 0, sort_order: 1, updated_at: '' }
-      mocked.put.mockResolvedValue({ data: row })
-      const result = await upsertRow(1, { item_name: 'iron', need_qty: 64, done_flag: 0, sort_order: 1 })
+    it('PUT /sheets/{id}/rows 带完整 body（mode 替代 done_flag）', async () => {
+      mocked.put.mockResolvedValue({ data: rowDetail })
+      const result = await upsertRow(1, {
+        item_name: 'iron',
+        need_qty: 64,
+        mode: 0,
+        sort_order: 1,
+      })
       expect(mocked.put).toHaveBeenCalledWith('/sheets/1/rows', {
         item_name: 'iron',
         need_qty: 64,
-        done_flag: 0,
+        mode: 0,
         sort_order: 1,
       })
-      expect(result).toEqual(row)
+      expect(result).toEqual(rowDetail)
     })
 
     it('可省略可选字段（后端有默认值）', async () => {
-      const row = { id: 11, item_name: 'gold', need_qty: 0, done_flag: 0, sort_order: 0, updated_at: '' }
-      mocked.put.mockResolvedValue({ data: row })
+      const minimal = { ...rowDetail, id: 11, item_name: 'gold', need_qty: 0, sort_order: 0 }
+      mocked.put.mockResolvedValue({ data: minimal })
       await upsertRow(2, { item_name: 'gold' })
       expect(mocked.put).toHaveBeenCalledWith('/sheets/2/rows', { item_name: 'gold' })
     })
@@ -145,6 +177,46 @@ describe('sheets API client', () => {
       const result = await exportAllCSV()
       expect(mocked.get).toHaveBeenCalledWith('/sheets/export')
       expect(result).toBe('all-csv')
+    })
+  })
+
+  describe('claimRow', () => {
+    it('POST /sheets/{id}/rows/{rowId}/claim 无 body', async () => {
+      const claimed = { ...rowDetail, status: 'claimed', claimant_uuid: 'me', claimant_name: 'Me' }
+      mocked.post.mockResolvedValue({ data: claimed })
+      const result = await claimRow(1, 10)
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/1/rows/10/claim')
+      expect(result).toEqual(claimed)
+    })
+  })
+
+  describe('setRowDelivery', () => {
+    it('PATCH /sheets/{id}/rows/{rowId}/delivery 带 {delivered_qty}', async () => {
+      const done = { ...rowDetail, status: 'done', delivered_qty: 64 }
+      mocked.patch.mockResolvedValue({ data: done })
+      const result = await setRowDelivery(1, 10, 64)
+      expect(mocked.patch).toHaveBeenCalledWith('/sheets/1/rows/10/delivery', { delivered_qty: 64 })
+      expect(result).toEqual(done)
+    })
+  })
+
+  describe('releaseRow', () => {
+    it('POST /sheets/{id}/rows/{rowId}/release 无 body', async () => {
+      const opened = { ...rowDetail, status: 'open' }
+      mocked.post.mockResolvedValue({ data: opened })
+      const result = await releaseRow(1, 10)
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/1/rows/10/release')
+      expect(result).toEqual(opened)
+    })
+  })
+
+  describe('rejectRow', () => {
+    it('POST /sheets/{id}/rows/{rowId}/reject 无 body', async () => {
+      const reClaimed = { ...rowDetail, status: 'claimed', delivered_qty: 0 }
+      mocked.post.mockResolvedValue({ data: reClaimed })
+      const result = await rejectRow(1, 10)
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/1/rows/10/reject')
+      expect(result).toEqual(reClaimed)
     })
   })
 })
