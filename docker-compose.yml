@@ -17,6 +17,8 @@ services:
 
   backend:
     build: ./Backend
+    # 开发模式：源代码挂载 + 文件变更自动热重载，避免每次改 .py 都 rebuild 镜像
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/app"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -31,6 +33,10 @@ services:
       WEB_BASE_URL: ${WEB_BASE_URL}
     ports:
       - "8000:8000"
+    volumes:
+      # 只挂载源码目录：改 .py 文件后 uvicorn --reload 自动重启，依赖变更（pyproject.toml）才需 rebuild
+      - ./Backend/app:/app/app
+      - ./Backend/alembic:/app/alembic
 
 volumes:
   pgdata:

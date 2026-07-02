@@ -41,6 +41,11 @@
 - `GET /me` 端点（JWT 持有者信息）：挂在 `top_router`（无 `/auth` 前缀），通过 `Depends(get_current_player)` 校验 Bearer token。`ba8b1ff`
 - `get_current_player` + `require_role` 依赖（`Backend/app/api/deps.py` 追加）：Bearer 解析 + JWT 解码 + `type=="access"` 校验 + Player 回查，四种 401 路径；`require_role` 工厂返回闭包，`owner` 角色绕过 RBAC（为后续管理类端点预留）。`ba8b1ff`
 - OpenAPI 契约冻结：`Backend/tests/test_openapi_freeze.py` 校验 5 端点路径不可移除；`Backend/openapi.json` 工件导出（OpenAPI 3.1.0，`ensure_ascii=False` 保中文 description），供前端/MCDR 团队桩测。`48bc1f3`
+- 迁移 `0003_auth_tokens_revoked_at`：`users.auth_tokens` 增 `revoked_at`（带时区、可空）列 + 部分索引 `ix_auth_tokens_player_active`（`WHERE used_at IS NULL AND revoked_at IS NULL`），支撑 token 软吊销审计与「活跃 token」快速查找。`未提交`
+
+#### Changed
+
+- `auth_token_repo.issue` 改为先 `revoke_active_tokens`（软吊销同 UUID 下 `used_at IS NULL AND revoked_at IS NULL` 的旧 token，置 `revoked_at = now()`）再签发新 token，返回 `(token, revoked_count)`；`POST /auth/token` 响应 schema 增 `previous_tokens_revoked: int` 字段（`TokenIssueResponse`）。`models/user.py`（`AuthToken.revoked_at`）/ `schemas/auth.py` / `api/auth.py` / `tests/test_auth_api.py` 同步。`未提交`
 
 #### Fixed
 
@@ -53,6 +58,19 @@
 
 - MCDR 插件骨架：`mcdreforged.plugin.json`（id `htcmc_auth`、版本 `0.1.0`、依赖 `mcdreforged>=2.14.0` + `uuid_api_remake`）+ `requirements.txt`（`requests>=2.31`）+ `htcmc_auth/{__init__.py, config.py}`（`HtcmcAuthConfig` 4 字段：`api_url` / `service_token` / `http_timeout_seconds` / `http_retries`，`on_load` 加载配置 + 注册 `!!login` 占位命令）。`7a2bc88`
 - `!!login` 实现链路：`htcmc_auth/client.py`（HTTP 客户端，超时 + 重试 + 429/403 哨兵字符串）+ `htcmc_auth/__init__.py` 完整 `_login`（`PlayerCommandSource` 校验 → `uuid_api_remake.get_uuid` 推导 → `server.schedule_task` 内异步调后端 → `RText.c(RAction.open_url, url)` 可点击链接回显；红线 R-12 落实，红线 S-1 API 经 HANDOFF 联网核实）。`1d14082`
+- `htcmc_auth/commands.py`：`!!PCH` 命令回调集合（`_pch_root` 帮助树 / `_login` 登录链路 / `_not_impl` 占位工厂）；`htcmc_auth/messages.py`：集中消息/色彩常量（`§` 码前缀）+ RText 构造器（`rtext_link` / `rtext_info` / `rtext_warn` / `rtext_error`）。`未提交`
+- 登录链路回显「§c上一个登录链接已失效」红色提示：依赖后端 `previous_tokens_revoked > 0`（同 UUID 重复申请 token 时旧 token 被软吊销）。`未提交`
+- `McdrPlugin/CLAUDE.md` §6：MCDR 色彩代码使用标准（`§` 码 ↔ `RColor/RStyle` 双轨 + 语义用途表 + 样式码表 + 使用规则 + 双写对照示例）。`未提交`
+
+#### Changed
+
+- 插件目录重构为 `htcmc_auth/htcmc_auth/` Python 包（`mcdreforged.plugin.json` 同步移到包上层）；`__init__.py` / `client.py` / `config.py` 进包内。`未提交`
+- 命令树重构：注册 `!!PCH` 父节点（`.runs(_pch_root)` 显示帮助）+ `login / bind / submit [hand|<project> x y z] / project [list|<id> info] / score / rank / title [list|<id> set] / info` 子节点（基于 `Literal` / `Text` / `Integer`，API 已联网核实）；废弃单一 `!!login` 字面量。`未提交`
+
+#### Fixed
+
+- `!!PCH login` 阻塞 MCDR 主线程导致卡顿：`_login` 原用 `server.schedule_task(_do)` 包裹阻塞式 `requests.post`，而 `schedule_task` 同步回调跑在 task executor = 主线程，卡住整个主循环（命令/事件/server 输出解析全停滞）。改为 `@new_thread('htcmc_auth login')` 把 `_do` 卸载到 daemon 线程（`server.tell` 线程安全，S-1 联网核实 PluginServerInterface 文档）。`未提交`
+- 项目文档并发模型勘误：`Docs/McdrPlugin/mcdr-api-cheatsheet.md` §8 HTTP 模板、根 `CLAUDE.md` R-12、`McdrPlugin/CLAUDE.md` RS-6 原说「耗时调用放 `schedule_task`」（错误，会卡主线程），统一改为「阻塞调用放 `@new_thread`；`schedule_task` 仅用于协程 / 延迟到主线程下一 tick / 从后台线程回主线程」。`未提交`
 
 ### Frontend
 
@@ -80,6 +98,9 @@
 - `Docs/Plans/superpowers/2026-07-01-phase0-1-auth-login.md`：23 任务 TDD 细粒度计划，B5 段已标记 ✅ 完成（commit `b324e50`）。`b313e40`，更新于 `36d399b`
 - `Docs/Plans/HANDOFF.md`：交接入口（进度 · 环境 · 已联网核实 API · 继续方式）。`b313e40`，更新于 `36d399b`
 - `Docs/Plans/无感鉴权方案讨论.md`：鉴权讨论稿（MVP 不实现）。`b313e40`
+- 根 `README.md`：项目入口（三端架构图 + 快速启动 + 端口/密钥/网络说明）。`未提交`
+- `Docs/McdrPlugin/mcdr-api-cheatsheet.md`：MCDR API 速查（命令节点树 · RText 色彩系统 · `@new_thread`/`schedule_task` 并发模型 · 事件 · RCON；含 §8「常见误区」勘误）。`未提交`
+- 分布式子服务 `CLAUDE.md`：`Backend/CLAUDE.md` · `Frontend/CLAUDE.md` · `McdrPlugin/CLAUDE.md`（各服务雷点 + 关键要素 + 文档索引，由 `service-claude-md` skill 生成）。`未提交`
 
 ### 项目级
 
@@ -87,6 +108,8 @@
 
 - 根 `.gitignore`：忽略 `.env` · `.venv/` · `__pycache__/` · `node_modules/` · `.vite/` 等。`407f7d7`
 - `service-claude-md` skill：子服务 `CLAUDE.md` 唯一维护入口（位于 `.claude/skills/service-claude-md/`）。`407f7d7`
+- `TestServer/`：V1 端到端验收环境（MC 1.20.1 Fabric 离线模式 + MCDReforged + htcmc_auth → backend → frontend 三端联通）。含 `Dockerfile`（python3.11-slim + openjdk17 + `mcdreforged>=2.14,<3`）、`docker-compose.yml`（`stdin_open + tty` 供 `docker attach` 调试、加入 `pchsystem_default` 外部网络访问 backend）、`entrypoint.sh`（下载 Fabric launcher · 生成 eula · `exec mcdreforged start --auto-init` 前台启动）、`config/mcdr_config.yml`（vanilla_handler + UTF-8 + `advanced_console: false`）、`config/htcmc_auth_config.json`、`plugins/uuid_api_remake.mcdr`、`.gitignore`。`未提交`
+- 根 `docker-compose.yml`：调整为与 TestServer 共享 `pchsystem_default` 外部网络；backend 容器名固定 `pchsystem-backend-1` 供 MCDR 解析。`未提交`
 
 ---
 
