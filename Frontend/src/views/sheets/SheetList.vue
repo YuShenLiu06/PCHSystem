@@ -68,7 +68,7 @@ onMounted(load)
         @row-click="(row: SheetSummary) => router.push(`/sheets/${row.id}`)"
       >
         <el-table-column prop="title" label="标题" />
-        <el-table-column prop="owner_uuid" label="所有者 UUID" width="320" />
+        <el-table-column prop="owner_name" label="所有者" width="160" />
         <el-table-column label="更新时间" width="200">
           <template #default="{ row }">
             {{ new Date(row.updated_at).toLocaleString() }}
