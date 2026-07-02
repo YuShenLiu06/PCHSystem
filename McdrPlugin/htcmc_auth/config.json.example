@@ -1,0 +1,8 @@
+{
+  "api_url": "http://pchsystem-backend-1:8000",
+  "service_token": "change_me_service_token",
+  "http_timeout_seconds": 5.0,
+  "http_retries": 2,
+  "notify_poll_interval_seconds": 15.0,
+  "notify_max_per_poll": 20
+}
