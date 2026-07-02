@@ -16,6 +16,8 @@ dependencies = [
   "pyjwt>=2.8",
   "pydantic-settings>=2.1",
   "httpx>=0.27",
+  "litemapy>=0.11",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

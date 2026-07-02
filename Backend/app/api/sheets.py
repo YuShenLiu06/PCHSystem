@@ -29,6 +29,7 @@ from app.schemas.sheet import (
     RowUpsertRequest,
     SheetCreateRequest,
     SheetDetail,
+    SheetFromItemsRequest,
     SheetPatchRequest,
     SheetSummary,
 )
@@ -129,6 +130,39 @@ async def create_sheet(
     await session.commit()
     await session.refresh(sheet)
     return _to_detail(sheet, [], player.current_name)
+
+
+@router.post("/from-items", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
+async def create_sheet_from_items(
+    body: SheetFromItemsRequest,
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+) -> SheetDetail:
+    """按材料清单一次性建表 + 批量行（mode 默认 lock）；调用方=拥有者。单事务 commit。
+
+    用于「投影解析→生成表格」：方块组 / 容器组各调一次。``items`` 条数由 schema 限 ≤2000。
+    """
+    sheet = await sheet_repo.create_sheet(session, player.uuid, body.title)
+    for item in body.items:
+        try:
+            await sheet_repo.upsert_row(
+                session,
+                sheet_id=sheet.id,
+                item_name=item.item_name,
+                need_qty=item.need_qty,
+                mode=item.mode,
+                sort_order=item.sort_order,
+            )
+        except IntegrityError as exc:  # 同名并发 insert 命中 UNIQUE（防御）
+            await session.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+    await session.commit()
+    result = await sheet_repo.get_sheet(session, sheet.id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet_obj, owner_name = result
+    rows_with_names = await sheet_repo.list_rows(session, sheet.id)
+    return _to_detail(sheet_obj, rows_with_names, owner_name)
 
 
 @router.get("", response_model=list[SheetSummary])

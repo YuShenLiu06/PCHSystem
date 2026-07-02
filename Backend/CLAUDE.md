@@ -20,7 +20,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | 全部业务数据读写（PostgreSQL 独占） | 游戏内命令交互（MCDR 管） |
 | RBAC 权限判定（真实权限源） | 前端展示逻辑（前端只控可见性，R-9） |
 | JWT 签发与校验、一次性 token 软失效 | wiki.js 内容存储（只单向同步，R-8） |
-| Alembic 数据库迁移 | 投影解析（litemapy 在调用方） |
+| Alembic 数据库迁移 · 投影解析（litemapy）+ 中文翻译 | .litematic 文件存档（仅即时解析、不持久化） |
 
 ---
 
@@ -46,7 +46,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 
 ### 入口与结构
 - 入口：`app/main.py`（FastAPI app + 路由挂载）
-- 路由：`app/api/*.py`（`auth` / `me` 已实现）
+- 路由：`app/api/*.py`（`auth` / `me` / `sheets` / `notifications` / `parsing`）
 - 数据层：`app/models/`（SQLAlchemy 2.x）+ `app/repositories/`（repo 函数，不返回 ORM 对象给路由层）
 - 配置：`app/core/config.py`（pydantic-settings，`auth_token_ttl_seconds` 等）
 - 迁移：`alembic/versions/`
@@ -62,6 +62,8 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | `GET /notifications/pending` | MCDR 轮询拉取未投递通知（service-token，query `player_uuid`） |
 | `POST /notifications/ack` | 批量标**该 player_uuid 名下**通知投递（service-token，body `{player_uuid, ids:[…]}`，C-1 防越权） |
 | `POST /notifications/{id}/read` | 标已读（service-token，query `player_uuid` 归属校验，跨玩家 404；L-2 同步幂等置 delivered_at） |
+| `POST /parsing/litematic` | Web 上传 `.litematic` → litemapy 解析 + 中文翻译 → 分组预览（不落库）。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
+| `POST /sheets/from-items` | 一次性建表 + 批量行（`mode` 默认 lock），用于「投影解析→生成表格」 |
 
 ### 数据表（users schema）
 - `players`：玩家主身（UUID + current_name + role + whitelist_state）

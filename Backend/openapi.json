@@ -1,560 +1,97 @@
 {
-  "components": {
-    "schemas": {
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
-        "type": "object"
-      },
-      "MeResponse": {
-        "properties": {
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "uuid": {
-            "format": "uuid",
-            "title": "Uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "uuid",
-          "name",
-          "role"
-        ],
-        "title": "MeResponse",
-        "type": "object"
-      },
-      "NotificationAckRequest": {
-        "description": "MCDR ack：限定只标该 player_uuid 名下的通知（防越权 ack 他人）。",
-        "properties": {
-          "ids": {
-            "items": {
-              "type": "integer"
-            },
-            "title": "Ids",
-            "type": "array"
-          },
-          "player_uuid": {
-            "format": "uuid",
-            "title": "Player Uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "player_uuid"
-        ],
-        "title": "NotificationAckRequest",
-        "type": "object"
-      },
-      "NotificationAckResponse": {
-        "properties": {
-          "acked": {
-            "title": "Acked",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "acked"
-        ],
-        "title": "NotificationAckResponse",
-        "type": "object"
-      },
-      "NotificationOut": {
-        "properties": {
-          "body": {
-            "title": "Body",
-            "type": "string"
-          },
-          "category": {
-            "title": "Category",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "delivered_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HTCMC PCHSystem",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
               }
-            ],
-            "title": "Delivered At"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "payload": {
-            "additionalProperties": true,
-            "title": "Payload",
-            "type": "object"
-          },
-          "read_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Read At"
-          },
-          "recipient_uuid": {
-            "format": "uuid",
-            "title": "Recipient Uuid",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
+            }
           }
-        },
-        "required": [
-          "id",
-          "recipient_uuid",
-          "category",
-          "title",
-          "body",
-          "payload",
-          "created_at"
+        }
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "tags": [
+          "auth"
         ],
-        "title": "NotificationOut",
-        "type": "object"
-      },
-      "PlayerBrief": {
-        "properties": {
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "uuid": {
-            "format": "uuid",
-            "title": "Uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "uuid",
-          "name",
-          "role"
-        ],
-        "title": "PlayerBrief",
-        "type": "object"
-      },
-      "RefreshRequest": {
-        "properties": {
-          "refresh_token": {
-            "title": "Refresh Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "refresh_token"
-        ],
-        "title": "RefreshRequest",
-        "type": "object"
-      },
-      "RowDeliveryRequest": {
-        "properties": {
-          "delivered_qty": {
-            "minimum": 0.0,
-            "title": "Delivered Qty",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "delivered_qty"
-        ],
-        "title": "RowDeliveryRequest",
-        "type": "object"
-      },
-      "RowDetail": {
-        "properties": {
-          "claimant_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Claimant Name"
-          },
-          "claimant_uuid": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Claimant Uuid"
-          },
-          "delivered_qty": {
-            "title": "Delivered Qty",
-            "type": "integer"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "item_name": {
-            "title": "Item Name",
-            "type": "string"
-          },
-          "mode": {
-            "title": "Mode",
-            "type": "integer"
-          },
-          "need_qty": {
-            "title": "Need Qty",
-            "type": "integer"
-          },
-          "sort_order": {
-            "title": "Sort Order",
-            "type": "integer"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "item_name",
-          "need_qty",
-          "mode",
-          "status",
-          "claimant_uuid",
-          "claimant_name",
-          "delivered_qty",
-          "sort_order",
-          "updated_at"
-        ],
-        "title": "RowDetail",
-        "type": "object"
-      },
-      "RowUpsertRequest": {
-        "properties": {
-          "item_name": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Item Name",
-            "type": "string"
-          },
-          "mode": {
-            "default": 0,
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Mode",
-            "type": "integer"
-          },
-          "need_qty": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Need Qty",
-            "type": "integer"
-          },
-          "sort_order": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Sort Order",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "item_name"
-        ],
-        "title": "RowUpsertRequest",
-        "type": "object"
-      },
-      "SheetCreateRequest": {
-        "properties": {
-          "title": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title"
-        ],
-        "title": "SheetCreateRequest",
-        "type": "object"
-      },
-      "SheetDetail": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "owner_name": {
-            "title": "Owner Name",
-            "type": "string"
-          },
-          "owner_uuid": {
-            "format": "uuid",
-            "title": "Owner Uuid",
-            "type": "string"
-          },
-          "rows": {
-            "items": {
-              "$ref": "#/components/schemas/RowDetail"
-            },
-            "title": "Rows",
-            "type": "array"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "owner_uuid",
-          "owner_name",
-          "title",
-          "created_at",
-          "updated_at",
-          "rows"
-        ],
-        "title": "SheetDetail",
-        "type": "object"
-      },
-      "SheetPatchRequest": {
-        "properties": {
-          "title": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title"
-        ],
-        "title": "SheetPatchRequest",
-        "type": "object"
-      },
-      "SheetSummary": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "owner_name": {
-            "title": "Owner Name",
-            "type": "string"
-          },
-          "owner_uuid": {
-            "format": "uuid",
-            "title": "Owner Uuid",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "owner_uuid",
-          "owner_name",
-          "title",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "SheetSummary",
-        "type": "object"
-      },
-      "TokenExchangeRequest": {
-        "properties": {
-          "token": {
-            "format": "uuid",
-            "title": "Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "TokenExchangeRequest",
-        "type": "object"
-      },
-      "TokenExchangeResponse": {
-        "properties": {
-          "access_token": {
-            "title": "Access Token",
-            "type": "string"
-          },
-          "player": {
-            "$ref": "#/components/schemas/PlayerBrief"
-          },
-          "refresh_token": {
-            "title": "Refresh Token",
-            "type": "string"
-          },
-          "token_type": {
-            "default": "Bearer",
-            "title": "Token Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "access_token",
-          "refresh_token",
-          "player"
-        ],
-        "title": "TokenExchangeResponse",
-        "type": "object"
-      },
-      "TokenIssueRequest": {
-        "properties": {
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "uuid": {
-            "format": "uuid",
-            "title": "Uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "uuid",
-          "name"
-        ],
-        "title": "TokenIssueRequest",
-        "type": "object"
-      },
-      "TokenIssueResponse": {
-        "properties": {
-          "expires_in": {
-            "title": "Expires In",
-            "type": "integer"
-          },
-          "login_url": {
-            "title": "Login Url",
-            "type": "string"
-          },
-          "previous_tokens_revoked": {
-            "title": "Previous Tokens Revoked",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "login_url",
-          "expires_in",
-          "previous_tokens_revoked"
-        ],
-        "title": "TokenIssueResponse",
-        "type": "object"
-      },
-      "ValidationError": {
-        "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "loc": {
-            "items": {
+        "summary": "Post Token",
+        "operationId": "post_token_auth_token_post",
+        "parameters": [
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
               "anyOf": [
                 {
                   "type": "string"
                 },
                 {
-                  "type": "integer"
+                  "type": "null"
                 }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "msg": {
-            "title": "Message",
-            "type": "string"
-          },
-          "type": {
-            "title": "Error Type",
-            "type": "string"
+              ],
+              "title": "X-Service-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenIssueRequest"
+              }
+            }
           }
         },
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError",
-        "type": "object"
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenIssueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
-    }
-  },
-  "info": {
-    "title": "HTCMC PCHSystem",
-    "version": "0.1.0"
-  },
-  "openapi": "3.1.0",
-  "paths": {
+    },
     "/auth/exchange": {
       "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Exchange",
         "operationId": "post_exchange_auth_exchange_post",
         "requestBody": {
           "content": {
@@ -568,34 +105,34 @@
         },
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TokenExchangeResponse"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Post Exchange",
-        "tags": [
-          "auth"
-        ]
+        }
       }
     },
     "/auth/refresh": {
       "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Refresh",
         "operationId": "post_refresh_auth_refresh_post",
         "requestBody": {
           "content": {
@@ -609,120 +146,39 @@
         },
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TokenExchangeResponse"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Post Refresh",
-        "tags": [
-          "auth"
-        ]
+        }
       }
     },
-    "/auth/token": {
+    "/sheets": {
       "post": {
-        "operationId": "post_token_auth_token_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenIssueRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenIssueResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Post Token",
         "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/healthz": {
-      "get": {
-        "operationId": "healthz_healthz_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Healthz Healthz Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Healthz"
-      }
-    },
-    "/me": {
-      "get": {
-        "operationId": "get_me_me_get",
+          "sheets"
+        ],
+        "summary": "Create Sheet",
+        "operationId": "create_sheet_sheets_post",
         "parameters": [
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -737,8 +193,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -753,8 +209,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -769,257 +225,49 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Me",
-        "tags": [
-          "me"
-        ]
-      }
-    },
-    "/notifications/ack": {
-      "post": {
-        "description": "标投递：仅命中 body.player_uuid 名下的 id（C-1 防越权，跨玩家 id 计 0）。",
-        "operationId": "ack_notifications_ack_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NotificationAckRequest"
+                "$ref": "#/components/schemas/SheetCreateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
-          "200": {
+          "201": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationAckResponse"
+                  "$ref": "#/components/schemas/SheetDetail"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Ack",
-        "tags": [
-          "notifications"
-        ]
-      }
-    },
-    "/notifications/pending": {
+        }
+      },
       "get": {
-        "operationId": "list_pending_notifications_pending_get",
-        "parameters": [
-          {
-            "description": "目标玩家 UUID",
-            "in": "query",
-            "name": "player_uuid",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "目标玩家 UUID",
-              "title": "Player Uuid"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 50,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/NotificationOut"
-                  },
-                  "title": "Response List Pending Notifications Pending Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Pending",
         "tags": [
-          "notifications"
-        ]
-      }
-    },
-    "/notifications/{notification_id}/read": {
-      "post": {
-        "description": "标已读：仅当 notification 归属 player_uuid（C-1 防越权，跨玩家 404）。\n\nL-2：已读必然已投递，mark_read 同步幂等置 delivered_at。",
-        "operationId": "mark_read_notifications__notification_id__read_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "notification_id",
-            "required": true,
-            "schema": {
-              "title": "Notification Id",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "目标玩家 UUID（归属校验）",
-            "in": "query",
-            "name": "player_uuid",
-            "required": true,
-            "schema": {
-              "description": "目标玩家 UUID（归属校验）",
-              "format": "uuid",
-              "title": "Player Uuid",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
+          "sheets"
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotificationOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Mark Read",
-        "tags": [
-          "notifications"
-        ]
-      }
-    },
-    "/sheets": {
-      "get": {
+        "summary": "List Sheets",
         "operationId": "list_sheets_sheets_get",
         "parameters": [
           {
-            "description": "过滤：传 me 只看自己",
-            "in": "query",
             "name": "owner",
+            "in": "query",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1032,11 +280,12 @@
               ],
               "description": "过滤：传 me 只看自己",
               "title": "Owner"
-            }
+            },
+            "description": "过滤：传 me 只看自己"
           },
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1051,8 +300,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1067,8 +316,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1085,41 +334,44 @@
         ],
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/SheetSummary"
                   },
-                  "title": "Response List Sheets Sheets Get",
-                  "type": "array"
+                  "title": "Response List Sheets Sheets Get"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "List Sheets",
+        }
+      }
+    },
+    "/sheets/from-items": {
+      "post": {
         "tags": [
           "sheets"
-        ]
-      },
-      "post": {
-        "operationId": "create_sheet_sheets_post",
+        ],
+        "summary": "Create Sheet From Items",
+        "description": "按材料清单一次性建表 + 批量行（mode 默认 lock）；调用方=拥有者。单事务 commit。\n\n用于「投影解析→生成表格」：方块组 / 容器组各调一次。``items`` 条数由 schema 限 ≤2000。",
+        "operationId": "create_sheet_from_items_sheets_from_items_post",
         "parameters": [
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1134,8 +386,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1150,8 +402,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1167,50 +419,50 @@
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SheetCreateRequest"
+                "$ref": "#/components/schemas/SheetFromItemsRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SheetDetail"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Create Sheet",
-        "tags": [
-          "sheets"
-        ]
+        }
       }
     },
     "/sheets/export": {
       "get": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Export All",
         "operationId": "export_all_sheets_export_get",
         "parameters": [
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1227,130 +479,48 @@
         ],
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "text/plain": {
                 "schema": {
                   "type": "string"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Export All",
-        "tags": [
-          "sheets"
-        ]
+        }
       }
     },
     "/sheets/{sheet_id}": {
-      "delete": {
-        "operationId": "delete_sheet_sheets__sheet_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-player-uuid",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Sheet",
+      "get": {
         "tags": [
           "sheets"
-        ]
-      },
-      "get": {
+        ],
+        "summary": "Get Sheet",
         "operationId": "get_sheet_sheets__sheet_id__get",
         "parameters": [
           {
-            "in": "path",
             "name": "sheet_id",
+            "in": "path",
             "required": true,
             "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
+              "type": "integer",
+              "title": "Sheet Id"
             }
           },
           {
-            "description": "传 csv 返回 text/csv",
-            "in": "query",
             "name": "format",
+            "in": "query",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1363,11 +533,12 @@
               ],
               "description": "传 csv 返回 text/csv",
               "title": "Format"
-            }
+            },
+            "description": "传 csv 返回 text/csv"
           },
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1382,8 +553,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1398,8 +569,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1416,46 +587,46 @@
         ],
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SheetDetail"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Get Sheet",
-        "tags": [
-          "sheets"
-        ]
+        }
       },
       "patch": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Patch Sheet",
         "operationId": "patch_sheet_sheets__sheet_id__patch",
         "parameters": [
           {
-            "in": "path",
             "name": "sheet_id",
+            "in": "path",
             "required": true,
             "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
+              "type": "integer",
+              "title": "Sheet Id"
             }
           },
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1470,8 +641,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1486,8 +657,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1503,168 +674,57 @@
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SheetPatchRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SheetDetail"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Patch Sheet",
-        "tags": [
-          "sheets"
-        ]
-      }
-    },
-    "/sheets/{sheet_id}/rows": {
-      "put": {
-        "operationId": "upsert_row_sheets__sheet_id__rows_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-player-uuid",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RowUpsertRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RowDetail"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Upsert Row",
-        "tags": [
-          "sheets"
-        ]
-      }
-    },
-    "/sheets/{sheet_id}/rows/{row_id}": {
+        }
+      },
       "delete": {
-        "operationId": "delete_row_sheets__sheet_id__rows__row_id__delete",
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Delete Sheet",
+        "operationId": "delete_sheet_sheets__sheet_id__delete",
         "parameters": [
           {
-            "in": "path",
             "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
             "in": "path",
-            "name": "row_id",
             "required": true,
             "schema": {
-              "title": "Row Id",
-              "type": "integer"
+              "type": "integer",
+              "title": "Sheet Id"
             }
           },
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1679,8 +739,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1695,8 +755,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1716,146 +776,38 @@
             "description": "Successful Response"
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Delete Row",
-        "tags": [
-          "sheets"
-        ]
+        }
       }
     },
-    "/sheets/{sheet_id}/rows/{row_id}/claim": {
-      "post": {
-        "operationId": "claim_row_sheets__sheet_id__rows__row_id__claim_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "path",
-            "name": "row_id",
-            "required": true,
-            "schema": {
-              "title": "Row Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-player-uuid",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
-          }
+    "/sheets/{sheet_id}/rows": {
+      "put": {
+        "tags": [
+          "sheets"
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RowDetail"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Claim Row",
-        "tags": [
-          "sheets"
-        ]
-      }
-    },
-    "/sheets/{sheet_id}/rows/{row_id}/delivery": {
-      "patch": {
-        "operationId": "set_row_delivery_sheets__sheet_id__rows__row_id__delivery_patch",
+        "summary": "Upsert Row",
+        "operationId": "upsert_row_sheets__sheet_id__rows_put",
         "parameters": [
           {
-            "in": "path",
             "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
             "in": "path",
-            "name": "row_id",
             "required": true,
             "schema": {
-              "title": "Row Id",
-              "type": "integer"
+              "type": "integer",
+              "title": "Sheet Id"
             }
           },
           {
-            "in": "header",
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1870,8 +822,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1886,8 +838,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1903,167 +855,368 @@
           }
         ],
         "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RowUpsertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sheets/{sheet_id}/rows/{row_id}": {
+      "delete": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Delete Row",
+        "operationId": "delete_row_sheets__sheet_id__rows__row_id__delete",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sheets/{sheet_id}/rows/{row_id}/claim": {
+      "post": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Claim Row",
+        "operationId": "claim_row_sheets__sheet_id__rows__row_id__claim_post",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sheets/{sheet_id}/rows/{row_id}/delivery": {
+      "patch": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Set Row Delivery",
+        "operationId": "set_row_delivery_sheets__sheet_id__rows__row_id__delivery_patch",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RowDeliveryRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RowDetail"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Row Delivery",
-        "tags": [
-          "sheets"
-        ]
-      }
-    },
-    "/sheets/{sheet_id}/rows/{row_id}/reject": {
-      "post": {
-        "operationId": "reject_row_sheets__sheet_id__rows__row_id__reject_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "path",
-            "name": "row_id",
-            "required": true,
-            "schema": {
-              "title": "Row Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-service-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-player-uuid",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RowDetail"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Reject Row",
-        "tags": [
-          "sheets"
-        ]
+        }
       }
     },
     "/sheets/{sheet_id}/rows/{row_id}/release": {
       "post": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Release Row",
         "operationId": "release_row_sheets__sheet_id__rows__row_id__release_post",
         "parameters": [
           {
-            "in": "path",
             "name": "sheet_id",
-            "required": true,
-            "schema": {
-              "title": "Sheet Id",
-              "type": "integer"
-            }
-          },
-          {
             "in": "path",
-            "name": "row_id",
             "required": true,
             "schema": {
-              "title": "Row Id",
-              "type": "integer"
+              "type": "integer",
+              "title": "Sheet Id"
             }
           },
           {
-            "in": "header",
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
             "name": "authorization",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2078,8 +1231,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-service-token",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2094,8 +1247,8 @@
             }
           },
           {
-            "in": "header",
             "name": "x-player-uuid",
+            "in": "header",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2112,30 +1265,1238 @@
         ],
         "responses": {
           "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RowDetail"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
-        },
-        "summary": "Release Row",
+        }
+      }
+    },
+    "/sheets/{sheet_id}/rows/{row_id}/reject": {
+      "post": {
         "tags": [
           "sheets"
-        ]
+        ],
+        "summary": "Reject Row",
+        "operationId": "reject_row_sheets__sheet_id__rows__row_id__reject_post",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "row_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Row Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/parsing/litematic": {
+      "post": {
+        "tags": [
+          "parsing"
+        ],
+        "summary": "Parse Litematic",
+        "description": "上传 ``.litematic`` → 解析材料 + 翻译中文 → 分组预览（方块组 + 容器组）。",
+        "operationId": "parse_litematic_parsing_litematic_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_litematic_parsing_litematic_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParsedMaterialPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/pending": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "List Pending",
+        "operationId": "list_pending_notifications_pending_get",
+        "parameters": [
+          {
+            "name": "player_uuid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "目标玩家 UUID",
+              "title": "Player Uuid"
+            },
+            "description": "目标玩家 UUID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationOut"
+                  },
+                  "title": "Response List Pending Notifications Pending Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/ack": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Ack",
+        "description": "标投递：仅命中 body.player_uuid 名下的 id（C-1 防越权，跨玩家 id 计 0）。",
+        "operationId": "ack_notifications_ack_post",
+        "parameters": [
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationAckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationAckResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/{notification_id}/read": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Mark Read",
+        "description": "标已读：仅当 notification 归属 player_uuid（C-1 防越权，跨玩家 404）。\n\nL-2：已读必然已投递，mark_read 同步幂等置 delivered_at。",
+        "operationId": "mark_read_notifications__notification_id__read_post",
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Notification Id"
+            }
+          },
+          {
+            "name": "player_uuid",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "目标玩家 UUID（归属校验）",
+              "title": "Player Uuid"
+            },
+            "description": "目标玩家 UUID（归属校验）"
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Get Me",
+        "operationId": "get_me_me_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_parse_litematic_parsing_litematic_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_parse_litematic_parsing_litematic_post"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MeResponse": {
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "role"
+        ],
+        "title": "MeResponse"
+      },
+      "NotificationAckRequest": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid"
+        ],
+        "title": "NotificationAckRequest",
+        "description": "MCDR ack：限定只标该 player_uuid 名下的通知（防越权 ack 他人）。"
+      },
+      "NotificationAckResponse": {
+        "properties": {
+          "acked": {
+            "type": "integer",
+            "title": "Acked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "acked"
+        ],
+        "title": "NotificationAckResponse"
+      },
+      "NotificationOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "recipient_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Recipient Uuid"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "recipient_uuid",
+          "category",
+          "title",
+          "body",
+          "payload",
+          "created_at"
+        ],
+        "title": "NotificationOut"
+      },
+      "ParsedMaterialPreview": {
+        "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/PreviewMeta"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewItem"
+            },
+            "type": "array",
+            "title": "Blocks"
+          },
+          "container_items": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewItem"
+            },
+            "type": "array",
+            "title": "Container Items"
+          },
+          "untranslated": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Untranslated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "meta",
+          "blocks",
+          "container_items",
+          "untranslated"
+        ],
+        "title": "ParsedMaterialPreview",
+        "description": "``POST /parsing/litematic`` 响应：分组材料预览（不落库）。"
+      },
+      "PlayerBrief": {
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "role"
+        ],
+        "title": "PlayerBrief"
+      },
+      "PreviewItem": {
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "title": "Item Id"
+          },
+          "item_name": {
+            "type": "string",
+            "title": "Item Name"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_id",
+          "item_name",
+          "count"
+        ],
+        "title": "PreviewItem",
+        "description": "翻译后的单个材料条目。"
+      },
+      "PreviewMeta": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "schematic_name": {
+            "type": "string",
+            "title": "Schematic Name",
+            "default": ""
+          },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "default": ""
+          },
+          "region_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Region Count"
+          },
+          "total_blocks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Blocks"
+          },
+          "total_volume": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Volume"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "region_count",
+          "total_blocks",
+          "total_volume"
+        ],
+        "title": "PreviewMeta",
+        "description": "投影元信息。"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest"
+      },
+      "RowDeliveryRequest": {
+        "properties": {
+          "delivered_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Delivered Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "delivered_qty"
+        ],
+        "title": "RowDeliveryRequest"
+      },
+      "RowDetail": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "item_name": {
+            "type": "string",
+            "title": "Item Name"
+          },
+          "need_qty": {
+            "type": "integer",
+            "title": "Need Qty"
+          },
+          "mode": {
+            "type": "integer",
+            "title": "Mode"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "claimant_uuid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimant Uuid"
+          },
+          "claimant_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimant Name"
+          },
+          "delivered_qty": {
+            "type": "integer",
+            "title": "Delivered Qty"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_name",
+          "need_qty",
+          "mode",
+          "status",
+          "claimant_uuid",
+          "claimant_name",
+          "delivered_qty",
+          "sort_order",
+          "updated_at"
+        ],
+        "title": "RowDetail"
+      },
+      "RowUpsertRequest": {
+        "properties": {
+          "item_name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Item Name"
+          },
+          "need_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Need Qty",
+            "default": 0
+          },
+          "mode": {
+            "type": "integer",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Mode",
+            "default": 0
+          },
+          "sort_order": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sort Order",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_name"
+        ],
+        "title": "RowUpsertRequest"
+      },
+      "SheetCreateRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "SheetCreateRequest"
+      },
+      "SheetDetail": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "owner_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Owner Uuid"
+          },
+          "owner_name": {
+            "type": "string",
+            "title": "Owner Name"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RowDetail"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "owner_uuid",
+          "owner_name",
+          "title",
+          "created_at",
+          "updated_at",
+          "rows"
+        ],
+        "title": "SheetDetail"
+      },
+      "SheetFromItemsRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SheetItemIn"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "SheetFromItemsRequest",
+        "description": "``POST /sheets/from-items``：一次性建表 + 批量行（用于「投影解析→生成表格」）。"
+      },
+      "SheetItemIn": {
+        "properties": {
+          "item_name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Item Name"
+          },
+          "need_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Need Qty",
+            "default": 0
+          },
+          "mode": {
+            "type": "integer",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Mode",
+            "default": 0
+          },
+          "sort_order": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sort Order",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_name"
+        ],
+        "title": "SheetItemIn",
+        "description": "``/sheets/from-items`` 批量建行条目（与 ``RowUpsertRequest`` 同字段，mode 默认 lock）。"
+      },
+      "SheetPatchRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "SheetPatchRequest"
+      },
+      "SheetSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "owner_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Owner Uuid"
+          },
+          "owner_name": {
+            "type": "string",
+            "title": "Owner Name"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "owner_uuid",
+          "owner_name",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SheetSummary"
+      },
+      "TokenExchangeRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "TokenExchangeRequest"
+      },
+      "TokenExchangeResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "Bearer"
+          },
+          "player": {
+            "$ref": "#/components/schemas/PlayerBrief"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "refresh_token",
+          "player"
+        ],
+        "title": "TokenExchangeResponse"
+      },
+      "TokenIssueRequest": {
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "name"
+        ],
+        "title": "TokenIssueRequest"
+      },
+      "TokenIssueResponse": {
+        "properties": {
+          "login_url": {
+            "type": "string",
+            "title": "Login Url"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          },
+          "previous_tokens_revoked": {
+            "type": "integer",
+            "title": "Previous Tokens Revoked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "login_url",
+          "expires_in",
+          "previous_tokens_revoked"
+        ],
+        "title": "TokenIssueResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
       }
     }
   }

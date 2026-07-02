@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     mcdr_service_token: str = ""
     web_base_url: str = "http://localhost:5173"
 
+    # 投影解析：上传字节上限（默认 50MB）
+    litematic_max_upload_bytes: int = 50 * 1024 * 1024
+
     @field_validator("mcdr_service_token")
     @classmethod
     def _mcdr_service_token_non_empty(cls, v: str) -> str:

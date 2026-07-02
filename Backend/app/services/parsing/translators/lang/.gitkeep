@@ -1,0 +1,2 @@
+# 占位：实际语言文件（minecraft.zh_cn.json / create.zh_cn.json）由构建/获取流程落位此目录。
+# LangJsonTranslator.load_bundled_table() 读取所有 *.zh_cn.json。

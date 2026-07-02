@@ -47,3 +47,19 @@ class SheetSummary(BaseModel):
 
 class SheetDetail(SheetSummary):
     rows: list[RowDetail]
+
+
+class SheetItemIn(BaseModel):
+    """``/sheets/from-items`` 批量建行条目（与 ``RowUpsertRequest`` 同字段，mode 默认 lock）。"""
+
+    item_name: str = Field(min_length=1, max_length=64)
+    need_qty: int = Field(default=0, ge=0)
+    mode: int = Field(default=0, ge=0, le=1)
+    sort_order: int = Field(default=0, ge=0)
+
+
+class SheetFromItemsRequest(BaseModel):
+    """``POST /sheets/from-items``：一次性建表 + 批量行（用于「投影解析→生成表格」）。"""
+
+    title: str = Field(min_length=1, max_length=128)
+    items: list[SheetItemIn] = Field(default_factory=list, max_length=2000)
