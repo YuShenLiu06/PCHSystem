@@ -447,7 +447,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
               <el-button size="small" type="success" @click="onSetDelivery(row)">
                 {{ row.mode === MODE_PROGRESS ? '上报交付' : '标备齐' }}
               </el-button>
-              <el-button size="small" @click="onRelease(row)">放弃</el-button>
+              <el-button v-if="!canEdit" size="small" @click="onRelease(row)">放弃</el-button>
             </template>
             <!-- 拥有者 × claimed|done → 解除锁定 -->
             <el-button v-if="canEdit && (row.status === 'claimed' || row.status === 'done')" size="small" plain @click="onRelease(row)">解除锁定</el-button>
