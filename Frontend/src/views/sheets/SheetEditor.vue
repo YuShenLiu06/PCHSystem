@@ -17,10 +17,14 @@ import {
 } from '../../api/sheets'
 import { formatQty } from '../../utils/qty'
 import { useAuthStore } from '../../stores/auth'
+import { usePolling } from '../../composables/usePolling'
 
 // mode 取值：0=lock（锁定/二元备齐），1=progress（进度/跟踪 delivered_qty）
 const MODE_LOCK = 0
 const MODE_PROGRESS = 1
+
+// 详情页轮询间隔：有认领/交付状态，需相对实时（后台/卸载自动暂停见 usePolling）
+const DETAIL_INTERVAL_MS = 1_000
 
 // status 取值：open / claimed / done（与后端契约对齐）
 type RowStatus = 'open' | 'claimed' | 'done'
@@ -115,6 +119,14 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+// 静默刷新（轮询专用）：只换 sheet.value 展示数据（状态/认领人/交付进度），
+// 不动 rowDrafts / titleDraft / loading / errorMsg —— 避免覆盖拥有者正在编辑的草稿。
+// 失败直接抛出，交由 usePolling 走 onError + 退避。
+async function silentRefresh(): Promise<void> {
+  if (!sheet.value) return // 首载尚未完成则不抢跑
+  sheet.value = await fetchSheet(sheetId.value)
 }
 
 async function onSaveTitle(): Promise<void> {
@@ -294,6 +306,7 @@ function back(): void {
 }
 
 onMounted(load)
+usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
 </script>
 
 <template>

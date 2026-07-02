@@ -3,6 +3,10 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listSheets, createSheet, type SheetSummary } from '../../api/sheets'
+import { usePolling } from '../../composables/usePolling'
+
+// 列表页轮询间隔：列表只有新建表格会变化，可慢于详情页（后台/卸载自动暂停见 usePolling）
+const LIST_INTERVAL_MS = 10_000
 
 const router = useRouter()
 const sheets = ref<SheetSummary[]>([])
@@ -52,6 +56,7 @@ function errorMessage(e: unknown): string | undefined {
 }
 
 onMounted(load)
+usePolling(load, { intervalMs: LIST_INTERVAL_MS })
 </script>
 
 <template>
