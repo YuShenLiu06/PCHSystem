@@ -11,7 +11,7 @@
 - **物品 id = registry id**：统一 `namespace:path`（如 `create:warehouse`、`minecraft:chest`），存储前剥离 BlockState properties。
 - **时间戳**：`TIMESTAMPTZ`，统一存 UTC。
 - **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单。
-- **schema 划分**：`users` / `projects` / `scoring` / `titles` / `wiki` / `alerts`。
+- **schema 划分**：`users` / `projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 个）+ `sheets`（MVP 第一阶段新增，见 §10 附录）。
 
 ## 1. 全局 ER 图
 
@@ -230,3 +230,33 @@ erDiagram
 - 所有迁移**可重入**，回滚脚本必填。
 
 > 待确认：负责人系数 `k` 分档、A 类 `α/β`、称号 `S_基/r` 的具体数值，由配置表或环境变量注入（不硬编码）。
+
+---
+
+## 10. 附录：`sheets` schema —— MVP 第一阶段在线表格
+
+> MVP 第一阶段新增（不在原架构 6 schema 内），权威定义见 [`../../Plans/MVP-第一阶段计划.md`](../../Plans/MVP-第一阶段计划.md) §3.2，落地迁移 `0004_sheets`。与 `projects.material_lists`（投影解析、强制 registry id）是**两套体系**：sheets 是玩家自建、自由文本、Web + 游戏内双向可编辑的轻量协作表。
+
+### 10.1 `sheets`（表格主表）
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | bigserial | PK | |
+| `owner_uuid` | uuid | FK→players.uuid, not null | 表主（身份锚 R-5） |
+| `title` | text | not null | 表标题 |
+| `created_at` / `updated_at` | timestamptz | not null default now() | |
+
+### 10.2 `sheet_rows`（表格行）
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | bigserial | PK | |
+| `sheet_id` | bigint | FK→sheets.id `ON DELETE CASCADE`, not null | 删表级联删行 |
+| `item_name` | text | not null | 自由文本（红线 R-6 不覆盖 sheets） |
+| `need_qty` | integer | not null default 0 | 原始整数，永不存换算结果 |
+| `done_flag` | smallint | not null default 0 | 二元 0/1（未备齐/已备齐） |
+| `sort_order` | integer | not null default 0 | |
+| `updated_at` | timestamptz | not null default now() | |
+
+约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`。
+
+> **权限（RBAC，后端为准）**：JWT 已登录可读所有表；表的 `owner_uuid` 或 admin/owner 角色可写；CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
+> **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。

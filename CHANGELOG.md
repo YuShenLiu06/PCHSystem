@@ -42,6 +42,12 @@
 - `get_current_player` + `require_role` 依赖（`Backend/app/api/deps.py` 追加）：Bearer 解析 + JWT 解码 + `type=="access"` 校验 + Player 回查，四种 401 路径；`require_role` 工厂返回闭包，`owner` 角色绕过 RBAC（为后续管理类端点预留）。`ba8b1ff`
 - OpenAPI 契约冻结：`Backend/tests/test_openapi_freeze.py` 校验 5 端点路径不可移除；`Backend/openapi.json` 工件导出（OpenAPI 3.1.0，`ensure_ascii=False` 保中文 description），供前端/MCDR 团队桩测。`48bc1f3`
 - 迁移 `0003_auth_tokens_revoked_at`：`users.auth_tokens` 增 `revoked_at`（带时区、可空）列 + 部分索引 `ix_auth_tokens_player_active`（`WHERE used_at IS NULL AND revoked_at IS NULL`），支撑 token 软吊销审计与「活跃 token」快速查找。`未提交`
+- 迁移 `0004_sheets`：`CREATE SCHEMA sheets` + `sheets.sheets`（`owner_uuid` FK→`users.players.uuid`，R-5）+ `sheets.sheet_rows`（`sheet_id` FK `ON DELETE CASCADE`、`UNIQUE(sheet_id,item_name)` 兼作 upsert 锁点、`ix_sheet_rows_sheet_id` 索引），可逆已验证。`aa072bb`
+- `Sheet` / `SheetRow` ORM（`app/models/sheet.py`，镜像 user.py 风格：PG_UUID/Mapped/DateTime(timezone)/server_default text("now")）；`alembic/env.py` 注册模型。`aa072bb`
+- sheets API 契约冻结：`app/schemas/sheet.py`（6 Pydantic 模型，`done_flag`∈{0,1}/`need_qty`≥0 校验）+ `app/api/sheets.py` 8 端点签名+response_model 桩（`_can_edit` helper、`/export` 注册在 `/{id}` 前避免被动态路径吞）；OpenAPI 重新导出，`/sheets` 全路径就位。`1937bdb`
+- `format_qty` 纯函数 `app/core/qty.py`（STACK=64/SHULKER=1728，三档个/组/盒，`:g` 去尾零）；API 只返原始 int，不附带换算串（D-4）。`57a065c`
+- `SheetRepository` `app/repositories/sheet_repo.py`（函数式，镜像 auth_token_repo：`create_sheet`/`get_sheet`/`list_sheets`/`list_rows`/`upsert_row`/`delete_row`/`delete_sheet`/`export_csv`/`export_all_csv`；upsert 用 `select...with_for_update()` 在则改/不在则 insert，并发同名 insert 触发 IntegrityError 上抛；conftest truncate 追加 `sheets.sheet_rows, sheets.sheets`）。`dd2ff24`
+- sheets CRUD API 真实实现（替换 501 桩）：`_can_edit(sheet,player)` 权限 helper（owner 或 admin/owner 角色，D-3）；commit 在 api 层；upsert `IntegrityError`→409；`?format=csv` 单表 + `/export` 全量 CSV（service token，外部读取硬约束 MVP §4）；21 集成测试覆盖全路径+权限分支（建表/列表含他人表/owner=me 过滤/详情/CSV 单表/改标题 owner✓&非 owner 403&admin✓/删表级联/upsert 新建+更新/删行/404/全量 export/未登录 401）。`3411480`
 
 #### Changed
 
@@ -51,6 +57,7 @@
 
 - `Backend/.env` 的 `POSTGRES_PASSWORD=pw`（B5 时 pch-pg 容器密码）与 docker compose 启动的 `pchsystem-postgres-1`（用根 `.env` 的 `change_me_strong_random` 初始化）不一致，导致本地 venv alembic 与 B10+ 测试 fixture 认证失败；改为 `change_me_strong_random` 对齐容器。`fc9596a`
 - B10 spec 的 async `_truncate` autouse fixture 在 pytest-asyncio 1.4 + 同步测试混合跑时触发 `RuntimeError: Event loop is closed`（autouse async fixture 在同步测试周围也会创建/关闭 loop，asyncpg 池内连接泄漏到已关闭 loop）；控制器级修复改为同步 fixture 用独立 sync engine + 每次 dispose；同时 `app.core.db` 的 async engine 改用 `NullPool` 防止 async 测试跨 loop 复用池内连接。`fc9596a`
+- `auth_token_repo.issue` 已改为返回 `tuple[AuthToken, int]`（软失效改造，对应 `previous_tokens_revoked`），但 `tests/test_auth_token_repo.py` 仍用旧签名（`tok = await issue(...)` 直接取 `.token`/`.expires_at`）导致 3 个 case 失败；同步为 `tok, _ = await issue(...)`。`e74ee19`
 
 ### McdrPlugin
 
@@ -80,6 +87,7 @@
 - axios 拦截器与 auth store：`src/utils/http.ts`（请求拦截注入 `Authorization: Bearer`、响应拦截 401 时 `auth.clear()` + hash 跳 `#/auth` 兜底）+ `src/stores/auth.ts`（Pinia store，`accessToken` / `refreshToken` / `player` 持久化到 localStorage、`isAuthenticated` getter、`set/clear` actions）+ `src/utils/qty.ts`（Phase 2 占位）。`ca016f6`
 - 路由守卫与 token 兑换页：`src/router/index.ts` 3 路由（`/auth` `meta.public` / `/me` / `/` redirect `/me`）+ `beforeEach` 守卫未认证跳 `/auth`；`src/views/AuthExchange.vue` `onMounted` 读 query token → POST `/auth/exchange` → `auth.set` → `router.replace('/me')`，错误用 `el-result` + 后端 `detail`；`src/views/Me.vue` stub（F4 替换）。`da78fa3`
 - `/me` 身份页：`src/views/Me.vue` 完整实现（`onMounted` 调 `http.get<Me>('/me')`，`el-card` 展示 UUID / 名称 / 角色；401 由 F2 拦截器统一处理跳 `/auth`）。`6b66c47`
+- Phase 3 sheets 表格端：`src/api/sheets.ts`（TS 类型与后端 Pydantic 对齐 + 9 个 axios 封装，复用 `utils/http.ts`）、`src/utils/qty.ts` `formatQty` 真实现（替换占位，与后端 `format_qty` 完全对齐，STACK=64/SHULKER=1728，去尾零等价 Python `:g`）、`src/views/sheets/SheetList.vue`（el-table 列表 + 新建对话框 + 点行跳详情）、`src/views/sheets/SheetEditor.vue`（el-table 行内编辑 + formatQty 换算列 + 备齐 toggle el-tag 绿/灰 + 增行 PUT upsert/删行/改标题 PATCH/删表二次确认；R-9 非 owner/admin 隐藏所有编辑控件只读）、`router/index.ts` 加 `/sheets` 与 `/sheets/:id` 路由（走现有 requiresAuth 守卫）+ `App.vue` 导航、vitest 22 测试（qty 边界 + sheets 客户端 mock）。`afe8ac8` · `e90c909` · `43a17b1` · `5d0a6da` · `7d86d04` · `72f2471`
 
 - `Player.uuid` 字段名遮蔽 `uuid` 模块导致 SQLAlchemy 2.0 延迟解析 `Mapped[...]` 注解时抛 `AttributeError: 'MappedColumn' object has no attribute 'UUID'`。改为 `from uuid import UUID` + `from sqlalchemy.dialects.postgresql import UUID as PG_UUID`，注解用 `Mapped[UUID]`、列定义用 `PG_UUID(as_uuid=True)`。`b324e50`
 

@@ -100,3 +100,20 @@ git checkout feat/backend-phase0-foundation
 ## 关键红线（根 CLAUDE.md §3）
 
 R-1 后端独占 DB；R-5 UUID 为身份锚；R-11 密钥进 `.env`；R-12 MCDR HTTP 走 `schedule_task`+超时+重试+回执；S-1 MCDR API 实现前联网核实（本文已核实）。
+
+---
+
+## Phase 2+3 sheets 完成（2026-07-02）
+
+在线表格子服务落地（后端 Phase 2 + 前端 Phase 3），Teammates 并行：lead 冻结契约（L 系列）→ `backend-dev`（B 系列）+ `frontend-dev`（F 系列）并行 → lead 联调收尾（V 系列）。
+
+| 端 | 产物 | commit |
+|---|---|---|
+| 后端 | `0004_sheets` 迁移 + `Sheet`/`SheetRow` ORM + `format_qty` + `SheetRepository` + 8 端点 CRUD/CSV（`?format=csv` 单表 + `/export` 全量 service token）+ 21 集成测试 | `aa072bb` · `1937bdb` · `57a065c` · `dd2ff24` · `3411480` |
+| 前端 | sheets API 客户端 + `qty.ts` 真实现 + `SheetList.vue` + `SheetEditor.vue`（el-table 行内编辑 + formatQty 换算列 + 备齐 toggle + R-9 非 owner/admin 隐藏编辑控件）+ 路由 + 22 vitest | `afe8ac8` · `e90c909` · `43a17b1` · `5d0a6da` · `7d86d04` · `72f2471` |
+| 文档/修复 | superpowers 计划落盘；顺带修 Phase 0+1 遗留 `auth_token_repo` 测试签名漂移 | `b17857b` · `e74ee19` |
+
+- 验收：后端 65 测试全绿（24 原始 + 9 + 11 + 21）、迁移 `0004_sheets (head)` 可逆；前端 `npm run build` + 22 vitest 通过；端到端 curl 全链路通过（建表→加行 `iron_ingot/192`→详情→CSV 单表/全量→非 owner 403→标备齐→未登录 401）。
+- 关键决策（已对齐）：`done_flag` 二元 0/1；`item_name` 自由文本（R-6 不覆盖 sheets）；JWT 已登录可读所有表 / owner+admin 可写 / CSV 全量走 service token；`format_qty` 后端纯函数 + API 只返原始 int。
+- 计划文档：[`Docs/Plans/superpowers/2026-07-02-phase2-sheets-backend.md`](./superpowers/2026-07-02-phase2-sheets-backend.md)。
+- 待办：MCDR `!!sheet`（Phase 4），待后端 API 稳定后单独 spawn `mcdr-dev`（含 service-token 写通道 + body.uuid 代玩家操作契约）。
