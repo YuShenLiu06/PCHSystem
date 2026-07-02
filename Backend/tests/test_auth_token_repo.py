@@ -21,7 +21,7 @@ async def _seed_player(name="bob"):
 async def test_issue_and_exchange_success():
     u = await _seed_player()
     async with async_session_factory() as s:
-        tok = await issue(s, u, issued_ip="1.1.1.1")
+        tok, _ = await issue(s, u, issued_ip="1.1.1.1")
         await s.commit()
         result = await exchange(s, tok.token, exchanged_ip="2.2.2.2")
         await s.commit()
@@ -33,7 +33,7 @@ async def test_issue_and_exchange_success():
 async def test_exchange_is_one_time():
     u = await _seed_player()
     async with async_session_factory() as s:
-        tok = await issue(s, u)
+        tok, _ = await issue(s, u)
         await s.commit()
         await exchange(s, tok.token)
         second = await exchange(s, tok.token)
@@ -45,7 +45,7 @@ async def test_exchange_is_one_time():
 async def test_exchange_rejects_expired():
     u = await _seed_player()
     async with async_session_factory() as s:
-        tok = await issue(s, u)
+        tok, _ = await issue(s, u)
         # 直接把过期时间改到过去
         tok.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
         await s.commit()
