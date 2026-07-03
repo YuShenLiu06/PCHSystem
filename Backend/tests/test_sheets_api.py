@@ -145,9 +145,9 @@ async def test_get_sheet_csv_format(client):
     assert resp.headers["content-type"].startswith("text/csv")
     lines = resp.text.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
-    assert lines[1] == f"{sid},iron,64,0,open,,0,0"
+    assert lines[1] == f"{sid},iron,,64,0,open,,0,0"
 
 
 # ---------- PATCH /sheets/{id} ----------
@@ -534,9 +534,9 @@ async def test_export_all_returns_csv(client):
     assert resp.headers["content-type"].startswith("text/csv")
     lines = resp.text.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
-    assert f"{sid},iron,64,0,open,,0,0" in lines[1:]
+    assert f"{sid},iron,,64,0,open,,0,0" in lines[1:]
 
 
 # ---------- progress 行：多人贡献者（contribute） ----------
@@ -918,3 +918,87 @@ async def test_upsert_progress_to_lock_notifies_contributors(client):
     )
     assert resp.status_code == 200
     assert "sheet_progress_reset" in (await _pending_categories(bob_uuid))
+
+
+# ---------- registry_id（隐式字段）----------
+@pytest.mark.asyncio
+async def test_upsert_row_with_registry_id_stores_and_echoes(client):
+    """PUT 行带 item_name + registry_id → 行落库 + 回显 registry_id。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "item_name": "石头",
+            "need_qty": 64,
+            "mode": 0,
+            "sort_order": 0,
+            "registry_id": "minecraft:stone",
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["registry_id"] == "minecraft:stone"
+    assert body["item_name"] == "石头"
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_registry_id_only_auto_translates_name(client):
+    """仅传 registry_id（无 item_name）→ 后端翻译表补默认中文名（命中或回退 id，均非空）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"need_qty": 32, "mode": 0, "sort_order": 0, "registry_id": "minecraft:stone"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["registry_id"] == "minecraft:stone"
+    assert body["item_name"]  # 非空（翻译命中或回退 registry_id）
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_requires_name_or_registry(client):
+    """item_name 与 registry_id 都缺 → 422。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"need_qty": 1, "mode": 0, "sort_order": 0},  # 无 name / registry_id
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_registry_id_not_overwritten_when_omitted(client):
+    """已存在行的 registry_id：后续 upsert 不传 registry_id → 保留原值（None 不覆盖）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    first = (
+        await client.put(
+            f"/sheets/{sid}/rows",
+            json={
+                "item_name": "石头",
+                "need_qty": 64,
+                "mode": 0,
+                "sort_order": 0,
+                "registry_id": "minecraft:stone",
+            },
+            headers=_auth(bearer),
+        )
+    ).json()
+    assert first["registry_id"] == "minecraft:stone"
+    # 再次：同名不传 registry_id（只改 need）→ registry_id 保留
+    second = (
+        await client.put(
+            f"/sheets/{sid}/rows",
+            json={"item_name": "石头", "need_qty": 128, "mode": 0, "sort_order": 0},
+            headers=_auth(bearer),
+        )
+    ).json()
+    assert second["id"] == first["id"]
+    assert second["need_qty"] == 128
+    assert second["registry_id"] == "minecraft:stone"  # 未被擦

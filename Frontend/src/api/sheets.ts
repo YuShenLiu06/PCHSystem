@@ -21,6 +21,9 @@ export interface SheetDetail extends SheetSummary {
 export interface RowDetail {
   id: number
   item_name: string
+  // MC 注册名（namespace:path）；隐式可空——投影解析/MCDR 手持新建行会带，
+  // 旧行与纯文本行为 null（游戏内一键提交按此精确匹配）
+  registry_id: string | null
   need_qty: number
   mode: number
   status: string
@@ -40,16 +43,22 @@ export interface SheetPatchRequest {
   title: string
 }
 
+// item_name 与 registry_id 至少传一个（后端 model_validator 校验，否则 422）：
+//   Web/投影解析：传中文 item_name（+ 可选 registry_id）；
+//   MCDR addhand：仅传 registry_id，后端用翻译表补默认中文名。
 export interface RowUpsertRequest {
-  item_name: string
+  item_name?: string
+  registry_id?: string
   need_qty?: number
   mode?: number
   sort_order?: number
 }
 
-// mode: 0=lock（默认）| 1=progress，与 RowUpsertRequest 同语义；用于 from-items 批量建表
+// mode: 0=lock（默认）| 1=progress，与 RowUpsertRequest 同语义；用于 from-items 批量建表。
+// 投影解析路径透传 registry_id（= PreviewItem.item_id）+ 中文 item_name。
 export interface SheetItemIn {
-  item_name: string
+  item_name?: string
+  registry_id?: string
   need_qty: number
   mode?: number
   sort_order?: number

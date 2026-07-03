@@ -18,7 +18,7 @@ import uuid_api_remake  # RS-8：get_uuid(name)->str
 from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
-from . import sheet_client
+from . import sheet_client, scanner
 from .config import HtcmcAuthConfig
 from .messages import (
     SHEET_SERVICE_DOWN,
@@ -50,6 +50,18 @@ from .messages import (
     SHEET_DELIVER_HINT,
     SHEET_NOTIFY_EMPTY,
     format_notification,
+    SHEET_NO_DATA_API,
+    SHEET_ADDHAND_NEED_HAND,
+    SHEET_OK_ADDHAND,
+    SHEET_OK_SETREG,
+    SHEET_SUBMIT_HEAD,
+    SHEET_SUBMIT_NO_API,
+    SHEET_SUBMIT_NO_ROWS,
+    SHEET_SUBMIT_DONE_LINE,
+    SHEET_SUBMIT_PROGRESS_LINE,
+    SHEET_SUBMIT_SKIP_LINE,
+    SHEET_SUBMIT_DONE_HEAD,
+    SHEET_SUBMIT_SKIP_HEAD,
 )
 
 # 由 __init__.py 在 on_load 中注入
@@ -160,6 +172,25 @@ def _sheet_root(src, ctx):
         _line("rename", "改表标题", "!!PCH sheet rename ", "rename <表id> <新标题>"),
         _line("delete", "删表", "!!PCH sheet delete ", "delete <表id>"),
         _line("delrow", "删行", "!!PCH sheet delrow ", "delrow <表id> <行号>"),
+        RText("一键 / 物品 id：\n", color=RColor.aqua),
+        _line(
+            "submit",
+            "一键提交（扫背包匹配行）",
+            "!!PCH sheet submit ",
+            "submit <表id>  扫描背包，按 registry_id 匹配行批量上报（纯申报，不清背包）",
+        ),
+        _line(
+            "addhand",
+            "用手持物品建行",
+            "!!PCH sheet addhand ",
+            "addhand <表id> <数量> [lock|progress] [排序]  手持物物品 id 自动建行",
+        ),
+        _line(
+            "setreg",
+            "改行物品 id",
+            "!!PCH sheet setreg ",
+            "setreg <表id> <行号> <registry_id>  更新指定行的物品 id",
+        ),
         RText("认领 / 交付：\n", color=RColor.aqua),
         _line("claim", "认领", "!!PCH sheet claim ", "claim <表id> <行号>"),
         _line(
@@ -666,6 +697,181 @@ def _sheet_notify_list(src, ctx):
                 parts.append(RText(format_notification(n)))
                 parts.append(RText("\n"))
             server.tell(player_name, RTextList(*parts))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+# === 一键提交 / 手持建行 / 改 registry_id ===
+
+def _sheet_submit_oneclick(src, ctx):
+    """一键提交：扫描背包，按 registry_id 匹配表中行，串行上报。
+
+    纯申报语义（RS-4 衍生）：只读背包 + HTTP 上报，绝不清背包、不 data merge / clear。
+    单行失败不阻断其他行；汇总回执一次 tell（绿色 done/累计 + 黄色跳过原因）。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+
+    @new_thread('htcmc_sheet_submit')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        api = server.get_plugin_instance("minecraft_data_api")
+        if api is None:
+            server.tell(player_name, SHEET_SUBMIT_NO_API)
+            return
+        inventory = scanner.scan_inventory(api, player_name)
+        view = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+        if not isinstance(view, dict):
+            _resolve(server, player_name, view)
+            return
+        rows = view.get("rows") or []
+        actions = scanner.match_rows(rows, inventory)
+
+        done_lines: list = []
+        skip_lines: list = []
+        for action in actions:
+            if action.action == "claim_deliver":
+                # 先 claim，成功后再 delivery(need) → done
+                claim_out = sheet_client.claim_row(CONFIG, player_uuid, sheet_id, action.row_id)
+                if not isinstance(claim_out, dict):
+                    # claim 失败（403/409/404/网络）→ 该行记跳过，不阻断其他行
+                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                        item=action.item_name, reason="认领失败（已被认领或状态变化）")))
+                    continue
+                deliv_out = sheet_client.deliver_row(
+                    CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
+                if isinstance(deliv_out, dict):
+                    done_lines.append(RText(SHEET_SUBMIT_DONE_LINE.format(
+                        item=action.item_name, qty=action.qty)))
+                else:
+                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                        item=action.item_name, reason="交付失败（状态变化）")))
+            elif action.action == "contribute":
+                contrib_out = sheet_client.contribute_row(
+                    CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
+                if isinstance(contrib_out, dict):
+                    delivered = int(contrib_out.get("delivered_qty", 0))
+                    need = int(contrib_out.get("need_qty", 0))
+                    done_lines.append(RText(SHEET_SUBMIT_PROGRESS_LINE.format(
+                        item=action.item_name, delivered=delivered, need=need)))
+                else:
+                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                        item=action.item_name, reason="上交失败（状态变化）")))
+            else:  # skip
+                skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                    item=action.item_name, reason=action.reason)))
+
+        # 汇总回执（一次 tell，避免刷屏）
+        if not done_lines and not skip_lines:
+            server.tell(player_name, RTextList(RText(SHEET_SUBMIT_HEAD), RText(SHEET_SUBMIT_NO_ROWS)))
+            return
+        parts: list = [RText(SHEET_SUBMIT_HEAD), RText("\n")]
+        if done_lines:
+            parts.append(RText(SHEET_SUBMIT_DONE_HEAD.format(n=len(done_lines))))
+            for ln in done_lines:
+                parts.append(ln)
+                parts.append(RText("\n"))
+        if skip_lines:
+            parts.append(RText(SHEET_SUBMIT_SKIP_HEAD.format(n=len(skip_lines))))
+            for ln in skip_lines:
+                parts.append(ln)
+                parts.append(RText("\n"))
+        server.tell(player_name, RTextList(*parts))
+
+    _do()
+
+
+def _sheet_addhand(src, ctx):
+    """用手持物品的 registry_id 建行（item_name 由后端据 registry_id 翻译补中文）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    need = ctx["need"]
+    mode = 1 if ctx.get("mode") == "progress" else 0
+    sort = ctx.get("sort", 0)
+
+    @new_thread('htcmc_sheet_addhand')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        api = server.get_plugin_instance("minecraft_data_api")
+        if api is None:
+            server.tell(player_name, SHEET_NO_DATA_API)
+            return
+        held = scanner.read_held_item(api, player_name)
+        if held is None:
+            server.tell(player_name, SHEET_ADDHAND_NEED_HAND)
+            return
+        registry_id = held[0]
+        # item_name=None：后端按 registry_id 走翻译表补中文（A2）
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=None, need=need, mode=mode, sort=sort,
+            registry_id=registry_id,
+        )
+
+        def _show(data):
+            mode_label = "progress" if mode else "lock"
+            server.tell(player_name, SHEET_OK_ADDHAND.format(
+                item=data.get("item_name") or registry_id,
+                need=data.get("need_qty", need),
+                mode=mode_label,
+            ))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_setreg(src, ctx):
+    """改指定行的 registry_id（按行现有 item_name 定位，其余字段透传，仅 registry_id 是新值）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    row_id = ctx["row_id"]
+    registry_id = ctx["registry_id"]
+
+    @new_thread('htcmc_sheet_setreg')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
+        if row is None:
+            return
+        item_name = row.get("item_name")
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=item_name,
+            need=int(row.get("need_qty", 0)),
+            mode=int(row.get("mode", 0)),
+            sort=int(row.get("sort_order", 0)),
+            registry_id=registry_id,
+        )
+
+        def _show(data):
+            server.tell(player_name, SHEET_OK_SETREG.format(
+                row_id=row_id,
+                registry_id=data.get("registry_id", registry_id),
+            ))
 
         _resolve(server, player_name, outcome, on_success=_show)
 

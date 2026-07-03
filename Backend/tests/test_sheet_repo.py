@@ -188,10 +188,10 @@ async def test_export_csv_single_sheet():
     csv_str = sheet_repo.export_csv(sheet.id, rows)
     lines = csv_str.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
-    assert lines[1] == f"{sheet.id},iron,64,0,open,,0,0"
-    assert lines[2] == f"{sheet.id},gold,128,1,open,,0,1"
+    assert lines[1] == f"{sheet.id},iron,,64,0,open,,0,0"
+    assert lines[2] == f"{sheet.id},gold,,128,1,open,,0,1"
 
 
 @pytest.mark.asyncio
@@ -210,11 +210,11 @@ async def test_export_all_csv_multiple_sheets():
     csv_str = sheet_repo.export_all_csv(bundled)
     lines = csv_str.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
     body = lines[1:]
-    assert f"{s1.id},a,1,0,open,,0,0" in body
-    assert f"{s2.id},b,2,1,open,,0,0" in body
+    assert f"{s1.id},a,,1,0,open,,0,0" in body
+    assert f"{s2.id},b,,2,1,open,,0,0" in body
     assert len(body) == 2
 
 
@@ -228,7 +228,7 @@ async def test_export_csv_empty_sheet_has_header_only():
     csv_str = sheet_repo.export_csv(sheet.id, [])
     lines = csv_str.strip().splitlines()
     assert lines == [
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     ]
 
 
@@ -666,3 +666,62 @@ async def test_list_contributors_missing_row_returns_no_entry():
         contribs = await sheet_repo.list_contributors(s, [rid, 999999])
         assert set(contribs.keys()) == {rid}
         assert contribs[rid]  # 已有贡献者
+
+
+# ---------- registry_id ----------
+@pytest.mark.asyncio
+async def test_upsert_row_sets_registry_id_on_create():
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:stone"
+        )
+        await s.commit()
+        assert row.registry_id == "minecraft:stone"
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_registry_id_defaults_none():
+    """不传 registry_id 建行 → None（兼容旧行 / 纯文本行）。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(s, sheet.id, "纯文本行", 1, 0, 0)
+        await s.commit()
+        assert row.registry_id is None
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_preserves_registry_id_when_omitted():
+    """更新行不传 registry_id（默认 None）→ 不覆盖已有值（避免误擦匹配键）。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:stone"
+        )
+        await s.commit()
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, sheet.id, "石头", 128, 0, 0)
+        await s.commit()
+        assert row.need_qty == 128
+        assert row.registry_id == "minecraft:stone"  # 保留
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_overwrites_registry_id_when_provided():
+    """更新行传新 registry_id → 覆盖旧值。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:stone"
+        )
+        await s.commit()
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:cobblestone"
+        )
+        await s.commit()
+        assert row.registry_id == "minecraft:cobblestone"

@@ -26,6 +26,7 @@ STATUS_OPEN, STATUS_CLAIMED, STATUS_DONE = "open", "claimed", "done"
 _CSV_HEADER = [
     "sheet_id",
     "item_name",
+    "registry_id",
     "need_qty",
     "mode",
     "status",
@@ -122,14 +123,16 @@ async def upsert_row(
     need_qty: int,
     mode: int,
     sort_order: int,
+    registry_id: str | None = None,
 ) -> SheetRow:
-    """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort）。在则改，不在则 insert。
+    """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort/registry_id）。在则改，不在则 insert。
 
     新建行：status=open / claimant=None / delivered=0。
-    更新行 mode 不变：仅改 need_qty/sort_order，保留 status/claimant/delivered；
+    更新行 mode 不变：仅改 need_qty/sort_order（+ registry_id 仅当传入非 None），保留 status/claimant/delivered；
     按 spec §5.3 封顶 delivered 并按新 need 重算 status。
     更新行 mode 变化：重置协作（status=open/claimant=None/delivered=0/清贡献者），
     避免违反 progress 不变量（claimant 恒 null）。
+    registry_id=None 时不覆盖已有值（避免 upsert 其它字段时误擦匹配键）。
     并发同名 insert 会触发 IntegrityError，上抛交 api 层翻译为 409。
     """
     stmt = (
@@ -143,6 +146,9 @@ async def upsert_row(
         row.need_qty = need_qty
         row.mode = mode
         row.sort_order = sort_order
+        if registry_id is not None:
+            # None 不覆盖：避免 upsert 其它字段时误擦已有 registry_id（匹配键）
+            row.registry_id = registry_id
         if mode_changed:
             # 换模式 = 重新开始：清协作状态，避免违反 progress 不变量（claimant 恒 null）
             row.status = STATUS_OPEN
@@ -169,6 +175,7 @@ async def upsert_row(
         need_qty=need_qty,
         mode=mode,
         sort_order=sort_order,
+        registry_id=registry_id,
     )
     session.add(row)
     await session.flush()
@@ -381,6 +388,7 @@ def _row_to_csv_record(sheet_id: int, row: SheetRow) -> list[str | int]:
     return [
         sheet_id,
         row.item_name,
+        row.registry_id or "",
         row.need_qty,
         row.mode,
         row.status,

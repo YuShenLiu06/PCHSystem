@@ -40,8 +40,26 @@ from app.schemas.sheet import (
     SheetSummary,
 )
 from app.services import notification_service
+from app.services.parsing import preview as preview_service
 
 router = APIRouter(prefix="/sheets", tags=["sheets"])
+
+
+# 翻译器单例（复用 translators/lang/*.zh_cn.json，进程级 lru_cache）：registry_id → 中文 item_name。
+# 后续新增 mod 翻译表只需往 lang/ 目录加 JSON，本单例自动合并，零改动。
+_translator = preview_service.get_default_translator()
+
+
+def _resolve_item_name(item_name: str | None, registry_id: str | None) -> str:
+    """item_name 缺失时用 registry_id 翻译补默认中文名；未命中回退 registry_id 本身。
+
+    供 upsert / from-items 落库前补默认名（MCDR addhand 只传 registry_id 时走此路径）。
+    schema 的 model_validator 已保证二者至少有一个非空，此处不再校验。
+    """
+    if item_name:
+        return item_name
+    assert registry_id is not None
+    return _translator.translate(registry_id)
 
 
 def _can_edit(sheet: Sheet, player: Player) -> bool:
@@ -92,6 +110,7 @@ def _row_dict(
     return {
         "id": row.id,
         "item_name": row.item_name,
+        "registry_id": row.registry_id,
         "need_qty": row.need_qty,
         "mode": row.mode,
         "status": row.status,
@@ -169,14 +188,16 @@ async def create_sheet_from_items(
     """
     sheet = await sheet_repo.create_sheet(session, player.uuid, body.title)
     for item in body.items:
+        item_name = _resolve_item_name(item.item_name, item.registry_id)
         try:
             await sheet_repo.upsert_row(
                 session,
                 sheet_id=sheet.id,
-                item_name=item.item_name,
+                item_name=item_name,
                 need_qty=item.need_qty,
                 mode=item.mode,
                 sort_order=item.sort_order,
+                registry_id=item.registry_id,
             )
         except IntegrityError as exc:  # 同名并发 insert 命中 UNIQUE（防御）
             await session.rollback()
@@ -333,8 +354,9 @@ async def upsert_row(
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    item_name = _resolve_item_name(body.item_name, body.registry_id)
     # 捕获旧状态：判定 mode 是否变化（重置）、need 是否变化（通知认领人）
-    prev_row = await sheet_repo.get_row_by_item(session, sheet_id, body.item_name)
+    prev_row = await sheet_repo.get_row_by_item(session, sheet_id, item_name)
     old_need = prev_row.need_qty if prev_row is not None else None
     claimant_uuid = prev_row.claimant_uuid if prev_row is not None else None
     prev_mode = prev_row.mode if prev_row is not None else None
@@ -348,10 +370,11 @@ async def upsert_row(
         row = await sheet_repo.upsert_row(
             session,
             sheet_id=sheet_id,
-            item_name=body.item_name,
+            item_name=item_name,
             need_qty=body.need_qty,
             mode=body.mode,
             sort_order=body.sort_order,
+            registry_id=body.registry_id,
         )
         if mode_changed and claimant_uuid is not None:
             # 换模式重置了行 → 通知原认领人协作已取消
@@ -361,12 +384,12 @@ async def upsert_row(
                 actor=player,
                 category="sheet_released",
                 title="模式变更，认领已重置",
-                body=f"[{body.item_name}] 拥有者调整了模式，认领/进度已重置",
+                body=f"[{item_name}] 拥有者调整了模式，认领/进度已重置",
                 payload={
                     "sheet_id": sheet_id,
                     "sheet_title": sheet.title,
                     "row_id": row.id,
-                    "item_name": body.item_name,
+                    "item_name": item_name,
                 },
             )
         if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
@@ -378,12 +401,12 @@ async def upsert_row(
                     actor=player,
                     category="sheet_progress_reset",
                     title="贡献已被拥有者清空",
-                    body=f"拥有者调整了 [{body.item_name}] 的模式，进度与贡献已重置",
+                    body=f"拥有者调整了 [{item_name}] 的模式，进度与贡献已重置",
                     payload={
                         "sheet_id": sheet_id,
                         "sheet_title": sheet.title,
                         "row_id": row.id,
-                        "item_name": body.item_name,
+                        "item_name": item_name,
                     },
                 )
         elif (
@@ -398,12 +421,12 @@ async def upsert_row(
                 actor=player,
                 category="sheet_qty_changed",
                 title="所需数量已调整",
-                body=f"[{body.item_name}] 所需数量变为 {body.need_qty}（原 {old_need}）",
+                body=f"[{item_name}] 所需数量变为 {body.need_qty}（原 {old_need}）",
                 payload={
                     "sheet_id": sheet_id,
                     "sheet_title": sheet.title,
                     "row_id": row.id,
-                    "item_name": body.item_name,
+                    "item_name": item_name,
                     "old": old_need,
                     "new": body.need_qty,
                 },

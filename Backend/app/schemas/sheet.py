@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SheetCreateRequest(BaseModel):
@@ -13,10 +13,25 @@ class SheetPatchRequest(BaseModel):
 
 
 class RowUpsertRequest(BaseModel):
-    item_name: str = Field(min_length=1, max_length=64)
+    """行 upsert 请求（``PUT /sheets/{sid}/rows``）。
+
+    ``item_name`` 与 ``registry_id`` 至少提供一个（model_validator 校验）：
+    - Web / 投影解析路径：传中文 ``item_name`` + 可选 ``registry_id``。
+    - MCDR 手持新建行（addhand）：仅传 ``registry_id``，API 层用 LangJsonTranslator
+      翻译补默认 ``item_name``（未命中回退 registry_id 本身）。
+    """
+
+    item_name: str | None = Field(default=None, max_length=64)
+    registry_id: str | None = Field(default=None, max_length=128)
     need_qty: int = Field(default=0, ge=0)
     mode: int = Field(default=0, ge=0, le=1)
     sort_order: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _require_name_or_registry(self) -> "RowUpsertRequest":
+        if not self.item_name and not self.registry_id:
+            raise ValueError("item_name 与 registry_id 至少提供一个")
+        return self
 
 
 class RowDeliveryRequest(BaseModel):
@@ -45,6 +60,7 @@ class RowContributor(BaseModel):
 class RowDetail(BaseModel):
     id: int
     item_name: str
+    registry_id: str | None = None
     need_qty: int
     mode: int
     status: str
@@ -69,13 +85,11 @@ class SheetDetail(SheetSummary):
     rows: list[RowDetail]
 
 
-class SheetItemIn(BaseModel):
-    """``/sheets/from-items`` 批量建行条目（与 ``RowUpsertRequest`` 同字段，mode 默认 lock）。"""
+class SheetItemIn(RowUpsertRequest):
+    """``/sheets/from-items`` 批量建行条目（继承 ``RowUpsertRequest`` 字段 + 校验，mode 默认 lock）。
 
-    item_name: str = Field(min_length=1, max_length=64)
-    need_qty: int = Field(default=0, ge=0)
-    mode: int = Field(default=0, ge=0, le=1)
-    sort_order: int = Field(default=0, ge=0)
+    投影解析 ``PreviewItem`` 透传 ``registry_id``（= ``item_id``）+ 中文 ``item_name``。
+    """
 
 
 class SheetFromItemsRequest(BaseModel):

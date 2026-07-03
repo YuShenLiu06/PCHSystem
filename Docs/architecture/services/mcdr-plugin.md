@@ -9,9 +9,12 @@
 |---|---|
 | 游戏内命令交互（`!!xx`） | 积分计算（交 scoring-service） |
 | 箱子/背包/手持物品扫描 | 业务数据持久化（交后端 PG） |
-| 玩家 UUID 推导（离线） | wiki 同步 |
-| 称号前缀下发（scoreboard） | 白名单审核决策 |
-| 向后端 HTTP 上报 | 投影解析（交 project-service） |
+| **完整背包扫描（含潜影盒嵌套，1.20.4- `tag.BlockEntityTag.Items` / 1.20.5+ `components."minecraft:container"`）** | wiki 同步 |
+| **一键提交（`!!PCH sheet submit`，按 `registry_id` 精确匹配表行）** | 白名单审核决策 |
+| **手持物品新建行（`addhand`，自动填 `registry_id`）/ 给已有行补 `registry_id`（`setreg`）** | 投影解析（交 project-service） |
+| 玩家 UUID 推导（离线） | |
+| 称号前缀下发（scoreboard） | |
+| 向后端 HTTP 上报 | |
 
 **定位**：纯游戏内客户端 + HTTP 客户端。所有业务结果来自后端 API，本地只存配置与少量缓存。
 
@@ -26,7 +29,7 @@
 | `!!score` / `!!rank [分类]` | user | 个人积分 / 榜单（总/赛季/分类） |
 | `!!title list` / `!!title set <称号>` | user | 已解锁称号 / 切换展示称号 |
 | `!!PCH login` | user | 申请登录链接（已落地） |
-| `!!PCH sheet …` | user / owner | sheets 全套（list/view/create/rename/delete/add/set/delrow/claim/deliver/done/release/reject/notify list），详见 [`api/sheets.md`](../api/sheets.md) §11 |
+| `!!PCH sheet …` | user / owner | sheets 全套（list/view/create/rename/delete/add/set/delrow/claim/deliver/done/release/reject/notify list + **`submit`/`addhand`/`setreg`**），详见 [`api/sheets.md`](../api/sheets.md) §11 |
 
 ## 3. 内部实现要点
 
@@ -149,6 +152,18 @@ def _do_claim(server, player, sheet_id, row_id):
 
 证据：[`on_player_joined`/`on_player_left`/`register_event_listener`](https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/event.html)、[`rcon_query`/`tell`](https://docs.mcdreforged.com/zh-cn/latest/code_references/ServerInterface.html)（S-1 联网核实）。
 
+### 3.9 一键提交 / 手持新建行 / 补 registry_id（registry_id 配套）
+
+依赖 [MinecraftDataAPI](https://github.com/Fallen-Breath/MinecraftDataAPI) 插件提供「按玩家取完整背包 NBT」能力（`get_registry_id` / 容器嵌套物品枚举）。三个命令均经 `@new_thread` 卸载、`server.tell` 回执：
+
+| 命令 | 流程 |
+|---|---|
+| `!!PCH sheet submit <sheet_id>` | 1) MinecraftDataAPI 取完整背包（含潜影盒嵌套：**1.20.4-** 走 `tag.BlockEntityTag.Items` / **1.20.5+** 走 `components."minecraft:container"`）；2) 按 `registry_id` 聚合可用量；3) 拉表 → 对每行按 `registry_id` **精确匹配**（无 `registry_id` 的行跳过）；4) lock 行 `open ∧ have≥need` → `claim` + `deliver(need)` → done；progress 行 `contribute`（增量封顶到 need）；5) **纯申报，不清背包**；6) 回执汇总（每行命中/未命中/不足） |
+| `!!PCH sheet addhand <sheet_id> <need> [lock\|progress] [sort]` | 取手持物品 `registry_id` → `PUT /sheets/{sheet_id}/rows`（带 `registry_id`，`item_name` 留空让后端翻译补中文名）新建行 |
+| `!!PCH sheet setreg <sheet_id> <row_id> <registry_id>` | owner 给已有行补 `registry_id`（保留原 `item_name`，让该行可被一键提交匹配） |
+
+> **匹配键**：一键提交只按 `registry_id` 精确匹配，不看 `item_name`（自由文本不可靠）。**block id ≠ item id**（如 `minecraft:wall_torch` vs `minecraft:torch`），v1 不做归一化，多数建材不受影响（见 §6）。
+
 ## 4. 依赖的其他服务（HTTP API）
 
 | 调用 | 接口 | 时机 |
@@ -161,6 +176,14 @@ def _do_claim(server, player, sheet_id, row_id):
 | sheets | `GET/POST/PATCH/DELETE /sheets/*`（service-token + `X-Player-UUID` 代玩家） | `!!PCH sheet …` |
 | notifications | `GET /notifications/pending` / `POST /notifications/ack` / `POST /notifications/{id}/read`（service-token） | 通知轮询 + `!!PCH sheet notify list` |
 | alert-service | （被动）后端检测异常后，通过 `!!` 系统消息或 scoreboard 推送告警 | 由后端触发 |
+
+### 4.1 MCDR 端插件依赖（游戏内协作）
+
+| 依赖 | 用途 | 仓库 |
+|---|---|---|
+| **MinecraftDataAPI** | 提供按玩家取完整背包 NBT（含潜影盒嵌套物品枚举、`registry_id` 提取），供 `!!PCH sheet submit` 一键提交使用 | <https://github.com/Fallen-Breath/MinecraftDataAPI> |
+
+> 安装缺失时 `submit` 命令回执友好提示并降级（其他 sheets 命令不受影响）。
 
 ## 5. 所属数据表
 
@@ -180,5 +203,8 @@ def _do_claim(server, player, sheet_id, row_id):
 | 阻塞 HTTP 误用 `schedule_task` | 卡住 MCDR 主循环（RS-6） | 全部走 `@new_thread`；详见 §3.6 |
 | 通知轮询延迟 | 默认 2s 周期 | 可调 `notify_poll_interval_seconds`；紧急叠加 webhook（预留） |
 | 离线通知补推 | 离线堆积 | 上线 `on_player_joined` 立即拉取 + 分页 |
+| **block id ≠ item id** | 一键提交按 `registry_id` 精确匹配；方块 id（如 `minecraft:wall_torch`）与对应 item id（`minecraft:torch`）不一致，会导致部分方块类物品匹配失败 | v1 不归一化，多数建材不受影响；后续在 project-service 做归一化映射 |
+| **1.20.5+ 物品组件路径** | 潜影盒嵌套物品 1.20.5+ 走 `components."minecraft:container"`（1.20.4- 走 `tag.BlockEntityTag.Items`），组件路径代码已兼容但**真机只验证 1.20.1** | 升级服务端版本时回归 `submit` 命令；按版本分派读取器（预留） |
+| **MinecraftDataAPI 缺失** | `submit` 一键提交依赖该插件取背包 NBT | 安装检测 + 友好降级提示（其他命令不受影响） |
 
 > 待确认：服务端 RCON 已启用且端口/密码配置；Carpet 是否影响 `/data get block` 输出格式。

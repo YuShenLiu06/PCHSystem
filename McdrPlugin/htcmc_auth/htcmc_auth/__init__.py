@@ -24,6 +24,9 @@ from .sheet_commands import (
     _sheet_release,
     _sheet_reject,
     _sheet_notify_list,
+    _sheet_submit_oneclick,
+    _sheet_addhand,
+    _sheet_setreg,
 )
 
 CONFIG: HtcmcAuthConfig = HtcmcAuthConfig()
@@ -167,6 +170,37 @@ def _register_commands(server: PluginServerInterface):
             .then(
                 Literal("delrow")
                 .then(Integer("sheet_id").then(Integer("row_id").runs(_sheet_delrow)))
+            )
+            # 一键提交：扫背包匹配行批量上报（纯申报，不清背包）
+            .then(
+                Literal("submit")
+                .then(Integer("sheet_id").runs(_sheet_submit_oneclick))
+            )
+            # 手持物品建行：registry_id 取自手持物，mode/sort 可选（沿用 add 节点模式）
+            .then(
+                Literal("addhand")
+                .then(
+                    Integer("sheet_id")
+                    .then(
+                        Integer("need").runs(_sheet_addhand)
+                        .then(
+                            Literal("lock").runs(_sheet_addhand)
+                            .then(Integer("sort").runs(_sheet_addhand))
+                        )
+                        .then(
+                            Literal("progress").runs(_sheet_addhand)
+                            .then(Integer("sort").runs(_sheet_addhand))
+                        )
+                    )
+                )
+            )
+            # 改行 registry_id：按行号定位，QuotableText 允许带空格（实际 registry_id 无空格，但保持一致）
+            .then(
+                Literal("setreg")
+                .then(
+                    Integer("sheet_id")
+                    .then(Integer("row_id").then(QuotableText("registry_id").runs(_sheet_setreg)))
+                )
             )
             # 协作
             .then(

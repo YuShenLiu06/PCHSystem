@@ -90,3 +90,41 @@ async def test_from_items_validates_empty_title(client):
         headers=_auth(bearer),
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_from_items_passes_registry_id_through(client):
+    """items 带 registry_id → 行落库 + RowDetail 回显；仅 registry_id 时后端翻译补中文名。"""
+    _, bearer = await _make_player("leader")
+    resp = await client.post(
+        "/sheets/from-items",
+        json={
+            "title": "投影",
+            "items": [
+                # 同时给中文名 + registry_id（投影解析路径）
+                {"item_name": "石头", "registry_id": "minecraft:stone", "need_qty": 64},
+                # 仅 registry_id（MCDR addhand 风格）→ 后端翻译表补默认中文名
+                {"registry_id": "minecraft:oak_planks", "need_qty": 32},
+            ],
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 201, resp.text
+    rows = resp.json()["rows"]
+    by_reg = {r["registry_id"]: r for r in rows}
+    # 带中文名的行：registry_id 透传
+    assert by_reg["minecraft:stone"]["item_name"] == "石头"
+    # 仅 registry_id 的行：后端翻译补名（命中→中文；未命中→回退 registry_id 本身，均非空）
+    assert by_reg["minecraft:oak_planks"]["item_name"]
+
+
+@pytest.mark.asyncio
+async def test_from_items_requires_name_or_registry_per_item(client):
+    """单条 item 既无 item_name 又无 registry_id → 422（model_validator）。"""
+    _, bearer = await _make_player("leader")
+    resp = await client.post(
+        "/sheets/from-items",
+        json={"title": "x", "items": [{"need_qty": 1}]},  # 缺 name 与 registry_id
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422

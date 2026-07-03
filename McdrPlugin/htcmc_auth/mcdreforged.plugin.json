@@ -7,6 +7,7 @@
   "link": "https://github.com/gubaiovo/MCDR_uuid_api_remake",
   "dependencies": {
     "mcdreforged": ">=2.14.0",
-    "uuid_api_remake": "*"
+    "uuid_api_remake": "*",
+    "minecraft_data_api": "*"
   }
 }

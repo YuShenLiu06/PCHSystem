@@ -61,6 +61,7 @@ const sheetSummary = {
 const rowDetail = {
   id: 10,
   item_name: 'iron',
+  registry_id: null,
   need_qty: 64,
   mode: 0,
   status: 'open',
@@ -154,6 +155,17 @@ describe('sheets API client', () => {
       mocked.put.mockResolvedValue({ data: minimal })
       await upsertRow(2, { item_name: 'gold' })
       expect(mocked.put).toHaveBeenCalledWith('/sheets/2/rows', { item_name: 'gold' })
+    })
+
+    it('item_name 可选——仅传 registry_id（MCDR addhand / setreg 场景）', async () => {
+      const withReg = { ...rowDetail, id: 12, item_name: '石头', registry_id: 'minecraft:stone' }
+      mocked.put.mockResolvedValue({ data: withReg })
+      const result = await upsertRow(3, { registry_id: 'minecraft:stone', need_qty: 64 })
+      expect(mocked.put).toHaveBeenCalledWith('/sheets/3/rows', {
+        registry_id: 'minecraft:stone',
+        need_qty: 64,
+      })
+      expect(result).toEqual(withReg)
     })
   })
 

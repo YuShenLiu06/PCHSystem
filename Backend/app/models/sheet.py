@@ -68,6 +68,10 @@ class SheetRow(Base):
         nullable=False,
     )
     item_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # MC 注册名（namespace:path，如 minecraft:stone）；隐式可空——
+    # 投影解析 from-items 透传 / MCDR 手持新建行 / Web 行编辑器手填。
+    # 一键提交按此字段精确匹配；旧行与纯文本行为 null（不参与匹配）。
+    registry_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     need_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mode: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=0, server_default=text("0")

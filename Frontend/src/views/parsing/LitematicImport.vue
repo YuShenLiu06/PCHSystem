@@ -119,6 +119,7 @@ function onGenerate(): Promise<void> {
           need_qty: r.count,
           mode: MODE_LOCK,
           sort_order: i,
+          registry_id: r.item_id, // 透传解析产出的 registry id，供游戏内一键提交精确匹配
         })),
       })
       if (firstId === null) firstId = created.id

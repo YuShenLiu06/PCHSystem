@@ -74,6 +74,20 @@ SHEET_OK_REJECTED = "§a已打回/取消备齐 [{item}]（delivered 归零）"
 SHEET_OK_PROGRESS_SET = "§a已调整进度 [{item}] {delivered}/{need}（拥有者，绝对值）"
 SHEET_DELIVER_HINT = "§7提示：deliver 的数量是绝对值，先 !!PCH sheet view 看当前 delivered 再决定"
 SHEET_NOTIFY_EMPTY = "§7暂无未读通知"
+# 一键提交 / 手持建行 / 改 registry_id
+SHEET_NO_DATA_API = "§c未安装 minecraft_data_api 插件，无法扫描背包"
+SHEET_ADDHAND_NEED_HAND = "§c请先手持物品再使用 addhand"
+SHEET_OK_ADDHAND = "§a已用手持物品新建/更新行：{item} ×{need}（{mode}）"
+SHEET_OK_SETREG = "§a已更新行 #{row_id} 的物品 id 为 {registry_id}"
+# submit 汇总回执段
+SHEET_SUBMIT_HEAD = "§6§l[PCH 一键提交]§r"
+SHEET_SUBMIT_NO_API = "§c未安装 minecraft_data_api 插件，无法扫描背包"
+SHEET_SUBMIT_NO_ROWS = "§7表中无可匹配的行（需行已配 registry_id 且背包满足条件）"
+SHEET_SUBMIT_DONE_LINE = "§a  {item} ×{qty} §7→ §a完成"
+SHEET_SUBMIT_PROGRESS_LINE = "§a  {item} §7累计 §b{delivered}/{need}"
+SHEET_SUBMIT_SKIP_LINE = "§e  {item}：{reason}"
+SHEET_SUBMIT_DONE_HEAD = "§a已标记 {n} 行：\n"
+SHEET_SUBMIT_SKIP_HEAD = "§e跳过 {n} 行：\n"
 
 
 def _status_color(status: str) -> str:
