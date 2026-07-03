@@ -27,5 +27,6 @@ def test_paths_present():
         "/sheets/from-items",
         "/sheets/{sheet_id}/advance",
         "/sheets/{sheet_id}/archive",
+        "/sheets/{sheet_id}/archive/assets/{filename}",
     ]:
         assert p in paths, f"missing {p}"

@@ -51,6 +51,7 @@ from app.services.archive import (
     SheetNotFoundError,
     SheetStatusError,
     archive_sheet,
+    read_archive_bytes,
     read_archive_file,
 )
 
@@ -939,3 +940,35 @@ async def get_sheet_archive(
     if md is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "archive file missing")
     return Response(content=md, media_type="text/markdown")
+
+
+# 资产白名单：归档目录下允许读取的产物文件名（basename only，纵深防御）。
+_ARCHIVE_ASSET_WHITELIST = frozenset({"contributions.png"})
+
+
+@router.get("/{sheet_id}/archive/assets/{filename}")
+async def get_sheet_archive_asset(
+    sheet_id: int,
+    filename: str,
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+) -> Response:
+    """读归档产物（如 contributions.png，image/png）。非法名 / 未归档 / 缺失 → 404。
+
+    filename 必须命中 basename 白名单；rel_path = archived_path 父目录 + filename，
+    再经 read_archive_bytes 的路径穿越守卫（_assert_within）双保险。
+    """
+    if filename not in _ARCHIVE_ASSET_WHITELIST:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "invalid asset filename")
+    result = await sheet_repo.get_sheet(session, sheet_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet, _owner_name = result
+    if sheet.status != SHEET_PHASE_ARCHIVED or not sheet.archived_path:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet is not archived")
+    # archived_path = projects/{id}/index.md → 资产同目录 projects/{id}/{filename}
+    parent = sheet.archived_path.rsplit("/", 1)[0]
+    data = read_archive_bytes(get_settings().archive_root, f"{parent}/{filename}")
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "asset not found")
+    return Response(content=data, media_type="image/png")

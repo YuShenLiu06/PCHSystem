@@ -982,6 +982,67 @@ async def test_get_archive_markdown_file_missing_404(client, tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_get_archive_asset_returns_png(client, tmp_path, monkeypatch):
+    # Arrange：归档一个有贡献者的项目（progress 行 → contributions.png 落盘）
+    _patch_archive_root(monkeypatch, tmp_path)
+    owner_uuid, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "带图"}, headers=_auth(bearer))).json()["id"]
+    row = await _upsert_row(client, bearer, sid, item="圆石", need=999, mode=1)
+    # 任意玩家上交（progress 任意登录玩家可 contribute）
+    contrib_uuid, contrib_bearer = await _make_player("bob")
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{row['id']}/contribute",
+        json={"qty": 30},
+        headers=_auth(contrib_bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    # Act
+    resp = await client.get(f"/sheets/{sid}/archive/assets/contributions.png", headers=_auth(bearer))
+    # Assert：200 + image/png + PNG 头
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("image/png")
+    assert resp.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.asyncio
+async def test_get_archive_asset_rejects_unknown_filename(client, tmp_path, monkeypatch):
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "白名单"}, headers=_auth(bearer))).json()["id"]
+    row = await _upsert_row(client, bearer, sid, item="圆石", need=999, mode=1)
+    await client.post(
+        f"/sheets/{sid}/rows/{row['id']}/contribute",
+        json={"qty": 5},
+        headers=_auth((await _make_player("bob"))[1]),
+    )
+    await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    # 非白名单名 → 404（无论文件是否存在，纵深防御）
+    resp = await client.get(f"/sheets/{sid}/archive/assets/secret.md", headers=_auth(bearer))
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_archive_asset_missing_when_no_contributors(client, tmp_path, monkeypatch):
+    # 无贡献者 → 不生 contributions.png → asset 404
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "无图"}, headers=_auth(bearer))).json()["id"]
+    await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    resp = await client.get(f"/sheets/{sid}/archive/assets/contributions.png", headers=_auth(bearer))
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_archive_asset_not_archived_404(client, tmp_path, monkeypatch):
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "未归档"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.get(f"/sheets/{sid}/archive/assets/contributions.png", headers=_auth(bearer))
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_list_sheets_status_filter_active(client):
     # Arrange：3 张表各在不同阶段（collecting / constructing / archived）
     _, bearer_a = await _make_player("alice")

@@ -29,8 +29,10 @@ from app.services.archive.service import (
 from app.services.archive.writer import (
     ArchiveNotConfigured,
     cleanup,
+    read_archive_bytes,
     read_archive_file,
     write_atomic,
+    write_bytes_atomic,
 )
 
 __all__ = [
@@ -40,8 +42,10 @@ __all__ = [
     "archive_sheet",
     "build_sheet_archive_document",
     "cleanup",
+    "read_archive_bytes",
     "read_archive_file",
     "render_contributor_stats",
     "render_timeline",
     "write_atomic",
+    "write_bytes_atomic",
 ]

@@ -126,6 +126,20 @@ def read_archive_file(archive_root: str, rel_path: str) -> str | None:
     return target.read_text(encoding="utf-8")
 
 
+def read_archive_bytes(archive_root: str, rel_path: str) -> bytes | None:
+    """按相对路径读归档二进制产物（如 contributions.png）；不存在 → None。
+
+    与 ``read_archive_file`` 同样的路径穿越防护；rel_path 期望 ``write_bytes_atomic``
+    返回的相对 POSIX 路径（如 ``projects/42/contributions.png``）。
+    """
+    root = _resolve_root(archive_root)
+    target = root / rel_path
+    _assert_within(root, target)
+    if not target.is_file():
+        return None
+    return target.read_bytes()
+
+
 def cleanup(archive_root: str, rel_path: str) -> None:
     """删目标归档文件（commit 失败回滚时清孤儿）。
 

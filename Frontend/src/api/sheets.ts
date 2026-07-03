@@ -203,3 +203,16 @@ export async function getSheetArchive(id: number): Promise<string> {
   })
   return data
 }
+
+/**
+ * GET /sheets/{id}/archive/assets/{filename} —— 取归档产物（如 contributions.png）为 Blob。
+ * 用 Blob 而非裸 URL：asset 端点需 JWT，<img> 直连发不出 Authorization 头，
+ * 故用 axios（拦截器注入 Bearer）拉 blob → 调用方 URL.createObjectURL 给 <img>。
+ * 无图（404）由调用方 try/catch 静默跳过。
+ */
+export async function getSheetArchiveAsset(id: number, filename: string): Promise<Blob> {
+  const { data } = await http.get<Blob>(`/sheets/${id}/archive/assets/${filename}`, {
+    responseType: 'blob',
+  })
+  return data
+}

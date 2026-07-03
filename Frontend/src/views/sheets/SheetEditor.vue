@@ -16,6 +16,7 @@ import {
   rejectRow,
   advanceSheet,
   getSheetArchive,
+  getSheetArchiveAsset,
   type SheetDetail,
   type RowDetail,
   type SheetStatus,
@@ -89,6 +90,16 @@ function phaseLabel(status: SheetStatus | undefined): string {
 const archiveVisible = ref(false)
 const archiveLoading = ref(false)
 const archiveContent = ref('')
+// 贡献占比图 object URL（asset 端点需 JWT，<img> 直连发不出头，故 axios 拉 blob 再 createObjectURL）
+const archiveImgUrl = ref('')
+const ARCHIVE_CHART_FILENAME = 'contributions.png'
+
+function revokeArchiveImgUrl(): void {
+  if (archiveImgUrl.value) {
+    URL.revokeObjectURL(archiveImgUrl.value)
+    archiveImgUrl.value = ''
+  }
+}
 
 // 阶段流转（owner/admin 触发）。to 省略时后端按状态机推进
 async function onAdvance(to: 'constructing' | 'archived'): Promise<void> {
@@ -119,15 +130,28 @@ async function onAdvance(to: 'constructing' | 'archived'): Promise<void> {
 async function onShowArchive(): Promise<void> {
   archiveLoading.value = true
   archiveContent.value = ''
+  revokeArchiveImgUrl()
   archiveVisible.value = true
   try {
     archiveContent.value = await getSheetArchive(sheetId.value)
+    // 贡献占比图（无图项目 404 → 静默不显，不影响 md 预览）
+    try {
+      const blob = await getSheetArchiveAsset(sheetId.value, ARCHIVE_CHART_FILENAME)
+      archiveImgUrl.value = URL.createObjectURL(blob)
+    } catch {
+      // 无贡献占比图（项目无贡献者）→ 不显图，吞掉
+    }
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e) ?? '加载归档文档失败')
     archiveVisible.value = false
   } finally {
     archiveLoading.value = false
   }
+}
+
+// 归档 dialog 关闭：释放 object URL 避免内存泄漏
+function onArchiveDialogClose(): void {
+  revokeArchiveImgUrl()
 }
 
 // 当前玩家是否为该行的认领人
@@ -597,10 +621,11 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
     </template>
   </el-card>
 
-  <!-- 归档文档预览（text/markdown，保留白空格 + 等宽字体） -->
-  <el-dialog v-model="archiveVisible" title="归档文档" width="80%" top="5vh">
+  <!-- 归档文档预览（text/markdown，保留白空格 + 等宽字体）+ 贡献占比图 -->
+  <el-dialog v-model="archiveVisible" title="归档文档" width="80%" top="5vh" @close="onArchiveDialogClose">
     <div v-loading="archiveLoading">
-      <pre style="white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; max-height: 70vh; overflow: auto; margin: 0;">{{ archiveContent }}</pre>
+      <pre style="white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; max-height: 50vh; overflow: auto; margin: 0;">{{ archiveContent }}</pre>
+      <img v-if="archiveImgUrl" :src="archiveImgUrl" alt="贡献占比" style="max-width: 100%; margin-top: 12px;" />
     </div>
     <template #footer>
       <el-button @click="archiveVisible = false">关闭</el-button>
