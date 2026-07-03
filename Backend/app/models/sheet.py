@@ -16,6 +16,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 
+# 项目级三阶段生命周期（与行级 STATUS_* 区分前缀；行级常量在 sheet_repo.py）
+SHEET_PHASE_COLLECTING, SHEET_PHASE_CONSTRUCTING, SHEET_PHASE_ARCHIVED = (
+    "collecting",
+    "constructing",
+    "archived",
+)
+# 非终态集合（list_sheets status_filter="active" 用）
+SHEET_PHASE_ACTIVE_SET = frozenset(
+    {SHEET_PHASE_COLLECTING, SHEET_PHASE_CONSTRUCTING}
+)
+
 
 class Sheet(Base):
     """在线表格主表（sheets schema）。
@@ -35,6 +46,18 @@ class Sheet(Base):
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    # 项目阶段生命周期（迁移 0009）：collecting（默认）→ constructing → archived（只读终态）。
+    # archived 必有 archived_path/archived_at（DB CHECK ck_sheets_status_archive_consistency）。
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=SHEET_PHASE_COLLECTING,
+        server_default=text("'collecting'"),
+    )
+    archived_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

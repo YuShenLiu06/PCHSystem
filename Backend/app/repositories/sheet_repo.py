@@ -10,12 +10,21 @@
 import csv
 import io
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.sheet import Sheet, SheetRow, SheetRowContributor
+from app.models.sheet import (
+    SHEET_PHASE_ACTIVE_SET,
+    SHEET_PHASE_ARCHIVED,
+    SHEET_PHASE_COLLECTING,
+    SHEET_PHASE_CONSTRUCTING,
+    Sheet,
+    SheetRow,
+    SheetRowContributor,
+)
 from app.models.user import Player
 
 # mode（D-3）
@@ -37,6 +46,80 @@ _CSV_HEADER = [
 
 class SheetRowConflict(Exception):
     """行状态非法转移/不变量违反，api 层翻译为 409。"""
+
+
+class SheetArchived(Exception):
+    """sheet 已归档只读，api 层翻译为 409。任何写操作入口先经 _assert_writable 守卫。"""
+
+
+async def _assert_writable(session: AsyncSession, sheet_id: int) -> None:
+    """写操作入口守卫：sheet 不存在 → 不做（让后续逻辑返 None→404）；archived → raise SheetArchived。
+
+    只查 status 列（轻量）；非 archived 状态（collecting/constructing）放行。
+    """
+    stmt = select(Sheet.status).where(Sheet.id == sheet_id)
+    status = (await session.execute(stmt)).scalar_one_or_none()
+    if status is None:
+        # sheet 不存在，交给调用方走 None → 404 分支
+        return
+    if status == SHEET_PHASE_ARCHIVED:
+        raise SheetArchived(f"sheet {sheet_id} is archived (read-only)")
+
+
+async def advance_sheet(
+    session: AsyncSession,
+    sheet_id: int,
+    to_status: str,
+    *,
+    archived_path: str | None = None,
+) -> Sheet | None:
+    """项目阶段状态机（owner/admin 触发，api 层做权限校验）。
+
+    合法转移：
+    - collecting → constructing
+    - collecting → archived（跳过施工，要求 archived_path 非空）
+    - constructing → archived（要求 archived_path 非空）
+    archived = 终态只读。
+
+    异常：
+    - sheet 不存在 → return None（api 层 404）。
+    - 当前已 archived → SheetArchived（终态，不可再流转）。
+    - to_status == 当前状态 → SheetRowConflict（幂等拒绝，避免重复通知/覆盖 archived_at）。
+    - to_status=archived 但 archived_path 为空 → ValueError（调用方契约违反）。
+    - 其他非法转移（如 constructing→collecting、to_status 非法值）→ SheetRowConflict。
+
+    SELECT FOR UPDATE 锁行防并发归档；flush 不 commit（api 层负责 commit + 通知联动）。
+    """
+    stmt = (
+        select(Sheet).where(Sheet.id == sheet_id).with_for_update()
+    )
+    sheet = (await session.execute(stmt)).scalar_one_or_none()
+    if sheet is None:
+        return None
+    if sheet.status == SHEET_PHASE_ARCHIVED:
+        raise SheetArchived(f"sheet {sheet_id} is archived (terminal)")
+    if to_status == sheet.status:
+        raise SheetRowConflict(
+            f"sheet {sheet_id} already in status {to_status}"
+        )
+    if to_status == SHEET_PHASE_CONSTRUCTING and sheet.status == SHEET_PHASE_COLLECTING:
+        sheet.status = SHEET_PHASE_CONSTRUCTING
+    elif to_status == SHEET_PHASE_ARCHIVED and sheet.status in (
+        SHEET_PHASE_COLLECTING,
+        SHEET_PHASE_CONSTRUCTING,
+    ):
+        if not archived_path:
+            raise ValueError("archived_path required for archived transition")
+        sheet.status = SHEET_PHASE_ARCHIVED
+        sheet.archived_path = archived_path
+        sheet.archived_at = datetime.now(timezone.utc)
+    else:
+        # 非法转移（含 to_status 不在枚举内、constructing→collecting 回退等）
+        raise SheetRowConflict(
+            f"illegal transition {sheet.status} -> {to_status}"
+        )
+    await session.flush()
+    return sheet
 
 
 async def create_sheet(
@@ -64,9 +147,18 @@ async def get_sheet(
 
 
 async def list_sheets(
-    session: AsyncSession, owner_uuid: uuid.UUID | None = None
+    session: AsyncSession,
+    owner_uuid: uuid.UUID | None = None,
+    status_filter: str | None = None,
 ) -> list[tuple[Sheet, str]]:
-    """列所有表：inner join players 取 owner 游戏名。返回 [(Sheet, owner_name)]。"""
+    """列所有表：inner join players 取 owner 游戏名。返回 [(Sheet, owner_name)]。
+
+    status_filter（与 owner_uuid 可组合）：
+    - None → 不过滤；
+    - "active" → status ∈ (collecting, constructing)；
+    - 单值（collecting/constructing/archived）→ status == 该值。
+    按 sheet id 升序（与历史行为一致）。
+    """
     stmt = (
         select(Sheet, Player.current_name)
         .join(Player, Player.uuid == Sheet.owner_uuid)
@@ -74,6 +166,10 @@ async def list_sheets(
     )
     if owner_uuid is not None:
         stmt = stmt.where(Sheet.owner_uuid == owner_uuid)
+    if status_filter == "active":
+        stmt = stmt.where(Sheet.status.in_(SHEET_PHASE_ACTIVE_SET))
+    elif status_filter is not None:
+        stmt = stmt.where(Sheet.status == status_filter)
     return [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
 
 
@@ -132,6 +228,7 @@ async def upsert_row(
     避免违反 progress 不变量（claimant 恒 null）。
     并发同名 insert 会触发 IntegrityError，上抛交 api 层翻译为 409。
     """
+    await _assert_writable(session, sheet_id)
     stmt = (
         select(SheetRow)
         .where(SheetRow.sheet_id == sheet_id, SheetRow.item_name == item_name)
@@ -190,6 +287,7 @@ async def claim_row(
     session: AsyncSession, sheet_id: int, row_id: int, claimant_uuid: uuid.UUID
 ) -> SheetRow | None:
     """lock 行 open → claimed：置 claimant、delivered=0。progress 行 / 非 open 行视为非法转移。"""
+    await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -208,6 +306,7 @@ async def set_row_delivery(
     session: AsyncSession, sheet_id: int, row_id: int, delivered_qty: int
 ) -> SheetRow | None:
     """lock 行 claimed/done → 设 delivered；delivered>=need 自动 done，否则 claimed。progress 行用 contribute。"""
+    await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -230,6 +329,7 @@ async def set_row_progress(
     delivered_qty=0 → open；0<x<need → claimed；>=need → done。
     保留 contributors（上交历史），即使 owner 把进度调回 0 也不清贡献者名单。
     """
+    await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -250,6 +350,7 @@ async def release_row(
     session: AsyncSession, sheet_id: int, row_id: int
 ) -> SheetRow | None:
     """claimed/done → open：清 claimant、delivered=0、清贡献者（progress 行）。"""
+    await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -267,6 +368,7 @@ async def reject_row(
     session: AsyncSession, sheet_id: int, row_id: int
 ) -> SheetRow | None:
     """lock 行 done → claimed：delivered 归零，claimant 保留重做。progress 行无 reject（用 release）。"""
+    await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -293,6 +395,7 @@ async def contribute_row(
     delivered 不封顶 need（允许超额，status=done）。
     幂等加贡献者：ON CONFLICT (row_id, player_uuid) DO NOTHING。
     """
+    await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
@@ -351,6 +454,7 @@ async def clear_contributors(session: AsyncSession, row_id: int) -> None:
 
 
 async def delete_row(session: AsyncSession, sheet_id: int, row_id: int) -> int:
+    await _assert_writable(session, sheet_id)
     stmt = delete(SheetRow).where(
         SheetRow.sheet_id == sheet_id, SheetRow.id == row_id
     )
@@ -360,6 +464,7 @@ async def delete_row(session: AsyncSession, sheet_id: int, row_id: int) -> int:
 
 async def delete_sheet(session: AsyncSession, sheet_id: int) -> int:
     """删表级联 rows（DDL ON DELETE CASCADE 保证 rows 随之消失）。"""
+    await _assert_writable(session, sheet_id)
     stmt = delete(Sheet).where(Sheet.id == sheet_id)
     result = await session.execute(stmt)
     return result.rowcount or 0
