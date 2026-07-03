@@ -36,7 +36,6 @@ from app.services.archive import (
 )
 from app.services.archive.renderer import (
     render_contributor_stats,
-    render_material_table,
     render_timeline,
 )
 from app.services.archive.service import SheetStatusError
@@ -54,73 +53,6 @@ async def _seed_player(name: str = "alice", role: str = "user") -> tuple[Player,
     return Player(uuid=u, current_name=name, role=role), u
 
 
-class _FakeRow:
-    """renderer 测试用的轻量行替身（避免每次建表；renderer 是纯函数不查库）。
-
-    属性对齐 SheetRow ORM：id / item_name / need_qty / mode / status / delivered_qty。
-    """
-
-    def __init__(
-        self,
-        row_id: int,
-        item_name: str,
-        need_qty: int,
-        mode: int,
-        status: str,
-        delivered_qty: int = 0,
-    ) -> None:
-        self.id = row_id
-        self.item_name = item_name
-        self.need_qty = need_qty
-        self.mode = mode
-        self.status = status
-        self.delivered_qty = delivered_qty
-
-
-# ---------- renderer：material_table ----------
-
-
-def test_render_material_table_shows_claimant_for_lock_row():
-    # Arrange：lock 行（mode=0），有 claimant_name
-    row = _FakeRow(1, "铁锭", 64, 0, "claimed", delivered_qty=5)
-    ctx = {"rows": [(row, "bob")], "contributors_map": {}}
-    # Act
-    md = render_material_table(ctx)
-    # Assert
-    assert "## 材料清单" in md
-    assert "| # | 物品 | 需求 | 已交付 | 状态 | 模式 | 认领/贡献者 |" in md
-    # lock 行认领者单元格显 claimant_name
-    assert "bob" in md
-    # status 中文映射
-    assert "进行中" in md
-    assert "lock" in md
-
-
-def test_render_material_table_shows_contributors_for_progress_row():
-    # Arrange：progress 行（mode=1），无 claimant，有 contributors_map
-    row = _FakeRow(2, "圆石", 128, 1, "claimed", delivered_qty=10)
-    contributors = {2: [(uuid.uuid4(), "alice"), (uuid.uuid4(), "carol")]}
-    ctx = {"rows": [(row, None)], "contributors_map": contributors}
-    # Act
-    md = render_material_table(ctx)
-    # Assert：progress 行认领者单元格显贡献者名（按 contributors_map 顺序 join）
-    assert "alice" in md
-    assert "carol" in md
-    assert "progress" in md
-    # claimant_name（None）不显
-    assert "None" not in md
-
-
-def test_render_material_table_empty_sheet_returns_placeholder():
-    # Arrange：空表
-    ctx = {"rows": [], "contributors_map": {}}
-    # Act
-    md = render_material_table(ctx)
-    # Assert：非空串（让 section 显出来），含占位文案
-    assert md.strip()
-    assert "暂无物品" in md
-
-
 # ---------- renderer：contributor_stats ----------
 
 
@@ -133,12 +65,12 @@ def test_render_contributor_stats_aggregates_and_sorts():
         (bob, "bob", 64),
         (carol, "carol", 64),
     ]
-    ctx = {"contributor_totals": totals, "contributors_map": {}}
+    ctx = {"contributor_totals": totals}
     # Act
     md = render_contributor_stats(ctx)
     # Assert
     lines = md.splitlines()
-    assert lines[0] == "## 贡献者统计"
+    assert lines[0] == "## 🏆 贡献者统计"
     # alice 必排第一（总量最高）
     assert lines[1] == "1. alice — 128"
     # 同票 64 按名字升序：bob 在 carol 前
@@ -153,7 +85,7 @@ def test_render_contributor_stats_aggregates_and_sorts():
 
 def test_render_contributor_stats_no_contributors_returns_empty():
     # Arrange：无贡献者（totals 空 / 缺省）
-    ctx = {"contributor_totals": [], "contributors_map": {}}
+    ctx = {"contributor_totals": []}
     # Act
     md = render_contributor_stats(ctx)
     # Assert：空串（让 section 被文档层过滤）
@@ -173,21 +105,19 @@ def test_build_document_render_contains_title_and_sections():
         "created_at": datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc),
         "archived_at": datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc),
         "constructing_at": None,
-        "rows": [],
-        "contributors_map": {},
     }
     # Act
     md = doc.render(ctx)
-    # Assert：header 含标题、status_line 含状态、meta 含 owner、material_table 占位、footer
-    assert "# 项目归档：大教堂主材" in md
+    # Assert：header 含标题、status_line 含状态、meta 含 owner、timeline、footer
+    assert "# 📦 项目归档：大教堂主材" in md
     assert "**状态**：已归档" in md
     assert "alice" in md
-    assert "## 材料清单" in md
-    assert "暂无物品" in md
-    assert "## 时间线" in md
+    assert "## 📅 时间线" in md
     assert "由 PCHSystem 自动生成" in md
     # contributor_stats section 因无贡献者被过滤（不应出现空标题）
-    assert "## 贡献者统计" not in md
+    assert "## 🏆 贡献者统计" not in md
+    # 材料清单 section 已移除
+    assert "## 材料清单" not in md
 
 
 def test_render_timeline_includes_archived_when_present():
@@ -200,7 +130,7 @@ def test_render_timeline_includes_archived_when_present():
     # Act
     md = render_timeline(ctx)
     # Assert：创建 + 归档显，constructing 缺省不显
-    assert "## 时间线" in md
+    assert "## 📅 时间线" in md
     assert "创建：" in md
     assert "归档：" in md
     assert "进入施工" not in md
@@ -233,15 +163,11 @@ def test_render_timeline_includes_constructing_when_present():
 
 
 def test_render_helpers_handle_none_defensively():
-    """_row_status_label / _mode_label / _fmt_dt 收 None → 空串（不抛）。"""
-    # 经由 render_material_table / render_timeline 间接覆盖，这里直接验私有 helper 语义。
-    from app.services.archive.renderer import _fmt_dt, _mode_label, _row_status_label
+    """_fmt_dt 收 None → 空串；有效 datetime → 'YYYY-MM-DD HH:MM'（不抛）。"""
+    from app.services.archive.renderer import _fmt_dt
 
-    assert _row_status_label(None) == ""
-    assert _mode_label(None) == ""
     assert _fmt_dt(None) == ""
-    # 未知 status 原样回退
-    assert _row_status_label("weird") == "weird"
+    assert _fmt_dt(datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)) == "2026-07-03 12:00"
 
 
 # ---------- writer：原子写 + 路径穿越 ----------
@@ -250,12 +176,12 @@ def test_render_helpers_handle_none_defensively():
 def test_write_atomic_creates_file_under_projects_dir(tmp_path):
     # Arrange
     root = str(tmp_path)
-    md = "# 项目归档：测试\n\n内容"
+    md = "# 📦 项目归档：测试\n\n内容"
     # Act
     rel = writer.write_atomic(root, 42, md)
     # Assert：返回相对 POSIX 路径
-    assert rel == "projects/42.md"
-    final = tmp_path / "projects" / "42.md"
+    assert rel == "projects/42/index.md"
+    final = tmp_path / "projects" / "42" / "index.md"
     assert final.is_file()
     assert final.read_text(encoding="utf-8") == md
     # .tmp 目录无残留（os.replace 已搬走）
@@ -277,11 +203,11 @@ def test_read_archive_file_returns_none_when_missing(tmp_path):
 
 
 def test_read_archive_file_returns_content(tmp_path):
-    # Arrange：先写再读
+    # Arrange：先写再读（读 write_atomic 返回的相对路径）
     root = str(tmp_path)
-    writer.write_atomic(root, 7, "# hello")
+    rel = writer.write_atomic(root, 7, "# hello")
     # Act
-    content = read_archive_file(root, "projects/7.md")
+    content = read_archive_file(root, rel)
     # Assert
     assert content == "# hello"
 
@@ -302,7 +228,7 @@ def test_cleanup_deletes_file(tmp_path):
     # Arrange
     root = str(tmp_path)
     rel = writer.write_atomic(root, 5, "x")
-    final = tmp_path / "projects" / "5.md"
+    final = tmp_path / "projects" / "5" / "index.md"
     assert final.is_file()
     # Act
     writer.cleanup(root, rel)
@@ -361,15 +287,17 @@ async def test_archive_sheet_collecting_to_archived_writes_file_and_sets_path(tm
         # service 内部已 commit
     # Assert：DB 置 archived
     assert sheet.status == "archived"
-    assert sheet.archived_path == f"projects/{sid}.md"
+    assert sheet.archived_path == f"projects/{sid}/index.md"
     assert sheet.archived_at is not None
-    # 文件落盘，内容含标题 + 材料表
-    final = tmp_path / "projects" / f"{sid}.md"
+    # 文件落盘，内容含标题 + 贡献者统计（progress 行 alice 上交 10）
+    final = tmp_path / "projects" / str(sid) / "index.md"
     assert final.is_file()
     md = final.read_text(encoding="utf-8")
-    assert "# 项目归档：S" in md
-    assert "## 材料清单" in md
-    assert "铁锭" in md and "圆石" in md
+    assert "# 📦 项目归档：S" in md
+    assert "## 🏆 贡献者统计" in md
+    assert "alice — 10" in md
+    # 材料清单 section 已移除
+    assert "## 材料清单" not in md
     # 持久化校验
     async with async_session_factory() as s:
         got = await sheet_repo.get_sheet(s, sid)
@@ -387,7 +315,7 @@ async def test_archive_sheet_directly_from_collecting_skips_constructing(tmp_pat
         sheet = await archive_sheet(s, sid, archive_root=root, player=player)
     # Assert
     assert sheet.status == "archived"
-    assert (tmp_path / "projects" / f"{sid}.md").is_file()
+    assert (tmp_path / "projects" / str(sid) / "index.md").is_file()
 
 
 @pytest.mark.asyncio
@@ -403,7 +331,7 @@ async def test_archive_sheet_from_constructing(tmp_path):
         sheet = await archive_sheet(s, sid, archive_root=root, player=player)
     # Assert
     assert sheet.status == "archived"
-    assert (tmp_path / "projects" / f"{sid}.md").is_file()
+    assert (tmp_path / "projects" / str(sid) / "index.md").is_file()
 
 
 @pytest.mark.asyncio
@@ -440,7 +368,7 @@ async def test_archive_sheet_notifies_owner(tmp_path):
     assert n.category == "sheet_archived"
     assert n.title == "项目已归档"
     assert n.payload["sheet_id"] == sid
-    assert n.payload["archived_path"] == f"projects/{sid}.md"
+    assert n.payload["archived_path"] == f"projects/{sid}/index.md"
 
 
 @pytest.mark.asyncio
@@ -448,7 +376,7 @@ async def test_archive_sheet_rolls_back_file_on_db_failure(tmp_path):
     # Arrange
     sid, player, _ = await _make_collecting_sheet("回滚")
     root = str(tmp_path)
-    final = tmp_path / "projects" / f"{sid}.md"
+    final = tmp_path / "projects" / str(sid) / "index.md"
     # Act：mock session.commit 抛 → service 应 cleanup 删孤儿 + rollback + raise
     async with async_session_factory() as s:
         with patch.object(s, "commit", side_effect=RuntimeError("db down")):
@@ -520,9 +448,9 @@ async def test_archive_sheet_renders_precise_contributor_qty(tmp_path):
     async with async_session_factory() as s:
         await archive_sheet(s, sid, archive_root=root, player=player)
     # Assert：md 含精确数量排行
-    final = tmp_path / "projects" / f"{sid}.md"
+    final = tmp_path / "projects" / str(sid) / "index.md"
     md = final.read_text(encoding="utf-8")
-    assert "## 贡献者统计" in md
+    assert "## 🏆 贡献者统计" in md
     # alice 80 排第一，bob/carol 各 50 同票（名字升序）
     lines = md.splitlines()
     stats_lines = [l for l in lines if l.startswith(("1.", "2.", "3.")) and "—" in l]

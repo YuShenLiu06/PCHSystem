@@ -1,8 +1,8 @@
 """归档 markdown 文件落盘（原子写 + 路径穿越防护）。
 
 职责（计划 §归档服务 writer.py）：
-- ``write_atomic``：在 ``<archive_root>/projects/{sheet_id}.md`` 原子写 markdown，
-  返回相对 root 的 POSIX 路径（``projects/{sheet_id}.md``），供 DB ``archived_path`` 列存。
+- ``write_atomic``：在 ``<archive_root>/projects/{sheet_id}/index.md`` 原子写 markdown，
+  返回相对 root 的 POSIX 路径（``projects/{sheet_id}/index.md``），供 DB ``archived_path`` 列存。
 - ``read_archive_file``：按相对路径读回内容（Phase 4 GET /archive 用）；不存在 → None。
 - ``cleanup``：删目标文件（commit 失败回滚时清孤儿）；吞 FileNotFoundError。
 
@@ -20,6 +20,8 @@ from pathlib import Path
 
 # 归档文件统一存放子目录（相对 archive_root）。
 _PROJECTS_SUBDIR = "projects"
+# 每个项目目录下的 markdown 主文件名（与 contributions.png 等产物同目录）。
+_INDEX_FILENAME = "index.md"
 # 临时写入目录（相对 archive_root），原子写中转。
 _TMP_SUBDIR = ".tmp"
 
@@ -51,32 +53,34 @@ def _assert_within(root: Path, target: Path) -> None:
 
 
 def write_atomic(archive_root: str, sheet_id: int, md: str) -> str:
-    """原子写归档 markdown，返回相对 root 的 POSIX 路径 ``projects/{sheet_id}.md``。
+    """原子写归档 markdown，返回相对 root 的 POSIX 路径 ``projects/{sheet_id}/index.md``。
 
     步骤：
     1. resolve root + 路径穿越防护（空 root → ArchiveNotConfigured）。
-    2. mkdir ``<root>/projects`` 和 ``<root>/.tmp``（parents=True, exist_ok=True）。
-    3. UTF-8 写临时文件 ``<root>/.tmp/{sheet_id}.md.<pid>``。
+    2. mkdir ``<root>/projects/{sheet_id}`` 和 ``<root>/.tmp``（parents=True, exist_ok=True）。
+    3. UTF-8 写临时文件 ``<root>/.tmp/{sheet_id}.index.md.<pid>``。
     4. ``os.replace(tmp, final)``（同文件系统原子替换）。
 
+    每项目独立文件夹（``projects/{id}/``）：``index.md`` + 未来 ``contributions.png`` 等产物同目录。
     sheet_id 是 int，路径恒在 root/projects 下；穿越防护是纵深防御（保护 symlink / 异常 root）。
     """
     root = _resolve_root(archive_root)
     projects_dir = root / _PROJECTS_SUBDIR
+    project_dir = projects_dir / str(sheet_id)
     tmp_dir = root / _TMP_SUBDIR
-    final = projects_dir / f"{sheet_id}.md"
+    final = project_dir / _INDEX_FILENAME
 
     _assert_within(root, final)
 
-    projects_dir.mkdir(parents=True, exist_ok=True)
+    project_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = tmp_dir / f"{sheet_id}.md.{os.getpid()}"
+    tmp_path = tmp_dir / f"{sheet_id}.{_INDEX_FILENAME}.{os.getpid()}"
     tmp_path.write_text(md, encoding="utf-8")
     # os.replace：同文件系统原子替换；目标存在则覆盖（单文件覆盖语义）。
     os.replace(tmp_path, final)
 
-    return f"{_PROJECTS_SUBDIR}/{sheet_id}.md"
+    return f"{_PROJECTS_SUBDIR}/{sheet_id}/{_INDEX_FILENAME}"
 
 
 def read_archive_file(archive_root: str, rel_path: str) -> str | None:

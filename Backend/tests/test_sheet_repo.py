@@ -714,12 +714,12 @@ async def test_advance_sheet_constructing_to_archived_with_path():
             s,
             sid,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid}.md",
+            archived_path=f"projects/{sid}/index.md",
         )
         await s.commit()
     # Assert
     assert sheet.status == sheet_repo.SHEET_PHASE_ARCHIVED
-    assert sheet.archived_path == f"projects/{sid}.md"
+    assert sheet.archived_path == f"projects/{sid}/index.md"
     assert sheet.archived_at is not None
 
 
@@ -733,12 +733,12 @@ async def test_advance_sheet_collecting_directly_to_archived():
             s,
             sid,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid}.md",
+            archived_path=f"projects/{sid}/index.md",
         )
         await s.commit()
     # Assert
     assert sheet.status == sheet_repo.SHEET_PHASE_ARCHIVED
-    assert sheet.archived_path == f"projects/{sid}.md"
+    assert sheet.archived_path == f"projects/{sid}/index.md"
 
 
 @pytest.mark.asyncio
@@ -750,7 +750,7 @@ async def test_advance_sheet_archived_raises_sheet_archived():
             s,
             sid,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid}.md",
+            archived_path=f"projects/{sid}/index.md",
         )
         await s.commit()
     # Act / Assert：archived 终态，任何 advance → SheetArchived
@@ -829,7 +829,7 @@ async def test_write_on_archived_sheet_raises_sheet_archived():
             s,
             sid,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid}.md",
+            archived_path=f"projects/{sid}/index.md",
         )
         await s.commit()
 
@@ -864,7 +864,7 @@ async def test_write_on_archived_sheet_progress_paths_guarded():
             s,
             sid,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid}.md",
+            archived_path=f"projects/{sid}/index.md",
         )
         await s.commit()
 
@@ -897,7 +897,7 @@ async def test_list_sheets_filter_active():
             s,
             sid3,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid3}.md",
+            archived_path=f"projects/{sid3}/index.md",
         )
         await s.commit()
 
@@ -916,7 +916,7 @@ async def test_list_sheets_filter_archived():
             s,
             sid2,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid2}.md",
+            archived_path=f"projects/{sid2}/index.md",
         )
         await s.commit()
 
@@ -939,7 +939,7 @@ async def test_list_sheets_filter_combined_with_owner():
             s,
             a2.id,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{a2.id}.md",
+            archived_path=f"projects/{a2.id}/index.md",
         )
         await s.commit()
 
@@ -973,7 +973,7 @@ async def test_list_sheets_no_filter_returns_all_including_archived():
             s,
             sid2,
             sheet_repo.SHEET_PHASE_ARCHIVED,
-            archived_path=f"projects/{sid2}.md",
+            archived_path=f"projects/{sid2}/index.md",
         )
         await s.commit()
 
@@ -1048,20 +1048,61 @@ async def test_aggregate_contributor_totals_empty():
 
 
 @pytest.mark.asyncio
-async def test_aggregate_contributor_totals_only_progress_rows():
-    # Arrange：lock 行即使有认领人也不计入（mode 守卫）；只 progress 行贡献者入榜
-    sid = await _make_sheet("只 progress")
+async def test_aggregate_contributor_totals_lock_claimed_not_delivered_excluded():
+    # Arrange：lock 行认领但 delivered=0（仅 claim）→ HAVING>0 剔除；只 progress 上交者入榜
+    sid = await _make_sheet("lock 未交付")
     alice = await _seed_named_player("alice")
     claimant = await _seed_named_player("claimant")
     async with async_session_factory() as s:
         lock_row = await sheet_repo.upsert_row(s, sid, "锁", 64, sheet_repo.MODE_LOCK, 0)
         prog_row = await sheet_repo.upsert_row(s, sid, "进", 64, sheet_repo.MODE_PROGRESS, 1)
-        # lock 行认领（claimant 不进 contributors 表，但确认不污染聚合）
+        # lock 仅认领（claimant 不进 contributors 表，delivered_qty=0 → 不计入）
         await sheet_repo.claim_row(s, sid, lock_row.id, claimant)
         await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 7)
         await s.commit()
     # Act
     async with async_session_factory() as s:
         totals = await sheet_repo.aggregate_contributor_totals(s, sid)
-    # Assert：只有 alice（claimant 是 lock 认领人，不计入）
+    # Assert：只有 alice（claimant 仅 claim 未交付，delivered=0 被剔除）
     assert totals == [(alice, "alice", 7)]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_includes_lock_delivered():
+    # Arrange：lock 行认领并交付 → claimant 按 delivered_qty 计入；progress 上交者各自计
+    sid = await _make_sheet("lock 已交付")
+    claimant = await _seed_named_player("claimant")
+    alice = await _seed_named_player("alice")
+    bob = await _seed_named_player("bob")
+    async with async_session_factory() as s:
+        lock_row = await sheet_repo.upsert_row(s, sid, "锁", 64, sheet_repo.MODE_LOCK, 0)
+        prog_row = await sheet_repo.upsert_row(s, sid, "进", 100, sheet_repo.MODE_PROGRESS, 1)
+        await sheet_repo.claim_row(s, sid, lock_row.id, claimant)
+        await sheet_repo.set_row_delivery(s, sid, lock_row.id, 64)  # claimant 交付 64
+        await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 30)
+        await sheet_repo.contribute_row(s, sid, prog_row.id, bob, 10)
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：claimant=64（lock 交付）最高，alice=30，bob=10
+    assert totals == [(claimant, "claimant", 64), (alice, "alice", 30), (bob, "bob", 10)]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_merges_lock_and_progress_same_player():
+    # Arrange：同一玩家既是 lock claimant（交付）又是 progress 贡献者 → 两支合并
+    sid = await _make_sheet("合并")
+    alice = await _seed_named_player("alice")
+    async with async_session_factory() as s:
+        lock_row = await sheet_repo.upsert_row(s, sid, "锁", 10, sheet_repo.MODE_LOCK, 0)
+        prog_row = await sheet_repo.upsert_row(s, sid, "进", 100, sheet_repo.MODE_PROGRESS, 1)
+        await sheet_repo.claim_row(s, sid, lock_row.id, alice)
+        await sheet_repo.set_row_delivery(s, sid, lock_row.id, 10)  # lock 交付 10
+        await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 25)  # progress 上交 25
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：alice=35（lock 10 + progress 25 合并）
+    assert totals == [(alice, "alice", 35)]

@@ -875,10 +875,10 @@ async def test_advance_sheet_owner_to_archived_writes_file(client, tmp_path, mon
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "archived"
-    assert body["archived_path"] == f"projects/{sid}.md"
+    assert body["archived_path"] == f"projects/{sid}/index.md"
     assert body["archived_at"] is not None
     # 文件落盘
-    final = tmp_path / "projects" / f"{sid}.md"
+    final = tmp_path / "projects" / str(sid) / "index.md"
     assert final.is_file()
     assert "项目归档：归档测试" in final.read_text(encoding="utf-8")
 
@@ -974,7 +974,7 @@ async def test_get_archive_markdown_file_missing_404(client, tmp_path, monkeypat
     _, bearer = await _make_player("alice")
     sid = (await client.post("/sheets", json={"title": "丢文件"}, headers=_auth(bearer))).json()["id"]
     await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
-    (tmp_path / "projects" / f"{sid}.md").unlink()
+    (tmp_path / "projects" / str(sid) / "index.md").unlink()
     # Act
     resp = await client.get(f"/sheets/{sid}/archive", headers=_auth(bearer))
     # Assert

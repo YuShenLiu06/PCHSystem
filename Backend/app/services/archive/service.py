@@ -3,7 +3,7 @@
 ``archive_sheet(session, sheet_id, *, archive_root, player)`` 编排：
 1. 取 sheet + owner_name（get_sheet）；None → raise（api 层 404）。
 2. 预检 status：archived → SheetArchived（api 层 409）；非法源态 → 状态错误。
-3. 取 rows + contributors_map（list_rows / list_contributors）。
+3. 取贡献量排行（aggregate_contributor_totals：lock 交付 + progress 上交合并按人）。
 4. 构建 context + 渲染 markdown（纯函数，不查库）。
 5. ``writer.write_atomic`` 写盘（**事务外**，文件系统不参与 DB 事务）。
 6. ``try:`` advance_sheet（SELECT FOR UPDATE 锁 + 校验 + 置 archived 三字段，flush 不 commit）
@@ -58,11 +58,9 @@ class SheetStatusError(Exception):
 def _build_context(
     sheet: Sheet,
     owner_name: str,
-    rows: list,
-    contributors_map: dict,
     contributor_totals: list,
 ) -> dict[str, Any]:
-    """构建渲染 context（不可变输入：不改 sheet/rows/contributors_map）。"""
+    """构建渲染 context（不可变输入：不改 sheet/contributor_totals）。"""
     return {
         "sheet_id": sheet.id,
         "title": sheet.title,
@@ -72,8 +70,6 @@ def _build_context(
         "archived_at": datetime.now(timezone.utc),
         # 进入施工时间当前模型未单独记录（status 列无时间戳），保持 None。
         "constructing_at": None,
-        "rows": rows,
-        "contributors_map": contributors_map,
         # 精确贡献量排行（render_contributor_stats 用）：repo 已排序+汇总。
         "contributor_totals": contributor_totals,
     }
@@ -117,19 +113,13 @@ async def archive_sheet(
             f"sheet {sheet_id} status {sheet.status} is not archivable"
         )
 
-    # 3. 取 rows + contributors_map（list_rows / list_contributors 返回原形态）
-    rows = await sheet_repo.list_rows(session, sheet_id)
-    row_ids = [row.id for row, _name in rows]
-    contributors_map = await sheet_repo.list_contributors(session, row_ids)
-    # 精确贡献量排行（render_contributor_stats 用：按 contributed_qty 总量降序）。
+    # 3. 精确贡献量排行（lock 交付 + progress 上交合并按人）：repo 已排序+汇总。
     contributor_totals = await sheet_repo.aggregate_contributor_totals(
         session, sheet_id
     )
 
     # 4. 构建 context + 渲染（纯函数）
-    context = _build_context(
-        sheet, owner_name, rows, contributors_map, contributor_totals
-    )
+    context = _build_context(sheet, owner_name, contributor_totals)
     archived_at = context["archived_at"]  # 取出供通知 payload 用
     md = build_sheet_archive_document().render(context)
 

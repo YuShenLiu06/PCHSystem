@@ -19,7 +19,6 @@
 from app.services.archive.renderer import (
     build_sheet_archive_document,
     render_contributor_stats,
-    render_material_table,
     render_timeline,
 )
 from app.services.archive.service import (
@@ -43,7 +42,6 @@ __all__ = [
     "cleanup",
     "read_archive_file",
     "render_contributor_stats",
-    "render_material_table",
     "render_timeline",
     "write_atomic",
 ]
