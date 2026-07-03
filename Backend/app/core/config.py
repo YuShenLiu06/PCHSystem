@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     # 空串 = 不加载；目录不存在时 loader 静默返空。
     markdown_fragments_dir: str = ""
 
+    # wiki 内容 git 仓（独立部署；后端把归档推送过去，wiki.js 双向同步）。空 = 未配置，
+    # publisher 不推（R-8 重写后：归档 DB 成功即生效，wiki 同步为可选 best-effort 副产物）。
+    wiki_git_remote_url: str = ""
+    wiki_git_branch: str = "main"
+    wiki_git_token: str = ""  # R-11：经 .env 注入，不进代码库
+    wiki_git_author_name: str = "PCHSystem"
+    wiki_git_author_email: str = "pchsystem@local"
+
     @field_validator("mcdr_service_token")
     @classmethod
     def _mcdr_service_token_non_empty(cls, v: str) -> str:

@@ -21,11 +21,13 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.sheet import (
     SHEET_PHASE_ACTIVE_SET,
     SHEET_PHASE_ARCHIVED,
@@ -35,9 +37,11 @@ from app.models.user import Player
 from app.repositories import sheet_repo
 from app.repositories.sheet_repo import SheetArchived
 from app.services import notification_service
-from app.services.archive import writer
+from app.services.archive import publisher, writer
 from app.services.archive.chart import CHART_FILENAME, render_contribution_pie
 from app.services.archive.renderer import build_sheet_archive_document
+
+_logger = logging.getLogger(__name__)
 
 # 归档态展示用的中文标签（status_line section + 通知 title/body）。
 _ARCHIVED_LABEL = "已归档"
@@ -172,6 +176,20 @@ async def archive_sheet(
             },
         )
         await session.commit()
+        # post-commit：把产物推送到 wiki git 仓（默认 off；best-effort，绝不影响归档结果）。
+        # publisher 内部已 best-effort（失败仅通知 owner），这里再兜一层防御：任何意外上抛都吞掉。
+        try:
+            await publisher.publish(
+                sheet_id,
+                sheet.title,
+                sheet.owner_uuid,
+                archive_root=archive_root,
+                cfg=get_settings(),
+            )
+        except Exception:
+            _logger.exception(
+                "publisher.publish raised unexpectedly for sheet %s", sheet_id
+            )
         return archived_sheet
     except Exception:
         # commit 失败（含 advance_sheet 的 SheetArchived/其他 DB 错）：删孤儿文件 + 回滚 + 上抛
