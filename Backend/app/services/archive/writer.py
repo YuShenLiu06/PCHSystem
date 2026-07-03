@@ -83,6 +83,35 @@ def write_atomic(archive_root: str, sheet_id: int, md: str) -> str:
     return f"{_PROJECTS_SUBDIR}/{sheet_id}/{_INDEX_FILENAME}"
 
 
+def write_bytes_atomic(
+    archive_root: str, sheet_id: int, filename: str, data: bytes
+) -> str:
+    """原子写二进制产物（如 contributions.png）到 ``projects/{sheet_id}/{filename}``。
+
+    返回相对 root 的 POSIX 路径。``filename`` 必须**仅 basename**（禁 ``/`` / ``..``，
+    调用方传字面量如 ``contributions.png``）；纵深防御校验。
+    复用 write_atomic 的 ``projects/{sheet_id}/`` 目录（已 mkdir）。
+    """
+    if filename != Path(filename).name:
+        raise ValueError(f"filename must be a basename, got {filename!r}")
+
+    root = _resolve_root(archive_root)
+    project_dir = root / _PROJECTS_SUBDIR / str(sheet_id)
+    tmp_dir = root / _TMP_SUBDIR
+    final = project_dir / filename
+
+    _assert_within(root, final)
+
+    project_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = tmp_dir / f"{sheet_id}.{filename}.{os.getpid()}"
+    tmp_path.write_bytes(data)
+    os.replace(tmp_path, final)
+
+    return f"{_PROJECTS_SUBDIR}/{sheet_id}/{filename}"
+
+
 def read_archive_file(archive_root: str, rel_path: str) -> str | None:
     """按相对路径读归档文件内容（UTF-8）；不存在 → None。
 

@@ -36,6 +36,7 @@ from app.repositories import sheet_repo
 from app.repositories.sheet_repo import SheetArchived
 from app.services import notification_service
 from app.services.archive import writer
+from app.services.archive.chart import CHART_FILENAME, render_contribution_pie
 from app.services.archive.renderer import build_sheet_archive_document
 
 # 归档态展示用的中文标签（status_line section + 通知 title/body）。
@@ -122,9 +123,26 @@ async def archive_sheet(
     context = _build_context(sheet, owner_name, contributor_totals)
     archived_at = context["archived_at"]  # 取出供通知 payload 用
     md = build_sheet_archive_document().render(context)
+    # 贡献占比图（有贡献者才生图；空 → b""，跳过写盘 + section 已被过滤）。
+    chart_png = render_contribution_pie(contributor_totals)
 
-    # 5. 写盘（事务外；ArchiveNotConfigured 在此上抛，DB 尚未改动）
-    rel_path = writer.write_atomic(archive_root, sheet_id, md)
+    # 5. 写盘（事务外；ArchiveNotConfigured 在此上抛，DB 尚未改动）。
+    #    收集已写相对路径，任一步失败 / 后续 commit 失败时统一 cleanup 孤儿。
+    written: list[str] = []
+    try:
+        written.append(writer.write_atomic(archive_root, sheet_id, md))
+        if chart_png:
+            written.append(
+                writer.write_bytes_atomic(
+                    archive_root, sheet_id, CHART_FILENAME, chart_png
+                )
+            )
+    except Exception:
+        for rel in written:
+            writer.cleanup(archive_root, rel)
+        raise
+
+    rel_path = written[0]  # index.md 的相对路径，存 DB archived_path + 通知 payload
 
     # 6. try: DB 置 archived + 通知 + commit；except: cleanup 删孤儿 + rollback + raise
     try:
@@ -136,7 +154,8 @@ async def archive_sheet(
         )
         if archived_sheet is None:
             # 极端：预检通过但 advance 时 sheet 被删 → cleanup + 404
-            writer.cleanup(archive_root, rel_path)
+            for rel in written:
+                writer.cleanup(archive_root, rel)
             raise SheetNotFoundError(f"sheet {sheet_id} disappeared before archive")
 
         await notification_service.notify(
@@ -156,6 +175,7 @@ async def archive_sheet(
         return archived_sheet
     except Exception:
         # commit 失败（含 advance_sheet 的 SheetArchived/其他 DB 错）：删孤儿文件 + 回滚 + 上抛
-        writer.cleanup(archive_root, rel_path)
+        for rel in written:
+            writer.cleanup(archive_root, rel)
         await session.rollback()
         raise

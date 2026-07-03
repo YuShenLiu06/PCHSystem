@@ -40,6 +40,7 @@ def build_sheet_archive_document() -> MarkdownDocument:
     - status_line(200)       TemplateSection  状态标签
     - meta(300)              TemplateSection  拥有者 / 创建 / 归档 时间
     - contributor_stats(500) FunctionSection  贡献者统计（lock+progress 合并）
+    - contribution_chart(550) FunctionSection 贡献占比图（引用同目录 contributions.png）
     - timeline(600)          FunctionSection  时间线
     - footer(900)            TemplateSection  脚注
 
@@ -70,6 +71,9 @@ def build_sheet_archive_document() -> MarkdownDocument:
         )
         .register(
             FunctionSection("contributor_stats", 500, render_contributor_stats)
+        )
+        .register(
+            FunctionSection("contribution_chart", 550, render_contribution_chart)
         )
         .register(FunctionSection("timeline", 600, render_timeline))
         .register(
@@ -105,6 +109,19 @@ def render_contributor_stats(context: Any) -> str:
     for pos, (_uuid, name, qty) in enumerate(totals, start=1):
         lines.append(f"{pos}. {name} — {qty}")
     return "\n".join(lines)
+
+
+def render_contribution_chart(context: Any) -> str:
+    """贡献占比图 section：引用与 index.md 同目录的 contributions.png。
+
+    无贡献者（contributor_totals 空）→ 返空串（section 被过滤；service 不生图）。
+    相对文件名 ``contributions.png``：与 index.md 同目录——wiki.js 渲染 + GET /archive
+    ``<pre>`` 都兼容（前端单独用 asset 端点显图）。
+    """
+    totals: list = context.get("contributor_totals") or []
+    if not totals:
+        return ""
+    return "## 📊 贡献占比\n\n![贡献占比](contributions.png)"
 
 
 def render_timeline(context: Any) -> str:

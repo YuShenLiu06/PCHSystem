@@ -116,6 +116,8 @@ def test_build_document_render_contains_title_and_sections():
     assert "由 PCHSystem 自动生成" in md
     # contributor_stats section 因无贡献者被过滤（不应出现空标题）
     assert "## 🏆 贡献者统计" not in md
+    # 贡献占比图 section 同理被过滤（无贡献者不生图）
+    assert "## 📊 贡献占比" not in md
     # 材料清单 section 已移除
     assert "## 材料清单" not in md
 
@@ -187,6 +189,22 @@ def test_write_atomic_creates_file_under_projects_dir(tmp_path):
     # .tmp 目录无残留（os.replace 已搬走）
     tmp_files = list((tmp_path / ".tmp").glob("*"))
     assert tmp_files == []
+
+
+def test_write_bytes_atomic_writes_png_under_project_dir(tmp_path):
+    # Arrange：先建 index.md（write_atomic 会 mkdir projects/{id}/），再写 png
+    root = str(tmp_path)
+    writer.write_atomic(root, 9, "# x")
+    data = b"\x89PNG\r\n\x1a\nfakepng"
+    # Act
+    rel = writer.write_bytes_atomic(root, 9, "contributions.png", data)
+    # Assert：相对路径 + 文件内容 + 与 index.md 同目录
+    assert rel == "projects/9/contributions.png"
+    final = tmp_path / "projects" / "9" / "contributions.png"
+    assert final.read_bytes() == data
+    # filename 非 basename → 拒（纵深防御）
+    with pytest.raises(ValueError):
+        writer.write_bytes_atomic(root, 9, "../evil.png", data)
 
 
 def test_write_atomic_empty_root_raises_not_configured(tmp_path):
@@ -296,6 +314,11 @@ async def test_archive_sheet_collecting_to_archived_writes_file_and_sets_path(tm
     assert "# 📦 项目归档：S" in md
     assert "## 🏆 贡献者统计" in md
     assert "alice — 10" in md
+    # 贡献占比图：有贡献者 → md 引用 + 同目录 contributions.png 落盘（PNG 头校验）
+    assert "## 📊 贡献占比" in md
+    assert "![贡献占比](contributions.png)" in md
+    chart = (tmp_path / "projects" / str(sid) / "contributions.png").read_bytes()
+    assert chart[:8] == b"\x89PNG\r\n\x1a\n"
     # 材料清单 section 已移除
     assert "## 材料清单" not in md
     # 持久化校验
@@ -303,6 +326,23 @@ async def test_archive_sheet_collecting_to_archived_writes_file_and_sets_path(tm
         got = await sheet_repo.get_sheet(s, sid)
         assert got is not None
         assert got[0].status == "archived"
+
+
+@pytest.mark.asyncio
+async def test_archive_sheet_empty_contributors_skips_chart(tmp_path):
+    # Arrange：空表（无任何行 / 无贡献者）
+    sid, player, _ = await _make_collecting_sheet("无贡献者")
+    root = str(tmp_path)
+    # Act
+    async with async_session_factory() as s:
+        await archive_sheet(s, sid, archive_root=root, player=player)
+    # Assert：只生 index.md，无 contributions.png；md 不含 📊 section
+    final = tmp_path / "projects" / str(sid) / "index.md"
+    assert final.is_file()
+    md = final.read_text(encoding="utf-8")
+    assert "## 📊 贡献占比" not in md
+    assert "## 🏆 贡献者统计" not in md
+    assert not (tmp_path / "projects" / str(sid) / "contributions.png").exists()
 
 
 @pytest.mark.asyncio
