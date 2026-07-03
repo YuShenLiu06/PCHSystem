@@ -8,13 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git wget fontconfig ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 单一 CJK 字体：Noto Sans CJK SC Regular（~16MB OTF）。
-# matplotlib 归档饼图经 rc_context 指定 "Noto Sans CJK SC" 解析此字体。
-# URL 失效会在 build 时 wget 报错（早暴露）；运行时 chart.py 仍会回退字体不崩。
-# 如需更换镜像源，改下述 URL 即可（host-agnostic）。
+# CJK 字体（matplotlib 归档饼图中文）：三段 best-effort，任一成功即止；全失败也不挂构建
+# （图表仍生成，仅中文豆腐）。优先 wget 单一 Noto Sans CJK SC（~16MB，小）；GitHub 不可达
+# 时回退 apt fonts-noto-cjk（大但走 Debian 镜像）；再败则跳过。
 RUN mkdir -p /usr/share/fonts/truetype/noto-cjk \
-    && wget -q -O /usr/share/fonts/truetype/noto-cjk/NotoSansCJKsc-Regular.otf \
-        "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+    && ( wget -q -T 20 -O /usr/share/fonts/truetype/noto-cjk/NotoSansCJKsc-Regular.otf \
+            "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+        || ( echo "Noto wget failed; trying apt fonts-noto-cjk" \
+             && apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk \
+             && rm -rf /var/lib/apt/lists/* ) \
+        || echo "All CJK font sources failed; charts will render with fallback font" ) \
     && fc-cache -f
 
 WORKDIR /app

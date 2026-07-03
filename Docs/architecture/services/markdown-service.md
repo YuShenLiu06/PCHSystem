@@ -72,7 +72,7 @@ class SectionRenderer(Protocol):
 | 类 | 用途 | `render` 行为 |
 |---|---|---|
 | `TemplateSection(name, order, template)` | 静态样板（header / status_line / meta / footer） | `str.format_map` 占位符替换；**缺 key → 空串 + `logger.warning`，不抛异常**（缺字段渲染空比中断整篇归档更稳健）；值为 `None` 同样渲染空串 |
-| `FunctionSection(name, order, func)` | 动态内容（material_table / contributor_stats / timeline） | `return self.func(context)`；循环 / 条件 / 空表 / None / mode 分支由调用方在纯 Python 函数内处理 |
+| `FunctionSection(name, order, func)` | 动态内容（contributor_stats / contribution_chart / timeline） | `return self.func(context)`；循环 / 条件 / 空表 / None 分支由调用方在纯 Python 函数内处理 |
 
 ### 3.3 `MarkdownDocument`（编排，frozen）
 
@@ -116,12 +116,12 @@ class MarkdownDocument:
 
 | name | order | 类型 | 内容 |
 |---|---|---|---|
-| `header` | 100 | TemplateSection | 标题 + 项目 id |
-| `status_line` | 200 | TemplateSection | 归档时项目阶段 + 时间戳 |
+| `header` | 100 | TemplateSection | `# 📦 项目归档：{title}` |
+| `status_line` | 200 | TemplateSection | 状态标签（如「已归档」） |
 | `meta` | 300 | TemplateSection | 拥有者 / 创建时间 / 归档时间 |
-| `material_table` | 400 | FunctionSection | 材料清单 markdown 表（lock 显 claimant / progress 显贡献者；空表 / None / mode 分支） |
-| `contributor_stats` | 500 | FunctionSection | 贡献者精确排行（按 `aggregate_contributor_totals` SUM contributed_qty 降序，仅 progress 行） |
-| `timeline` | 600 | FunctionSection | 时间线（创建 / 最后更新 / 归档） |
+| `contributor_stats` | 500 | FunctionSection | `## 🏆 贡献者统计`：精确排行（`aggregate_contributor_totals` 合并 lock `delivered_qty` + progress `contributed_qty` 按人聚合，`HAVING>0` 剔除零和） |
+| `contribution_chart` | 550 | FunctionSection | `## 📊 贡献占比`：引用与 `index.md` 同目录的 `contributions.png`（matplotlib 饼图，无贡献者 → 空串过滤、不生图） |
+| `timeline` | 600 | FunctionSection | `## 📅 时间线`（创建 / [进入施工] / 归档） |
 | `footer` | 900 | TemplateSection | 页脚文案 |
 
 **「支持多种内容新增」= 注册一个新 section**——这是真实扩展点。未来榜单 / 报表消费者注册不同 section 集合即可复用同一抽象。
@@ -131,7 +131,7 @@ class MarkdownDocument:
 ## 6. 与其他服务的关系
 
 - **sheet 归档服务**（首个消费者）：`Backend/app/services/archive/` 调 `build_sheet_archive_document()` 链式 `register` 上述内置 section → `archive_sheet()` 编排渲染 → `write_atomic()` 写盘 → DB 置 archived + `sheet_archived` 通知 → commit。事务一致性与孤儿文件 cleanup 详见 [`api/sheets.md`](../api/sheets.md) §4.1 / §5.2。
-- **未来 wiki-service**：`archived_path`（相对 `ARCHIVE_ROOT` 的 `projects/{id}.md`）是 wiki-service 经 GraphQL 单向同步 wiki.js 的**入口**（红线 R-8，首版不同步）。本模块负责生成该 md 内容。
+- **wiki-service（git 双向）**：归档产物 = 每项目独立文件夹 `ARCHIVE_ROOT/projects/{id}/`（`index.md` + `contributions.png`）；`archived_path` 存相对 POSIX 路径 `projects/{id}/index.md`。归档成功后 publisher 把整目录 `git commit + push` 到独立 wiki 内容 git 仓（R-8 重写为 git 双向，默认 off、best-effort），wiki.js（独立部署）与该远端双向同步渲染。本模块只负责生成 md 内容，不参与推送。
 
 ---
 
