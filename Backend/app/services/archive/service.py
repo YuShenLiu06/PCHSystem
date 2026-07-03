@@ -60,6 +60,7 @@ def _build_context(
     owner_name: str,
     rows: list,
     contributors_map: dict,
+    contributor_totals: list,
 ) -> dict[str, Any]:
     """构建渲染 context（不可变输入：不改 sheet/rows/contributors_map）。"""
     return {
@@ -73,6 +74,8 @@ def _build_context(
         "constructing_at": None,
         "rows": rows,
         "contributors_map": contributors_map,
+        # 精确贡献量排行（render_contributor_stats 用）：repo 已排序+汇总。
+        "contributor_totals": contributor_totals,
     }
 
 
@@ -118,9 +121,15 @@ async def archive_sheet(
     rows = await sheet_repo.list_rows(session, sheet_id)
     row_ids = [row.id for row, _name in rows]
     contributors_map = await sheet_repo.list_contributors(session, row_ids)
+    # 精确贡献量排行（render_contributor_stats 用：按 contributed_qty 总量降序）。
+    contributor_totals = await sheet_repo.aggregate_contributor_totals(
+        session, sheet_id
+    )
 
     # 4. 构建 context + 渲染（纯函数）
-    context = _build_context(sheet, owner_name, rows, contributors_map)
+    context = _build_context(
+        sheet, owner_name, rows, contributors_map, contributor_totals
+    )
     archived_at = context["archived_at"]  # 取出供通知 payload 用
     md = build_sheet_archive_document().render(context)
 

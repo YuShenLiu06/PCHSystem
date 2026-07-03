@@ -980,3 +980,88 @@ async def test_list_sheets_no_filter_returns_all_including_archived():
     async with async_session_factory() as s:
         all_sheets = await sheet_repo.list_sheets(s)
         assert {sh.title for sh, _ in all_sheets} == {"A", "B"}
+
+
+# ---------- aggregate_contributor_totals（精确贡献量排行） ----------
+
+
+async def _seed_named_player(name: str) -> uuid.UUID:
+    """seed player 并设 current_name（aggregate 排序兜底用名字）。"""
+    u = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=u, current_name=name))
+        await s.commit()
+    return u
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_sums_per_player():
+    # Arrange：两个 progress 行；alice 在两行各上交 → 应合并总量
+    sid = await _make_sheet("聚合")
+    alice = await _seed_named_player("alice")
+    bob = await _seed_named_player("bob")
+    async with async_session_factory() as s:
+        rid1 = await sheet_repo.upsert_row(s, sid, "圆石", 100, sheet_repo.MODE_PROGRESS, 0)
+        rid2 = await sheet_repo.upsert_row(s, sid, "铁锭", 100, sheet_repo.MODE_PROGRESS, 1)
+        await sheet_repo.contribute_row(s, sid, rid1.id, alice, 30)
+        await sheet_repo.contribute_row(s, sid, rid1.id, bob, 10)
+        await sheet_repo.contribute_row(s, sid, rid2.id, alice, 50)  # alice 跨行再 +50
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：alice=80（30+50），bob=10
+    by_name = {name: qty for _u, name, qty in totals}
+    assert by_name == {"alice": 80, "bob": 10}
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_orders_by_qty_desc():
+    # Arrange：alice 100（最高）> bob 50 > carol 50（同票，名字 bob<carol 升序）
+    sid = await _make_sheet("排序")
+    alice = await _seed_named_player("alice")
+    bob = await _seed_named_player("bob")
+    carol = await _seed_named_player("carol")
+    async with async_session_factory() as s:
+        r1 = await sheet_repo.upsert_row(s, sid, "A", 999, sheet_repo.MODE_PROGRESS, 0)
+        await sheet_repo.contribute_row(s, sid, r1.id, alice, 100)
+        await sheet_repo.contribute_row(s, sid, r1.id, bob, 50)
+        await sheet_repo.contribute_row(s, sid, r1.id, carol, 50)
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：顺序 alice, bob, carol
+    names = [name for _u, name, _q in totals]
+    assert names == ["alice", "bob", "carol"]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_empty():
+    # Arrange：表无 progress 行 / 无贡献者
+    sid = await _make_sheet("空")
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert
+    assert totals == []
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_only_progress_rows():
+    # Arrange：lock 行即使有认领人也不计入（mode 守卫）；只 progress 行贡献者入榜
+    sid = await _make_sheet("只 progress")
+    alice = await _seed_named_player("alice")
+    claimant = await _seed_named_player("claimant")
+    async with async_session_factory() as s:
+        lock_row = await sheet_repo.upsert_row(s, sid, "锁", 64, sheet_repo.MODE_LOCK, 0)
+        prog_row = await sheet_repo.upsert_row(s, sid, "进", 64, sheet_repo.MODE_PROGRESS, 1)
+        # lock 行认领（claimant 不进 contributors 表，但确认不污染聚合）
+        await sheet_repo.claim_row(s, sid, lock_row.id, claimant)
+        await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 7)
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：只有 alice（claimant 是 lock 认领人，不计入）
+    assert totals == [(alice, "alice", 7)]

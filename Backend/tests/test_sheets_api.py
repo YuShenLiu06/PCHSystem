@@ -828,3 +828,221 @@ async def test_progress_detail_includes_contributors_field(client):
     assert rows[rid_p]["contributors"][0]["player_name"] == "bob"
     # lock 行 contributors 为空数组
     assert rows[rid_l]["contributors"] == []
+
+
+
+# ---------- 项目阶段生命周期：advance / archive / status 过滤 ----------
+
+
+def _patch_archive_root(monkeypatch, tmp_path):
+    """注入 archive_root=tmp_path 给 api 层的 get_settings()。"""
+    import app.api.sheets as sheets_mod
+    from app.core.config import Settings
+
+    real = Settings()
+    real.archive_root = str(tmp_path)
+    monkeypatch.setattr(sheets_mod, "get_settings", lambda: real)
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_owner_to_constructing(client):
+    # Arrange
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # Act
+    resp = await client.post(
+        f"/sheets/{sid}/advance?to=constructing", headers=_auth(bearer)
+    )
+    # Assert
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "constructing"
+    assert body["archived_path"] is None
+    assert body["archived_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_owner_to_archived_writes_file(client, tmp_path, monkeypatch):
+    # Arrange
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "归档测试"}, headers=_auth(bearer))).json()["id"]
+    # Act
+    resp = await client.post(
+        f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer)
+    )
+    # Assert
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "archived"
+    assert body["archived_path"] == f"projects/{sid}.md"
+    assert body["archived_at"] is not None
+    # 文件落盘
+    final = tmp_path / "projects" / f"{sid}.md"
+    assert final.is_file()
+    assert "项目归档：归档测试" in final.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_default_infers_next_phase(client):
+    # Arrange：collecting 缺省 → constructing
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp1 = await client.post(f"/sheets/{sid}/advance", headers=_auth(bearer))
+    assert resp1.status_code == 200
+    assert resp1.json()["status"] == "constructing"
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_non_owner_403(client):
+    # Arrange
+    _, bearer_a = await _make_player("alice")
+    _, bearer_b = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_a))).json()["id"]
+    # Act
+    resp = await client.post(
+        f"/sheets/{sid}/advance?to=constructing", headers=_auth(bearer_b)
+    )
+    # Assert
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_already_archived_409(client, tmp_path, monkeypatch):
+    # Arrange：先归档，再 advance
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    r1 = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    assert r1.status_code == 200
+    # Act
+    resp = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    # Assert
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_archived_triggers_notification(client, tmp_path, monkeypatch):
+    # Arrange
+    _patch_archive_root(monkeypatch, tmp_path)
+    u, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "通知"}, headers=_auth(bearer))).json()["id"]
+    # Act
+    resp = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    assert resp.status_code == 200
+    # Assert：notifications 表有一条 sheet_archived（owner 自归档 → actor==recipient，
+    # notification_service.notify 仍写入；ack 时由 MCDR 拉）
+    from app.core.db import async_session_factory
+    from app.models.notification import Notification
+    from sqlalchemy import select
+    async with async_session_factory() as s:
+        notifs = (
+            await s.execute(select(Notification).where(Notification.recipient_uuid == u))
+        ).scalars().all()
+    assert any(n.category == "sheet_archived" for n in notifs)
+
+
+@pytest.mark.asyncio
+async def test_get_archive_markdown_returns_content(client, tmp_path, monkeypatch):
+    # Arrange：先归档
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "读归档"}, headers=_auth(bearer))).json()["id"]
+    await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    # Act
+    resp = await client.get(f"/sheets/{sid}/archive", headers=_auth(bearer))
+    # Assert
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/markdown")
+    assert "项目归档：读归档" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_archive_markdown_not_archived_404(client):
+    # Arrange：collecting 态
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # Act / Assert
+    resp = await client.get(f"/sheets/{sid}/archive", headers=_auth(bearer))
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_archive_markdown_file_missing_404(client, tmp_path, monkeypatch):
+    # Arrange：归档后删文件模拟丢失
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "丢文件"}, headers=_auth(bearer))).json()["id"]
+    await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    (tmp_path / "projects" / f"{sid}.md").unlink()
+    # Act
+    resp = await client.get(f"/sheets/{sid}/archive", headers=_auth(bearer))
+    # Assert
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_status_filter_active(client):
+    # Arrange：3 张表各在不同阶段（collecting / constructing / archived）
+    _, bearer_a = await _make_player("alice")
+    s1 = (await client.post("/sheets", json={"title": "收集中"}, headers=_auth(bearer_a))).json()["id"]
+    s2 = (await client.post("/sheets", json={"title": "施工中"}, headers=_auth(bearer_a))).json()["id"]
+    s3 = (await client.post("/sheets", json={"title": "另一收集中"}, headers=_auth(bearer_a))).json()["id"]
+    await client.post(f"/sheets/{s2}/advance?to=constructing", headers=_auth(bearer_a))
+    # Act
+    resp = await client.get("/sheets?status=active", headers=_auth(bearer_a))
+    # Assert：active = collecting + constructing（不含 archived；这里无 archived）
+    assert resp.status_code == 200
+    ids = [s["id"] for s in resp.json()]
+    assert set(ids) == {s1, s2, s3}
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_status_filter_archived(client, tmp_path, monkeypatch):
+    # Arrange
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer_a = await _make_player("alice")
+    s1 = (await client.post("/sheets", json={"title": "活跃"}, headers=_auth(bearer_a))).json()["id"]
+    s2 = (await client.post("/sheets", json={"title": "归档"}, headers=_auth(bearer_a))).json()["id"]
+    await client.post(f"/sheets/{s2}/advance?to=archived", headers=_auth(bearer_a))
+    # Act
+    resp = await client.get("/sheets?status=archived", headers=_auth(bearer_a))
+    # Assert
+    assert resp.status_code == 200
+    ids = [s["id"] for s in resp.json()]
+    assert ids == [s2]
+
+
+@pytest.mark.asyncio
+async def test_sheet_summary_has_status_fields(client):
+    # Arrange / Act
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
+    listing = (await client.get("/sheets", headers=_auth(bearer))).json()
+    # Assert：详情与列表均含新字段
+    assert detail["status"] == "collecting"
+    assert detail["archived_path"] is None
+    assert detail["archived_at"] is None
+    assert listing[0]["status"] == "collecting"
+    assert "archived_path" in listing[0]
+    assert "archived_at" in listing[0]
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_archive_root_unconfigured_503(client, monkeypatch):
+    # Arrange：archive_root 空（未配置）→ 归档端点 503
+    import app.api.sheets as sheets_mod
+    from app.core.config import Settings
+    real = Settings()
+    real.archive_root = ""
+    monkeypatch.setattr(sheets_mod, "get_settings", lambda: real)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "无根"}, headers=_auth(bearer))).json()["id"]
+    # Act
+    resp = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    # Assert
+    assert resp.status_code == 503
+    # DB 未变（仍 collecting）
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
+    assert detail["status"] == "collecting"

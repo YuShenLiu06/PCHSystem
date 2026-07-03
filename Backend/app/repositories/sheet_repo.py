@@ -12,7 +12,7 @@ import io
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -451,6 +451,43 @@ async def clear_contributors(session: AsyncSession, row_id: int) -> None:
     await session.execute(
         delete(SheetRowContributor).where(SheetRowContributor.row_id == row_id)
     )
+
+
+async def aggregate_contributor_totals(
+    session: AsyncSession, sheet_id: int
+) -> list[tuple[uuid.UUID, str, int]]:
+    """聚合该 sheet 所有 progress 行的 per-player contributed_qty 总量。
+
+    返回 ``[(player_uuid, player_name, total_qty)]``，按 total_qty 降序、
+    player_name 升序兜底（同贡献量下名字字母序）。
+
+    join 路径：sheet_rows（限定 sheet_id + mode=progress）
+        → sheet_row_contributors → players。
+    SUM(contributed_qty) GROUP BY player。空 → []。lock 行不计（mode 守卫）。
+    """
+    total = func.sum(SheetRowContributor.contributed_qty).label("total_qty")
+    stmt = (
+        select(
+            Player.uuid,
+            Player.current_name,
+            total,
+        )
+        .select_from(SheetRowContributor)
+        .join(
+            SheetRow, SheetRow.id == SheetRowContributor.row_id
+        )
+        .join(Player, Player.uuid == SheetRowContributor.player_uuid)
+        .where(
+            SheetRow.sheet_id == sheet_id,
+            SheetRow.mode == MODE_PROGRESS,
+        )
+        .group_by(Player.uuid, Player.current_name)
+        .order_by(total.desc(), Player.current_name.asc())
+    )
+    return [
+        (pu, pn, qty)
+        for pu, pn, qty in (await session.execute(stmt)).all()
+    ]
 
 
 async def delete_row(session: AsyncSession, sheet_id: int, row_id: int) -> int:

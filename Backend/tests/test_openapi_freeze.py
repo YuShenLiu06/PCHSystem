@@ -25,5 +25,7 @@ def test_paths_present():
         "/notifications/{notification_id}/read",
         "/parsing/litematic",
         "/sheets/from-items",
+        "/sheets/{sheet_id}/advance",
+        "/sheets/{sheet_id}/archive",
     ]:
         assert p in paths, f"missing {p}"

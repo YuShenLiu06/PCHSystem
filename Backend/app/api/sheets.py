@@ -22,11 +22,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_player, require_service_token
+from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.sheet import Sheet, SheetRow
+from app.models.sheet import (
+    SHEET_PHASE_ARCHIVED,
+    SHEET_PHASE_COLLECTING,
+    SHEET_PHASE_CONSTRUCTING,
+)
 from app.models.user import Player
 from app.repositories import sheet_repo
-from app.repositories.sheet_repo import SheetRowConflict
+from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 from app.schemas.sheet import (
     RowContributeRequest,
     RowDeliveryRequest,
@@ -40,8 +46,22 @@ from app.schemas.sheet import (
     SheetSummary,
 )
 from app.services import notification_service
+from app.services.archive import (
+    ArchiveNotConfigured,
+    SheetNotFoundError,
+    SheetStatusError,
+    archive_sheet,
+    read_archive_file,
+)
 
 router = APIRouter(prefix="/sheets", tags=["sheets"])
+
+# 阶段过滤合法值（GET /sheets?status= 与 advance ?to= 共用枚举校验）。
+_VALID_STATUS_FILTERS = frozenset(
+    {SHEET_PHASE_COLLECTING, SHEET_PHASE_CONSTRUCTING, SHEET_PHASE_ARCHIVED, "active"}
+)
+# advance ?to= 合法目标（不含 active，active 仅用于过滤）。
+_VALID_ADVANCE_TARGETS = frozenset({SHEET_PHASE_CONSTRUCTING, SHEET_PHASE_ARCHIVED})
 
 
 def _can_edit(sheet: Sheet, player: Player) -> bool:
@@ -110,6 +130,9 @@ def _to_summary(sheet: Sheet, owner_name: str) -> SheetSummary:
         owner_uuid=sheet.owner_uuid,
         owner_name=owner_name,
         title=sheet.title,
+        status=sheet.status,
+        archived_path=sheet.archived_path,
+        archived_at=sheet.archived_at,
         created_at=sheet.created_at,
         updated_at=sheet.updated_at,
     )
@@ -127,6 +150,9 @@ def _to_detail(
         owner_uuid=sheet.owner_uuid,
         owner_name=owner_name,
         title=sheet.title,
+        status=sheet.status,
+        archived_path=sheet.archived_path,
+        archived_at=sheet.archived_at,
         created_at=sheet.created_at,
         updated_at=sheet.updated_at,
         rows=[
@@ -193,12 +219,17 @@ async def create_sheet_from_items(
 @router.get("", response_model=list[SheetSummary])
 async def list_sheets(
     owner: str | None = Query(default=None, description="过滤：传 me 只看自己"),
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+        description="阶段过滤：collecting / constructing / archived / active（=collecting+constructing）",
+    ),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
 ) -> list[SheetSummary]:
     owner_uuid = player.uuid if owner == "me" else None
     sheets_with_names = await sheet_repo.list_sheets(
-        session, owner_uuid=owner_uuid
+        session, owner_uuid=owner_uuid, status_filter=status_filter
     )
     return [_to_summary(s, name) for s, name in sheets_with_names]
 
@@ -791,3 +822,120 @@ async def set_row_progress(
             ],
         )
     )
+
+
+
+# ---------- 项目阶段生命周期（collecting → constructing → archived） ----------
+
+
+def _infer_advance_target(current_status: str) -> str:
+    """缺省 ``to`` 时按状态机推进下一态：collecting→constructing，constructing→archived。
+
+    archived 态本就不该再 advance（调用前 _can_edit 通过后，archived 态会进入
+    advance_sheet raise SheetArchived→409）；这里只处理活跃态的默认推进。
+    """
+    if current_status == SHEET_PHASE_COLLECTING:
+        return SHEET_PHASE_CONSTRUCTING
+    return SHEET_PHASE_ARCHIVED  # constructing（或防御性其它）默认 → archived
+
+
+async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int) -> SheetDetail:
+    """重新构造 SheetDetail（advance 后取最新 sheet + rows + contributors）。"""
+    result = await sheet_repo.get_sheet(session, sheet_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet, owner_name = result
+    rows_with_names = await sheet_repo.list_rows(session, sheet_id)
+    contributors_map = await sheet_repo.list_contributors(
+        session, [r.id for r, _ in rows_with_names]
+    )
+    return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
+
+
+@router.post("/{sheet_id}/advance", response_model=SheetDetail)
+async def advance_sheet_phase(
+    sheet_id: int,
+    to: str | None = Query(
+        default=None, description="目标阶段：constructing / archived；缺省按状态机推进"
+    ),
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+) -> SheetDetail:
+    """项目阶段流转（owner/admin）。
+
+    - ``to=constructing``：collecting → constructing（repo advance_sheet，api 层 commit）。
+    - ``to=archived``：collecting/constructing → archived（走 archive_service：写盘 +
+      通知 + 内部 commit）。允许 collecting 直跳跳过施工。
+    - ``to`` 缺省：按当前状态推进下一态（collecting→constructing，constructing→archived）。
+    - archived 终态：任何 advance → 409（只读）；非 owner/admin → 403。
+
+    事务边界：constructing 路径在 api 层 commit；archived 路径由 archive_sheet 内部 commit。
+    """
+    if to is not None and to not in _VALID_ADVANCE_TARGETS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"invalid 'to' target: {to} (expected constructing|archived)",
+        )
+    sheet = await _load_sheet_or_404(session, sheet_id)
+    if not _can_edit(sheet, player):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+
+    target = to if to is not None else _infer_advance_target(sheet.status)
+
+    if target == SHEET_PHASE_ARCHIVED:
+        # 走归档服务：渲染 md → 写盘 → DB 置 archived + 通知 → 内部 commit
+        try:
+            await archive_sheet(
+                session,
+                sheet_id,
+                archive_root=get_settings().archive_root,
+                player=player,
+            )
+        except SheetNotFoundError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+        except SheetArchived:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "sheet is archived, read-only"
+            )
+        except SheetStatusError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "illegal phase transition")
+        except ArchiveNotConfigured:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "archive root not configured"
+            )
+    else:
+        # → constructing：repo advance_sheet，api 层 commit
+        try:
+            advanced = await sheet_repo.advance_sheet(
+                session, sheet_id, SHEET_PHASE_CONSTRUCTING
+            )
+        except SheetArchived:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "sheet is archived, read-only"
+            )
+        except SheetRowConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        if advanced is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+        await session.commit()
+        await session.refresh(advanced)
+    return await _sheet_detail_or_404(session, sheet_id)
+
+
+@router.get("/{sheet_id}/archive")
+async def get_sheet_archive(
+    sheet_id: int,
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+) -> Response:
+    """读归档 markdown（text/markdown）。未归档 / 文件缺失 → 404。"""
+    result = await sheet_repo.get_sheet(session, sheet_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet, _owner_name = result
+    if sheet.status != SHEET_PHASE_ARCHIVED or not sheet.archived_path:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet is not archived")
+    md = read_archive_file(get_settings().archive_root, sheet.archived_path)
+    if md is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "archive file missing")
+    return Response(content=md, media_type="text/markdown")

@@ -17,6 +17,10 @@ context dict 约定（service.archive_sheet 注入，Phase 4/api 对齐）::
         "rows": list[tuple[SheetRow, str | None]],
         # contributors_map: list_contributors 返回的原形态 {row_id: [(uuid, name), ...]}
         "contributors_map": dict[int, list[tuple[UUID, str]]],
+        # contributor_totals: aggregate_contributor_totals 返回的原形态
+        # [(player_uuid, player_name, total_qty)]，已按总量降序、名字升序兜底。
+        # render_contributor_stats 用它渲染精确数量排行（贡献者统计 section）。
+        "contributor_totals": list[tuple[UUID, str, int]],
     }
 """
 from __future__ import annotations
@@ -165,42 +169,20 @@ def render_material_table(context: Any) -> str:
 
 
 def render_contributor_stats(context: Any) -> str:
-    """聚合所有 progress 行的贡献者（按 contributed_qty 降序），生成统计排行。
+    """聚合所有 progress 行的贡献者（按 contributed_qty 总量降序），生成精确数量排行。
 
     无贡献者 → 返空串（让 section 被文档层过滤，避免空标题）。
-    数据来源：``contributors_map`` 是 list_contributors 的返回（每行内已按 contributed_qty 降序），
-    这里跨行汇总每人总量再降序。
+    数据来源：``contributor_totals`` = ``sheet_repo.aggregate_contributor_totals`` 的返回，
+    形如 ``[(player_uuid, player_name, total_qty)]``（已按总量降序、名字升序兜底）。
+    repo 已完成排序与汇总，renderer 只做渲染（纯函数不查库）。
     """
-    contributors_map: dict[int, list[tuple[UUID, str]]] = (
-        context.get("contributors_map") or {}
-    )
-    if not contributors_map:
+    totals: list = context.get("contributor_totals") or []
+    if not totals:
         return ""
-
-    # 注：list_contributors 返回不带 contributed_qty 总量（只按贡献量内部排序）。
-    # 这里只能基于「该玩家出现在多少行 / 名字」做排行；真正的贡献量排行需扩展 repo。
-    # 当前实现：按出现在多少个 progress 行（去重）降序，同票按名字升序——KISS 可用。
-    # 见 service 注释：如需精确 contributed_qty 排行，应让 list_contributors 返 (uuid, name, qty)。
-    player_rows: dict[UUID, set[int]] = {}
-    player_names: dict[UUID, str] = {}
-    for row_id, entries in contributors_map.items():
-        for player_uuid, name in entries:
-            player_rows.setdefault(player_uuid, set()).add(row_id)
-            player_names[player_uuid] = name
-
-    if not player_rows:
-        return ""
-
-    # 排序：参与行数降序，同票名字升序。
-    ranked = sorted(
-        player_rows.items(),
-        key=lambda kv: (-len(kv[1]), player_names[kv[0]]),
-    )
 
     lines = ["## 贡献者统计"]
-    for pos, (player_uuid, row_set) in enumerate(ranked, start=1):
-        name = player_names[player_uuid]
-        lines.append(f"{pos}. {name} — 参与 {len(row_set)} 项")
+    for pos, (_uuid, name, qty) in enumerate(totals, start=1):
+        lines.append(f"{pos}. {name} — {qty}")
     return "\n".join(lines)
 
 

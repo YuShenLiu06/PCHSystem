@@ -61,6 +61,9 @@ class SheetSummary(BaseModel):
     owner_uuid: UUID
     owner_name: str
     title: str
+    status: str
+    archived_path: str | None = None
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

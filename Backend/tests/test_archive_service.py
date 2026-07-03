@@ -125,29 +125,35 @@ def test_render_material_table_empty_sheet_returns_placeholder():
 
 
 def test_render_contributor_stats_aggregates_and_sorts():
-    # Arrange：两个 progress 行的贡献者（按贡献量已内部降序，这里测跨行汇总排序）
+    # Arrange：repo 已汇总每玩家总量（contributor_totals），按总量降序、名字升序兜底
+    # alice 128（最高），bob/carol 各 64（同票，名字升序 bob < carol）
     alice, bob, carol = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    contributors = {
-        1: [(alice, "alice"), (bob, "bob")],   # alice + bob 各参与行 1
-        2: [(alice, "alice"), (carol, "carol")],  # alice 又参与行 2
-    }
-    ctx = {"contributors_map": contributors}
+    totals = [
+        (alice, "alice", 128),
+        (bob, "bob", 64),
+        (carol, "carol", 64),
+    ]
+    ctx = {"contributor_totals": totals, "contributors_map": {}}
     # Act
     md = render_contributor_stats(ctx)
-    # Assert：alice 参与 2 项排第一；bob/carol 各 1 项，名字升序
+    # Assert
     lines = md.splitlines()
     assert lines[0] == "## 贡献者统计"
-    # alice 必出现在 bob 之前（参与行数多）
-    assert lines.index(next(l for l in lines if "alice" in l)) < lines.index(
-        next(l for l in lines if "bob" in l)
+    # alice 必排第一（总量最高）
+    assert lines[1] == "1. alice — 128"
+    # 同票 64 按名字升序：bob 在 carol 前
+    assert lines.index(next(l for l in lines if "bob" in l)) < lines.index(
+        next(l for l in lines if "carol" in l)
     )
-    assert "参与 2 项" in md
-    assert "参与 1 项" in md
+    # 精确数量（不再是「参与 N 项」）
+    assert "— 128" in md
+    assert "— 64" in md
+    assert "参与" not in md
 
 
 def test_render_contributor_stats_no_contributors_returns_empty():
-    # Arrange：无贡献者
-    ctx = {"contributors_map": {}}
+    # Arrange：无贡献者（totals 空 / 缺省）
+    ctx = {"contributor_totals": [], "contributors_map": {}}
     # Act
     md = render_contributor_stats(ctx)
     # Assert：空串（让 section 被文档层过滤）
@@ -478,3 +484,54 @@ async def test_archive_sheet_missing_raises_not_found(tmp_path):
     async with async_session_factory() as s:
         with pytest.raises(SheetNotFoundError):
             await archive_sheet(s, 999999, archive_root=str(tmp_path), player=player)
+
+
+@pytest.mark.asyncio
+async def test_archive_sheet_renders_precise_contributor_qty(tmp_path):
+    """归档 md 的贡献者统计 section 用精确 contributed_qty 总量排行（非「参与 N 项」）。
+
+    多个 progress 行 + 多人不同贡献量：验渲染顺序（按总量降序、同票名字升序）
+    与精确数字。
+    """
+    # Arrange：owner 建 2 个 progress 行
+    sid, player, owner_uuid = await _make_collecting_sheet(
+        "精确贡献", rows=[("圆石", 999, 1), ("铁锭", 999, 1)]
+    )
+    # 三个贡献者（不同 uuid；name 控制排序）
+    alice = uuid.uuid4()
+    bob = uuid.uuid4()
+    carol = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=alice, current_name="alice"))
+        s.add(Player(uuid=bob, current_name="bob"))
+        s.add(Player(uuid=carol, current_name="carol"))
+        await s.commit()
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        prog_rows = [r for r, _ in rows if r.mode == 1]
+        # alice 在两行各上交 → 80 总量；bob 50；carol 50（同票名字升序）
+        await sheet_repo.contribute_row(s, sid, prog_rows[0].id, alice, 30)
+        await sheet_repo.contribute_row(s, sid, prog_rows[0].id, bob, 50)
+        await sheet_repo.contribute_row(s, sid, prog_rows[1].id, alice, 50)
+        await sheet_repo.contribute_row(s, sid, prog_rows[1].id, carol, 50)
+        await s.commit()
+    root = str(tmp_path)
+    # Act
+    async with async_session_factory() as s:
+        await archive_sheet(s, sid, archive_root=root, player=player)
+    # Assert：md 含精确数量排行
+    final = tmp_path / "projects" / f"{sid}.md"
+    md = final.read_text(encoding="utf-8")
+    assert "## 贡献者统计" in md
+    # alice 80 排第一，bob/carol 各 50 同票（名字升序）
+    lines = md.splitlines()
+    stats_lines = [l for l in lines if l.startswith(("1.", "2.", "3.")) and "—" in l]
+    # 至少包含 alice/bob/carol 三行
+    joined = "\n".join(stats_lines)
+    assert "alice — 80" in joined
+    assert "bob — 50" in joined
+    assert "carol — 50" in joined
+    # 顺序：alice 在 bob 之前；bob 在 carol 之前
+    assert joined.index("alice") < joined.index("bob") < joined.index("carol")
+    # 不再出现旧的「参与 N 项」措辞
+    assert "参与" not in md
