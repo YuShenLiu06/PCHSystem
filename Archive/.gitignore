@@ -1,0 +1,4 @@
+# 归档 markdown 产物目录：忽略所有生成内容，仅保留目录骨架
+*
+!.gitignore
+!.gitkeep
