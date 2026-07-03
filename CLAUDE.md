@@ -44,8 +44,8 @@
 | 前端 | Vue 3 + Element Plus + Vite + Pinia |
 | 数据库 | PostgreSQL（Alembic 迁移，唯一业务库） |
 | MC 层 | MCDReforged 插件（Fabric + Create + Carpet，**离线模式**） |
-| Wiki | wiki.js（后端经 GraphQL **单向同步**） |
-| 部署 | Docker Compose（postgres + backend；wiki.js 规划中，尚未纳入 compose） |
+| Wiki | wiki.js（经**独立 wiki 内容 git 仓双向同步**，非 GraphQL 单向；后端 publisher 默认 off，配置 `WIKI_GIT_*`） |
+| 部署 | Docker Compose（postgres + backend；wiki.js 独立部署、不入本仓 compose） |
 | 关键库 | [`litemapy`](https://github.com/SmylerMC/litemapy)（`.litematic` 投影解析，自带 `nbtlib`，**不自研**）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，**不自研**） |
 
 ---
@@ -61,7 +61,7 @@
 | **R-5** | **身份主锚 = Web 绑定账号**；MC UUID 为子身份（离线模式 UUID 由玩家名确定性推导，改名即换身份）。 | arch §2.1 |
 | **R-6** | **物品 id 统一 registry id**（`namespace:path`），存储前剥离 BlockState properties；block→item 归一化集中在 project-service。 | data-model §0 |
 | **R-7** | **MCDR 是纯游戏内客户端**：只做命令交互、箱子/背包扫描、UUID 推导、称号下发、HTTP 上报；**不做积分计算、不持久化业务数据、不做 wiki 同步**。 | mcdr-plugin §1 |
-| **R-8** | **wiki.js 单向接收**：由后端经 GraphQL 同步，**不回写**业务库。 | arch §2.1 |
+| **R-8** | **wiki.js 经 git 仓库双向同步（非 GraphQL 单向）**：后端把归档（`index.md` + `contributions.png`）提交推送到**独立 wiki 内容 git 仓**（默认 off，配置 `WIKI_GIT_*`；wiki.js 独立部署、不入本仓 compose）；wiki.js 与该远端双向同步渲染，拥有者获授权后可在 wiki.js 编辑自己的页面，改动经 git 回流、支持 PR 审查（host 层分支保护）。**PostgreSQL 业务库仍由后端独占（R-1 不变）—— wiki 是人类可读可编辑的投影，wiki 编辑绝不回写 sheets/score_ledger 等业务表。wiki git 仓 = wiki 内容权威源。** | arch §2.1 |
 | **R-9** | **前端权限仅可见性**：真实权限以**后端 RBAC 为准**，前端只控展示。 | frontend §4 |
 | **R-10** | **模块化单体**：部署单一 FastAPI 服务，内部按 schema 隔离（`users / projects / scoring / titles / wiki / alerts`），**不拆独立子服务**；跨表事务用单库事务。 | arch §2.2 |
 | **R-11** | **密钥不进代码库**：`POSTGRES_*`、`WIKI_API_KEY`、`MCDR_SERVICE_TOKEN`、`JWT_SECRET` 经 `.env` / docker secrets 注入。 | arch §4 |
@@ -179,9 +179,9 @@ PCHSystem/
 
 **待处理**：
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
-- [ ] wiki.js 纳入 compose + GraphQL 单向同步（当前 compose 仅 postgres + backend）
+- [ ] wiki.js 纳入部署 + wiki 内容 git 仓 host 选型（GitHub/Gitea/GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）
 - [ ] 拍板待确认参数（积分 `k / α / β / r`、赛季周期等，见 arch §9）
 
 ---
 
-*最后更新：2026-07-03（sheet 升级为项目三阶段生命周期 + Markdown 归档：迁移 0009 + advance/archive 端点 + markdown_render Route C + !!PCH sheet advance + 三端 UI 适配）*
+*最后更新：2026-07-03（R-8 重写为 wiki.js git 双向同步 + 归档产物升级：贡献者聚合含 lock、去材料清单、每项目独立文件夹、matplotlib 贡献占比饼图、asset 端点 + wiki git publisher；详见各服务文档）*

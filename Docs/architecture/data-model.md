@@ -279,7 +279,7 @@ erDiagram
 | `owner_uuid` | uuid | FK→players.uuid, not null | 表主（身份锚 R-5） |
 | `title` | text | not null | 表标题 |
 | `status` | text | not null default 'collecting', CHECK ∈ (collecting/constructing/archived)（迁移 0009） | **项目阶段**：collecting（材料收集，默认）/ constructing（施工占位）/ archived（只读终态），见 §10.4 |
-| `archived_path` | text | null（仅 archived 非空，一致性 CHECK） | 归档 markdown 相对 `ARCHIVE_ROOT` 的 POSIX 路径（如 `projects/42.md`）；wiki-service 单向同步入口 |
+| `archived_path` | text | null（仅 archived 非空，一致性 CHECK） | 归档产物相对 `ARCHIVE_ROOT` 的 POSIX 路径（如 `projects/42/index.md`，每项目独立文件夹，同目录含 `contributions.png` 占比饼图）；wiki-service git 双向同步入口 |
 | `archived_at` | timestamptz | null（仅 archived 非空，一致性 CHECK） | 归档时间 |
 | `created_at` / `updated_at` | timestamptz | not null default now() | |
 
@@ -340,7 +340,15 @@ collecting ─────────────────────▶ co
 - `advance(to=当前状态)` 幂等拒绝 → `SheetRowConflict` → 409（避免重复通知/覆盖 archived_at）。
 - 并发：`advance_sheet` 用 `SELECT ... FOR UPDATE` 锁 sheet 行。
 
-**归档文件路径约定**：`archived_path` 存相对 `ARCHIVE_ROOT` 的 POSIX 路径（`projects/{sheet_id}.md`），单文件覆盖（archived 终态不重归档，`{sheet_id}` 稳定可预测）。这是**未来 wiki-service 的单向同步入口**（wiki-service 读文件经 GraphQL 推 wiki.js；首版不同步，红线 R-8）。
+**归档文件路径约定**：`archived_path` 存相对 `ARCHIVE_ROOT` 的 POSIX 路径，指向**每项目独立文件夹**下的 `index.md`（`projects/{sheet_id}/index.md`），同目录还含 `contributions.png`（matplotlib 渲染的贡献占比饼图，CJK 字体 Noto Sans CJK SC；≤5 人全显，>5 人 top5 + 其他）。文件夹覆盖（archived 终态不重归档，`{sheet_id}` 稳定可预测）。这是 **wiki-service git 双向同步入口**（后端 publisher 把 `projects/<id>/` 整目录提交推送到独立 wiki 内容 git 仓；默认 off，红线 R-8）。
+
+**归档 markdown section 结构**（去逐行材料清单）：
+
+- `# 📦 项目归档：{title}` —— 标题
+- `## 🏆 贡献者统计` —— `aggregate_contributor_totals` 用 union_all 把 lock 行 `delivered_qty`（按 claimant）+ progress 行 `contributed_qty`（按贡献者）合并按人聚合，`HAVING SUM > 0` 剔除零和，输出精确排行
+- `## 📊 贡献占比` —— 引用同目录 `![贡献占比](contributions.png)`（PNG 饼图）
+- `## 📅 时间线` —— 收集/施工/归档阶段时间戳
+- footer：`由 PCHSystem 自动生成`
 
 ---
 
