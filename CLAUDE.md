@@ -123,6 +123,7 @@ PCHSystem/
 | wiki-service | [`Docs/architecture/services/wiki-service.md`](./Docs/architecture/services/wiki-service.md) |
 | alert-service | [`Docs/architecture/services/alert-service.md`](./Docs/architecture/services/alert-service.md) |
 | notification-service | [`Docs/architecture/services/notification-service.md`](./Docs/architecture/services/notification-service.md) |
+| markdown-service | [`Docs/architecture/services/markdown-service.md`](./Docs/architecture/services/markdown-service.md) |
 
 > 各服务文档权威、完整；子服务目录下的 `CLAUDE.md` 只是其**雷点摘要 + 局部导航**，详情永远以上表文档为准。
 
@@ -169,6 +170,13 @@ PCHSystem/
 - [x] 通知体验修复（文案补清单名 / ack 防越权 body 加 `player_uuid` / 空列表按钮 / 默认轮询 2s 对齐）
 - [x] 三组件分别打 tag `backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`（首个真正打 git tag 的版本）
 
+**已完成（2026-07-03，sheet 升级为项目）**：
+- [x] 项目三阶段生命周期：迁移 `0009_sheets_lifecycle`（`sheets.sheets` 加 `status` collecting/constructing/archived + `archived_path`/`archived_at` + 双 CHECK `ck_sheets_status_*` + `ix_sheets_status`，可逆）
+- [x] 后端 `POST /sheets/{id}/advance?to=constructing|archived`（owner/admin，缺省按状态机推进；`to=archived` 走归档服务写盘+通知）+ `GET /sheets/{id}/archive`（返 `text/markdown`）+ `GET /sheets?status=collecting|constructing|archived|active` 过滤；archived 终态只读（repo `_assert_writable` 守卫 → 409）
+- [x] markdown_render Route C 抽象（`Backend/app/services/markdown_render/`：`SectionRenderer` Protocol + `TemplateSection`/`FunctionSection` frozen + `MarkdownDocument` 不可变 register+有序聚合；参考 PromptStore 风格但抛弃 template/dispatch/WILD_CARD/body-fallback，零依赖）+ 归档服务 `Backend/app/services/archive/`（渲染→原子写盘→DB+通知→commit，失败 cleanup+rollback）+ `aggregate_contributor_totals` 贡献者精确排行
+- [x] 三端 UI 适配：前端文案「表格」→「项目」+ SheetList tab 进行中/已归档 + SheetEditor 阶段横幅/流转按钮/archived 只读/归档 `<pre>` 预览；MCDR `!!PCH sheet advance <sheet_id> [constructing|archived]` + 阶段横幅 + owner footer 流转按钮 + 回执含归档路径
+- [x] 归档文件系统持久化：docker-compose backend 加 `ARCHIVE_ROOT=/app/archive` + `./Archive:/app/archive` volume；`.env.example` 加 `ARCHIVE_ROOT`/`MARKDOWN_FRAGMENTS_DIR`；`Archive/` 目录骨架（.gitkeep + .gitignore 忽略产物）
+
 **待处理**：
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
 - [ ] wiki.js 纳入 compose + GraphQL 单向同步（当前 compose 仅 postgres + backend）
@@ -176,4 +184,4 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-07-03（v0.3.0 发布：progress 多人贡献者 + deliver mode 分流 + 轮询；文档对齐修复——data-model 补 auth_tokens/jwt_revocations/notifications 三表 + sheets.md 补 PATCH /progress）*
+*最后更新：2026-07-03（sheet 升级为项目三阶段生命周期 + Markdown 归档：迁移 0009 + advance/archive 端点 + markdown_render Route C + !!PCH sheet advance + 三端 UI 适配）*
