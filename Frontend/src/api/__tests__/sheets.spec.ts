@@ -29,6 +29,8 @@ import {
   setRowProgress,
   releaseRow,
   rejectRow,
+  advanceSheet,
+  getSheetArchive,
 } from '../../api/sheets'
 
 const mocked = http as unknown as {
@@ -47,13 +49,16 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-// 新契约 fixture：SheetSummary/SheetDetail 含 owner_name；RowDetail 去掉 done_flag、
-// 含 mode/status/claimant_uuid/claimant_name/delivered_qty。
+// 新契约 fixture：SheetSummary/SheetDetail 含 owner_name + status/archived_path/archived_at；
+// RowDetail 去掉 done_flag、含 mode/status/claimant_uuid/claimant_name/delivered_qty。
 const sheetSummary = {
   id: 1,
   owner_uuid: 'u',
   owner_name: 'Steve',
   title: 't',
+  status: 'collecting',
+  archived_path: null,
+  archived_at: null,
   created_at: '',
   updated_at: '',
 }
@@ -80,10 +85,27 @@ describe('sheets API client', () => {
       expect(mocked.get).toHaveBeenCalledWith('/sheets', { params: undefined })
     })
 
-    it('owner=me 时带 query', async () => {
+    it('opts.owner=me 时带 owner query', async () => {
       mocked.get.mockResolvedValue({ data: [] })
-      await listSheets('me')
+      await listSheets({ owner: 'me' })
       expect(mocked.get).toHaveBeenCalledWith('/sheets', { params: { owner: 'me' } })
+    })
+
+    it('opts.status 过滤（active / collecting / constructing / archived）', async () => {
+      mocked.get.mockResolvedValue({ data: [] })
+      await listSheets({ status: 'active' })
+      expect(mocked.get).toHaveBeenCalledWith('/sheets', { params: { status: 'active' } })
+
+      await listSheets({ status: 'archived' })
+      expect(mocked.get).toHaveBeenLastCalledWith('/sheets', { params: { status: 'archived' } })
+    })
+
+    it('owner + status 可组合', async () => {
+      mocked.get.mockResolvedValue({ data: [] })
+      await listSheets({ owner: 'me', status: 'collecting' })
+      expect(mocked.get).toHaveBeenCalledWith('/sheets', {
+        params: { owner: 'me', status: 'collecting' },
+      })
     })
   })
 
@@ -252,6 +274,55 @@ describe('sheets API client', () => {
       const result = await rejectRow(1, 10)
       expect(mocked.post).toHaveBeenCalledWith('/sheets/1/rows/10/reject')
       expect(result).toEqual(reClaimed)
+    })
+  })
+
+  describe('advanceSheet', () => {
+    it('POST /sheets/{id}/advance 带 ?to= 时 query 携带 to', async () => {
+      const constructing = { ...sheetSummary, status: 'constructing', rows: [] }
+      mocked.post.mockResolvedValue({ data: constructing })
+      const result = await advanceSheet(1, 'constructing')
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/1/advance', undefined, {
+        params: { to: 'constructing' },
+      })
+      expect(result).toEqual(constructing)
+    })
+
+    it('省略 to 时 query 为 undefined（后端按状态机默认推进）', async () => {
+      const archived = {
+        ...sheetSummary,
+        status: 'archived',
+        archived_path: 'projects/1.md',
+        archived_at: '2026-07-03T00:00:00Z',
+        rows: [],
+      }
+      mocked.post.mockResolvedValue({ data: archived })
+      await advanceSheet(1)
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/1/advance', undefined, {
+        params: undefined,
+      })
+    })
+  })
+
+  describe('getSheetArchive', () => {
+    it('GET /sheets/{id}/archive 用 text 模式（responseType + transformResponse 防止 JSON 解析）', async () => {
+      mocked.get.mockResolvedValue({ data: '# 项目归档\n材料表...' })
+      const result = await getSheetArchive(1)
+      expect(mocked.get).toHaveBeenCalledWith('/sheets/1/archive', {
+        responseType: 'text',
+        transformResponse: expect.any(Function),
+      })
+      expect(result).toBe('# 项目归档\n材料表...')
+    })
+
+    it('transformResponse 原样返回响应体（不解析 JSON）', async () => {
+      mocked.get.mockResolvedValue({ data: '# raw md' })
+      await getSheetArchive(2)
+      const callArg = mocked.get.mock.calls[0][1] as {
+        transformResponse: (r: string) => string
+      }
+      const body = '# 标题\n- item: 64'
+      expect(callArg.transformResponse(body)).toBe(body)
     })
   })
 })
