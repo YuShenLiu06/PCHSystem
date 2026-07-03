@@ -61,7 +61,11 @@ docker attach pchsystem-mc-test-1
 
 ```bash
 docker compose up -d                                # 启动 postgres + backend（首次自动 build 镜像）
+```
+```bash
 docker compose up -d --build backend                # 改了 pyproject.toml 依赖后强制 rebuild 镜像
+```
+```bash
 docker compose down                                 # 停止并移除容器（postgres 数据保留在 pgdata volume）
 ```
 
