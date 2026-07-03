@@ -44,8 +44,8 @@
 | 前端 | Vue 3 + Element Plus + Vite + Pinia |
 | 数据库 | PostgreSQL（Alembic 迁移，唯一业务库） |
 | MC 层 | MCDReforged 插件（Fabric + Create + Carpet，**离线模式**） |
-| Wiki | wiki.js（后端经 GraphQL **单向同步**） |
-| 部署 | Docker Compose（postgres + backend；wiki.js 规划中，尚未纳入 compose） |
+| Wiki | wiki.js（经**独立 wiki 内容 git 仓双向同步**，非 GraphQL 单向；后端 publisher 默认 off，配置 `WIKI_GIT_*`） |
+| 部署 | Docker Compose（postgres + backend；wiki.js 独立部署、不入本仓 compose） |
 | 关键库 | [`litemapy`](https://github.com/SmylerMC/litemapy)（`.litematic` 投影解析，自带 `nbtlib`，**不自研**）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，**不自研**） |
 
 ---
@@ -61,7 +61,7 @@
 | **R-5** | **身份主锚 = Web 绑定账号**；MC UUID 为子身份（离线模式 UUID 由玩家名确定性推导，改名即换身份）。 | arch §2.1 |
 | **R-6** | **物品 id 统一 registry id**（`namespace:path`），存储前剥离 BlockState properties；block→item 归一化集中在 project-service。 | data-model §0 |
 | **R-7** | **MCDR 是纯游戏内客户端**：只做命令交互、箱子/背包扫描、UUID 推导、称号下发、HTTP 上报；**不做积分计算、不持久化业务数据、不做 wiki 同步**。 | mcdr-plugin §1 |
-| **R-8** | **wiki.js 单向接收**：由后端经 GraphQL 同步，**不回写**业务库。 | arch §2.1 |
+| **R-8** | **wiki.js 经 git 仓库双向同步（非 GraphQL 单向）**：后端把归档（`index.md` + `contributions.png`）提交推送到**独立 wiki 内容 git 仓**（默认 off，配置 `WIKI_GIT_*`；wiki.js 独立部署、不入本仓 compose）；wiki.js 与该远端双向同步渲染，拥有者获授权后可在 wiki.js 编辑自己的页面，改动经 git 回流、支持 PR 审查（host 层分支保护）。**PostgreSQL 业务库仍由后端独占（R-1 不变）—— wiki 是人类可读可编辑的投影，wiki 编辑绝不回写 sheets/score_ledger 等业务表。wiki git 仓 = wiki 内容权威源。** | arch §2.1 |
 | **R-9** | **前端权限仅可见性**：真实权限以**后端 RBAC 为准**，前端只控展示。 | frontend §4 |
 | **R-10** | **模块化单体**：部署单一 FastAPI 服务，内部按 schema 隔离（`users / projects / scoring / titles / wiki / alerts`），**不拆独立子服务**；跨表事务用单库事务。 | arch §2.2 |
 | **R-11** | **密钥不进代码库**：`POSTGRES_*`、`WIKI_API_KEY`、`MCDR_SERVICE_TOKEN`、`JWT_SECRET` 经 `.env` / docker secrets 注入。 | arch §4 |
@@ -123,6 +123,7 @@ PCHSystem/
 | wiki-service | [`Docs/architecture/services/wiki-service.md`](./Docs/architecture/services/wiki-service.md) |
 | alert-service | [`Docs/architecture/services/alert-service.md`](./Docs/architecture/services/alert-service.md) |
 | notification-service | [`Docs/architecture/services/notification-service.md`](./Docs/architecture/services/notification-service.md) |
+| markdown-service | [`Docs/architecture/services/markdown-service.md`](./Docs/architecture/services/markdown-service.md) |
 
 > 各服务文档权威、完整；子服务目录下的 `CLAUDE.md` 只是其**雷点摘要 + 局部导航**，详情永远以上表文档为准。
 
@@ -169,11 +170,18 @@ PCHSystem/
 - [x] 通知体验修复（文案补清单名 / ack 防越权 body 加 `player_uuid` / 空列表按钮 / 默认轮询 2s 对齐）
 - [x] 三组件分别打 tag `backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`（首个真正打 git tag 的版本）
 
+**已完成（2026-07-03，sheet 升级为项目）**：
+- [x] 项目三阶段生命周期：迁移 `0009_sheets_lifecycle`（`sheets.sheets` 加 `status` collecting/constructing/archived + `archived_path`/`archived_at` + 双 CHECK `ck_sheets_status_*` + `ix_sheets_status`，可逆）
+- [x] 后端 `POST /sheets/{id}/advance?to=constructing|archived`（owner/admin，缺省按状态机推进；`to=archived` 走归档服务写盘+通知）+ `GET /sheets/{id}/archive`（返 `text/markdown`）+ `GET /sheets?status=collecting|constructing|archived|active` 过滤；archived 终态只读（repo `_assert_writable` 守卫 → 409）
+- [x] markdown_render Route C 抽象（`Backend/app/services/markdown_render/`：`SectionRenderer` Protocol + `TemplateSection`/`FunctionSection` frozen + `MarkdownDocument` 不可变 register+有序聚合；参考 PromptStore 风格但抛弃 template/dispatch/WILD_CARD/body-fallback，零依赖）+ 归档服务 `Backend/app/services/archive/`（渲染→原子写盘→DB+通知→commit，失败 cleanup+rollback）+ `aggregate_contributor_totals` 贡献者精确排行
+- [x] 三端 UI 适配：前端文案「表格」→「项目」+ SheetList tab 进行中/已归档 + SheetEditor 阶段横幅/流转按钮/archived 只读/归档 `<pre>` 预览；MCDR `!!PCH sheet advance <sheet_id> [constructing|archived]` + 阶段横幅 + owner footer 流转按钮 + 回执含归档路径
+- [x] 归档文件系统持久化：docker-compose backend 加 `ARCHIVE_ROOT=/app/archive` + `./Archive:/app/archive` volume；`.env.example` 加 `ARCHIVE_ROOT`/`MARKDOWN_FRAGMENTS_DIR`；`Archive/` 目录骨架（.gitkeep + .gitignore 忽略产物）
+
 **待处理**：
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
-- [ ] wiki.js 纳入 compose + GraphQL 单向同步（当前 compose 仅 postgres + backend）
+- [ ] wiki.js 纳入部署 + wiki 内容 git 仓 host 选型（GitHub/Gitea/GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）
 - [ ] 拍板待确认参数（积分 `k / α / β / r`、赛季周期等，见 arch §9）
 
 ---
 
-*最后更新：2026-07-03（v0.3.0 发布：progress 多人贡献者 + deliver mode 分流 + 轮询；文档对齐修复——data-model 补 auth_tokens/jwt_revocations/notifications 三表 + sheets.md 补 PATCH /progress）*
+*最后更新：2026-07-03（R-8 重写为 wiki.js git 双向同步 + 归档产物升级：贡献者聚合含 lock、去材料清单、每项目独立文件夹、matplotlib 贡献占比饼图、asset 端点 + wiki git publisher；详见各服务文档）*

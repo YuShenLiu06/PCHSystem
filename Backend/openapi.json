@@ -284,6 +284,24 @@
             "description": "过滤：传 me 只看自己"
           },
           {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "阶段过滤：collecting / constructing / archived / active（=collecting+constructing）",
+              "title": "Status"
+            },
+            "description": "阶段过滤：collecting / constructing / archived / active（=collecting+constructing）"
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -1606,6 +1624,204 @@
         }
       }
     },
+    "/sheets/{sheet_id}/advance": {
+      "post": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Advance Sheet Phase",
+        "description": "项目阶段流转（owner/admin）。\n\n- ``to=constructing``：collecting → constructing（repo advance_sheet，api 层 commit）。\n- ``to=archived``：collecting/constructing → archived（走 archive_service：写盘 +\n  通知 + 内部 commit）。允许 collecting 直跳跳过施工。\n- ``to`` 缺省：按当前状态推进下一态（collecting→constructing，constructing→archived）。\n- archived 终态：任何 advance → 409（只读）；非 owner/admin → 403。\n\n事务边界：constructing 路径在 api 层 commit；archived 路径由 archive_sheet 内部 commit。",
+        "operationId": "advance_sheet_phase_sheets__sheet_id__advance_post",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "目标阶段：constructing / archived；缺省按状态机推进",
+              "title": "To"
+            },
+            "description": "目标阶段：constructing / archived；缺省按状态机推进"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sheets/{sheet_id}/archive": {
+      "get": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Get Sheet Archive",
+        "description": "读归档 markdown（text/markdown）。未归档 / 文件缺失 → 404。",
+        "operationId": "get_sheet_archive_sheets__sheet_id__archive_get",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/parsing/litematic": {
       "post": {
         "tags": [
@@ -2508,6 +2724,33 @@
             "type": "string",
             "title": "Title"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "archived_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived Path"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -2532,6 +2775,7 @@
           "owner_uuid",
           "owner_name",
           "title",
+          "status",
           "created_at",
           "updated_at",
           "rows"
@@ -2631,6 +2875,33 @@
             "type": "string",
             "title": "Title"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "archived_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived Path"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -2648,6 +2919,7 @@
           "owner_uuid",
           "owner_name",
           "title",
+          "status",
           "created_at",
           "updated_at"
         ],

@@ -119,6 +119,24 @@ def delete_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int) -> Sheet
     return _request(cfg, "DELETE", f"/sheets/{sheet_id}", player_uuid)
 
 
+def advance_sheet(
+    cfg: HtcmcAuthConfig,
+    player_uuid: str,
+    sheet_id: int,
+    to: Optional[str] = None,
+) -> SheetOutcome:
+    """POST /sheets/{sheet_id}/advance[?to=<constructing|archived>] → SheetDetail。
+
+    owner/admin 触发阶段流转（后端 RBAC；非 owner → 403）。
+    to=None 时不带 query，按后端状态机默认推进下一态
+    （collecting→constructing，constructing→archived）。
+    成功返回 SheetDetail dict（含 status/archived_path/archived_at）。
+    错误：400 非法 to / 403 非 owner / 404 / 409 已 archived 或非法转移 / 503 archive 未配置。
+    """
+    params = {"to": to} if to else None
+    return _request(cfg, "POST", f"/sheets/{sheet_id}/advance", player_uuid, params=params)
+
+
 # === sheets 行级 ===
 
 def upsert_row(

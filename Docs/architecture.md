@@ -40,7 +40,12 @@ flowchart LR
     subgraph DC["后端（Docker Compose）"]
         API["FastAPI 后端<br/>（模块化单体）"]
         DB[("PostgreSQL")]
-        WIKI["wiki.js"]
+    end
+
+    subgraph WikiDC["wiki.js（独立部署，不入本仓 compose）"]
+        WIKI["wiki.js<br/>渲染/编辑"]
+        WIKIREPO[("wiki 内容 git 仓<br/>（权威源）")]
+        WIKI <-.->|双向同步 git| WIKIREPO
     end
 
     subgraph User["用户侧"]
@@ -53,14 +58,14 @@ flowchart LR
     P -->|游戏内命令 !!xx| MCDR
     P --> WEB
     API --> DB
-    API -->|GraphQL + API Key| WIKI
+    API -.->|git push（默认 off，best-effort）<br/>归档 index.md + contributions.png| WIKIREPO
 ```
 
 **核心约束**：
 
 - **数据唯一拥有者**：所有业务数据集中在 **PostgreSQL**，由 **FastAPI 后端独占**读写。MCDR 插件**不直连数据库**，仅通过 HTTP API 与后端交互。
 - **MCDR 是纯游戏内客户端**：只负责命令交互、箱子/背包扫描、称号下发、HTTP 上报。写后端时经 `X-Service-Token` + `X-Player-UUID` 头**代玩家调用**（与 JWT 等价，复用 RBAC，详见 [`services/notification-service.md`](./architecture/services/notification-service.md) 与 [`api/sheets.md`](./architecture/api/sheets.md) §2）。
-- **wiki.js 只接收**：由后端通过 GraphQL **单向同步**归档与用户组，不回写业务库。
+- **wiki.js 经 git 仓库双向同步**：后端把归档（`index.md` + `contributions.png`）提交推送到**独立 wiki 内容 git 仓**（默认 off，配置 `WIKI_GIT_*`）；wiki.js 与该远端双向同步渲染，拥有者获授权后可在 wiki.js 编辑自己的页面，改动经 git 回流、支持 PR 审查。**wiki 是人类可读可编辑的投影，绝不回写 `sheets` / `score_ledger` 等业务表**（R-1 不变）；wiki git 仓 = wiki 内容权威源。详见 [`services/wiki-service.md`](./architecture/services/wiki-service.md)。
 - **离线身份锚**：因离线模式 UUID 由玩家名确定性推导，**以「Web 绑定账号」为身份主锚**，MC UUID 为子身份（见 [`services/user-service.md`](./architecture/services/user-service.md)）。
 
 ### 2.2 后端架构粒度：模块化单体（Modular Monolith）
@@ -87,9 +92,10 @@ flowchart LR
 | MC 服务端 | Fabric + Create + Carpet | CSV 材质清单印证 Create 模组 |
 | MC 层 | **MCDReforged 插件** | 仅游戏内交互 + HTTP 客户端 |
 | 材料清单解析 | **直接解析 `.litematic`**（[`litemapy`](https://github.com/Spindust/litemapy)） | 直拿 registry id，根治 CSV 显示名不匹配 |
-| 部署 | **Docker Compose** | 后端+PG+wiki.js 容器化 |
+| 部署 | **Docker Compose**（后端+PG）+ wiki.js **独立部署** | 后端+PG 容器化；wiki.js 经独立 wiki 内容 git 仓双向同步（R-8） |
 | 验证模式 | 离线模式 | OfflinePlayer UUID + [`offline-whitelist`](https://github.com/skuzow/offline-whitelist) |
 | 称号前缀 | scoreboard team prefix + [Title Prefix Handler](https://mcdreforged.com/zh-CN/plugin/title_prefix_handler) | 复用现成 handler 修正前缀对解析的干扰 |
+| wiki 同步 | **wiki 内容 git 仓双向**（非 GraphQL 单向） | 后端 publisher 默认 off；wiki.js 独立部署、与 git 远端双向同步，支持 PR 审查 |
 | 告警 | Notifier 抽象接口，首期「游戏内 + 后台日志」 | 预留 QQ/Discord webhook |
 
 ### 3.1 关键技术可行性结论（均经调研验证，非想当然）
@@ -103,10 +109,8 @@ flowchart LR
 | MC UUID（离线） | ✅ 低 | `MD5("OfflinePlayer:"+name)` → v3 UUID，确定性可推导 |
 | MCDR 外联 HTTP | ✅ 低 | `requests`/`aiohttp` + `schedule_task` + 异步事件监听 |
 | `.litematic` 解析 | ✅ 低-中 | [`litemapy`](https://github.com/Spindust/litemapy) `Schematic.load` → `block.blockid` |
-| wiki.js 页面 CRUD | ✅ 低 | GraphQL `pages.create/update/delete` |
-| wiki.js 用户组 | ✅ 低 | `groups.assignUser/unassignUser` |
-| wiki.js 编辑权限授权 | ✅ 中 | `groups.update(pageRules)`，`match:START` + `roles:["write:pages"]` |
-| wiki.js 建用户 | ✅ 低 | `users.create(providerKey:"local")`，可选 OIDC/SSO |
+| wiki.js 同步归档 | ✅ 中 | 后端把 `projects/<id>/`（`index.md` + `contributions.png`）subprocess git commit + push 到独立 wiki 内容 git 仓；wiki.js 与该远端双向同步（R-8 重写后改 git，废弃原 GraphQL 单向方案） |
+| wiki.js 编辑权限授权 | ✅ 中 | host 层 git 分支保护 + PR；wiki.js 侧 Page Rules（`groups.update(pageRules)`，`match:START` + `roles:["write:pages"]`）按需补充（待部署后验证） |
 
 ---
 
@@ -122,18 +126,23 @@ flowchart TB
         MCDR --- RCON
     end
 
-    subgraph Compose["docker-compose"]
+    subgraph Compose["docker-compose（本仓）"]
         direction TB
         C_API["backend (FastAPI:uvicorn)<br/>:8000"]
         C_DB["postgres:16<br/>:5432 → 仅内部"]
-        C_WIKI["wiki.js<br/>:3000"]
         C_API --> C_DB
-        C_API --> C_WIKI
+    end
+
+    subgraph WikiSide["wiki.js（独立部署，不在本仓 compose）"]
+        C_WIKI["wiki.js<br/>渲染/编辑"]
+        WIKIREPO2[("wiki 内容 git 仓<br/>（GitHub/Gitea/GitLab，未决）")]
+        C_WIKI <-.->|双向同步| WIKIREPO2
     end
 
     MCDR -->|http://host.docker.internal:8000| C_API
     WEB["浏览器"] -->|:8000| C_API
-    ADMIN["管理员"] -->|:3000| C_WIKI
+    C_API -.->|git push（默认 off）<br/>projects/&lt;id&gt;/| WIKIREPO2
+    ADMIN["管理员 / 拥有者"] -->|:3000 编辑/PR| C_WIKI
 ```
 
 **服务清单**：
@@ -142,10 +151,10 @@ flowchart TB
 |---|---|---|---|
 | `backend` | FastAPI + uvicorn | 8000 | 模块化单体后端 |
 | `postgres` | postgres:16 | 5432（内部） | 唯一业务数据库 |
-| `wiki.js` | requarks/wiki | 3000 | 归档与荣誉展示 |
+| `wiki.js` | requarks/wiki | 3000 | **独立部署**（不入本仓 compose），经独立 wiki 内容 git 仓与后端 publisher 双向同步（R-8） |
 | MCDR + MC | 宿主进程 | — | 不容器化，与游戏端同生命周期 |
 
-**密钥与环境**：`POSTGRES_*`、`WIKI_API_KEY`、`MCDR_SERVICE_TOKEN`（MCDR↔后端双向鉴权）、`JWT_SECRET` 等通过 `.env` / docker secrets 注入，**不进代码库**。
+**密钥与环境**：`POSTGRES_*`、`WIKI_GIT_*`（`WIKI_GIT_REMOTE_URL` / `WIKI_GIT_BRANCH` / `WIKI_GIT_TOKEN` / `WIKI_GIT_AUTHOR_NAME` / `WIKI_GIT_AUTHOR_EMAIL`，留空 `REMOTE_URL` = 不推送）、`MCDR_SERVICE_TOKEN`（MCDR↔后端双向鉴权）、`JWT_SECRET` 等通过 `.env` / docker secrets 注入，**不进代码库**。
 
 > 待确认：是否最终容器化 MC 服务端（首版建议宿主跑，避免 Fabric mod 挂载复杂度）。
 
@@ -160,7 +169,7 @@ flowchart LR
     PROJ["project-service<br/>项目+材料清单"]
     SCORE["scoring-service<br/>积分引擎"]
     TITLE["title-service<br/>称号"]
-    WIKI["wiki-service<br/>wiki.js 同步"]
+    WIKI["wiki-service<br/>git 仓 publisher + wiki.js 同步"]
     ALERT["alert-service<br/>风控告警"]
     NOTIFY["notification-service<br/>统一通知"]
     FRONT["frontend<br/>Vue 后台"]
@@ -190,7 +199,7 @@ flowchart LR
 | **project-service** | 项目生命周期 + `.litematic` 解析 + 材料清单 | [`services/project-service.md`](./architecture/services/project-service.md) |
 | **scoring-service** | 提交入库 + 放置贡献 + 黄皮子积分引擎 | [`services/scoring-service.md`](./architecture/services/scoring-service.md) |
 | **title-service** | 指数称号体系 + scoreboard 前缀下发 | [`services/title-service.md`](./architecture/services/title-service.md) |
-| **wiki-service** | GraphQL 同步归档 + 用户组 + Page Rules 授权 | [`services/wiki-service.md`](./architecture/services/wiki-service.md) |
+| **wiki-service** | wiki 内容 git 仓 publisher（默认 off，best-effort）+ wiki.js 双向同步 + 拥有者编辑权限模型 | [`services/wiki-service.md`](./architecture/services/wiki-service.md) |
 | **alert-service** | 异常检测 + Notifier 抽象（游戏内/后台/QQ webhook） | [`services/alert-service.md`](./architecture/services/alert-service.md) |
 | **notification-service** | 业务事件 → 给特定玩家记通知 → 落库与投递（可复用契约） | [`services/notification-service.md`](./architecture/services/notification-service.md) |
 | **frontend** | Vue3 后台管理界面 | [`frontend.md`](./architecture/frontend.md) |
@@ -272,7 +281,7 @@ sequenceDiagram
 
 ### 7.4 项目完结 → 归档同步
 
-`project-service` 标记完结 → `scoring-service` 终算（占比/加权/负责人 k 增发）→ `wiki-service` 写归档页 + 名人堂 + 回收负责人 wiki 编辑权。
+`project-service` 标记完结 → `scoring-service` 终算（占比/加权/负责人 k 增发）→ `archive` 服务渲染 `index.md` + `contributions.png` 原子落盘到 `ARCHIVE_ROOT/projects/<id>/` + DB 置 archived 三字段 → `wiki-service` 的 **git publisher**（默认 off，best-effort）把 `projects/<id>/` 整目录 `git commit + push` 到独立 wiki 内容 git 仓（失败仅 `notify(category="wiki_publish_failed")`，不抛、不回滚 DB，业务库完整）→ wiki.js 与该远端双向同步渲染；拥有者获授权后可在 wiki.js 编辑，改动经 git 回流、可走 PR 审查。
 
 ### 7.5 sheets 协作（Web ↔ MC 对等 + 通知流转）
 
@@ -325,7 +334,9 @@ sequenceDiagram
 | SNBT 解析自研工作量大 | 扫描不准/开发延期 | 中 | 引入 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)，不自研 |
 | 离线改名 = 换身份 | 历史积分丢失 | 中 | Web 账号作身份锚 + 「改名过户」运维流程 |
 | 物品 block↔item 归一化边界 | 清单与提交对不上 | 中 | 维护无物品黑名单 + 去 properties，集中在 `project-service` |
-| wiki.js Page Rules 优先级绕 | 授权不准 | 中 | 全局权限先开 + Deny/Allow 测试用例验证 |
+| wiki.js Page Rules 优先级绕 | 授权不准 | 中 | 主路径靠 host git 分支保护 + PR；wiki.js 侧 Page Rules 按需补充 + Deny/Allow 测试用例验证 |
+| wiki git publisher 推送失败 | wiki 内容滞后于业务库 | 低-中 | publisher best-effort：失败仅 `notify(category="wiki_publish_failed")`，不回滚 DB；可重试推送，业务库完整（R-1 不变） |
+| Gitea↔wiki.js 同步偶发不稳 | wiki 页面渲染过期 | 中 | 选 GitHub/GitLab 时无此问题；Gitea 部署需在 wiki.js 用「Purge Local Repository」强制重拉（host 选型未决） |
 | RCON 性能（批量扫描） | 卡顿/超时 | 低 | 多箱扫描串行 + 限频 + 超时熔断 |
 | 「扫描成功但上报失败」后清箱 | 材料丢失 | 中 | **先上报成功再清箱**；失败不清箱 + 玩家可重试 |
 | wiki.js API Key 权限过大 | 安全风险 | 低 | 专用 Key + 定期轮换 + 仅内网可达 |

@@ -26,7 +26,7 @@
 | `!!score` / `!!rank [分类]` | user | 个人积分 / 榜单（总/赛季/分类） |
 | `!!title list` / `!!title set <称号>` | user | 已解锁称号 / 切换展示称号 |
 | `!!PCH login` | user | 申请登录链接（已落地） |
-| `!!PCH sheet …` | user / owner | sheets 全套（list/view/create/rename/delete/add/set/delrow/claim/deliver/done/release/reject/notify list），详见 [`api/sheets.md`](../api/sheets.md) §11 |
+| `!!PCH sheet …` | user / owner | sheets 全套（list/view/create/rename/delete/add/set/delrow/claim/deliver/done/release/reject/notify list），详见 [`api/sheets.md`](../api/sheets.md) §11。**设计待办**（§3.7.1）：主节点拟改 `!!PCH project`、文案改「项目」，迁移期双注册 |
 
 ## 3. 内部实现要点
 
@@ -133,6 +133,32 @@ def _do_claim(server, player, sheet_id, row_id):
 - 权限文案在 help 里说明；真实 RBAC 以后端 403/409 为准（R-9）。
 - 新增模块：`htcmc_auth/sheet_client.py`（HTTP + 哨兵）、`htcmc_auth/sheet_commands.py`（`@new_thread` + `server.tell` 回执）、`htcmc_auth/notifier.py`（通知轮询）。
 
+### 3.7.1 项目语义对齐设计（⚠️ 仅设计，本期不实现）
+
+> 与 [`api/sheets.md`](../api/sheets.md) §13「设计待办」对应。Web 端文案已统一「表格 → 项目」，MCDR 端尚未对齐——本节是 Phase D 的设计记录，落地由主工程师另行实现。
+
+**现状（不对齐）**：
+
+- MCDR 主命令仍是 `!!PCH sheet …`，回执/help 文案大量用「表格 / 表」，与 sheets「sheet = 项目」语义脱节（[`api/sheets.md`](../api/sheets.md) §1 术语演进）。
+- `!!PCH project` 已被占用为 `_not_impl` 占位节点（占坑未实现），与「sheet 升级为项目」后的语义命令名正面冲突。
+
+**提议（迁移期设计）**：
+
+| 项 | 现状 | 提议 |
+|---|---|---|
+| 主命令节点 | `!!PCH sheet …` | 主节点改 `!!PCH project …`（别名 `proj`），下接现有 sheet 子命令树（list/view/create/add/set/delrow/claim/deliver/done/contribute/release/reject/advance/notify） |
+| 占位节点 | `!!PCH project` = `_not_impl` | **删占位**（被新主节点复用，语义自然收敛） |
+| 文案 | 「表格 / 表」 | 统一改「项目」（help / 回执 / 阶段横幅） |
+| 兼容期 | — | **双注册**：迁移期 `sheet` + `project` 两个 Literal 挂同一套子命令树，玩家两种写法都生效；稳定后再评估下线 `sheet` |
+| 归档节点 | `!!PCH sheet advance <id> [constructing\|archived]` 已存在 | 节点名对齐 → `!!PCH project advance <id> [constructing\|archived]`（HTTP `/sheets/{id}/advance` URL 不变，YAGNI） |
+
+**风险与约束**：
+
+- **双注册期命令重复**：help 文案需说明「`sheet` / `project` 等价、`project` 为新名」；help 列表会有两条入口（容忍）。
+- **worktree 改动不被 reload 看到**：在 worktree 改 `.py` 不会被运行中的 MCDR reload 看到，须先同步到主仓路径再 `!!MCDR reload` 测试（项目已知坑）。
+- **S-1 联网验证**：节点树重构（`Literal` 别名 / 子树复用）实现前必须查 [MCDR 官方文档](https://docs.mcdreforged.com/zh-cn/latest/) 核实 API 签名（根红线 S-1，禁止凭记忆臆造）。
+- **API 契约不变**：URL 仍是 `/sheets/*`，MCDR 改的只是游戏内命令名与文案，后端零改动。
+
 ### 3.8 通知轮询（投递候选池）
 
 后端 notification-service 把通知落库（[`notification-service.md`](./notification-service.md)），MCDR 负责拉取 + 投递 + ack + 离线补推：
@@ -180,5 +206,7 @@ def _do_claim(server, player, sheet_id, row_id):
 | 阻塞 HTTP 误用 `schedule_task` | 卡住 MCDR 主循环（RS-6） | 全部走 `@new_thread`；详见 §3.6 |
 | 通知轮询延迟 | 默认 2s 周期 | 可调 `notify_poll_interval_seconds`；紧急叠加 webhook（预留） |
 | 离线通知补推 | 离线堆积 | 上线 `on_player_joined` 立即拉取 + 分页 |
+| worktree 改动不被 reload 看到 | 改 `.py` 后 reload 无效 | 须先同步到主仓路径再 `!!MCDR reload` 测试（项目已知坑） |
+| 命令名迁移期重复 | `sheet` + `project` 双注册 help 重复 | 迁移期容忍；文案说明「project 为新名」；稳定后评估下线 `sheet`（§3.7.1 仅设计） |
 
 > 待确认：服务端 RCON 已启用且端口/密码配置；Carpet 是否影响 `/data get block` 输出格式。
