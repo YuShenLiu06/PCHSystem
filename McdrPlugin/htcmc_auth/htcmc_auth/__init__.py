@@ -20,6 +20,7 @@ from .sheet_commands import (
     _sheet_claim,
     _sheet_deliver,
     _sheet_done,
+    _sheet_progress,
     _sheet_release,
     _sheet_reject,
     _sheet_notify_list,
@@ -182,6 +183,13 @@ def _register_commands(server: PluginServerInterface):
             .then(
                 Literal("done")
                 .then(Integer("sheet_id").then(Integer("row_id").runs(_sheet_done)))
+            )
+            .then(
+                Literal("progress")
+                .then(
+                    Integer("sheet_id")
+                    .then(Integer("row_id").then(Integer("delivered_qty").runs(_sheet_progress)))
+                )
             )
             .then(
                 Literal("release")

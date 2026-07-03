@@ -131,6 +131,43 @@ class ViewPermissionTest(unittest.TestCase):
         cmds = _all_click_values(told[0])
         self.assertTrue(any("reject" in c for c in cmds), cmds)
 
+    def test_owner_progress_row_sees_adjust_button(self):
+        # owner 查看 progress 行：应出现 [调整进度]/progress 命令（绝对值覆写，owner 专用）
+        src, told = _make_src_server(player="玩家A")
+        detail = self._detail_with_done_row(
+            "claimed", 1, claimant_uuid=None, claimant_name=None, owner_name="玩家A",
+        )
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 7})
+        msg = str(told[0])
+        self.assertIn("[调整进度]", msg)
+        cmds = _all_click_values(told[0])
+        self.assertTrue(any("progress" in c for c in cmds), cmds)
+
+    def test_non_owner_progress_row_no_adjust_button(self):
+        # 非 owner 查看 progress 行：无 [调整进度]（真实权限以后端 403 为准，R-9）
+        src, told = _make_src_server(player="玩家A")
+        detail = self._detail_with_done_row(
+            "claimed", 1, claimant_uuid=None, claimant_name=None, owner_name="别人",
+        )
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 7})
+        msg = str(told[0])
+        self.assertNotIn("[调整进度]", msg)
+        cmds = _all_click_values(told[0])
+        self.assertFalse(any("progress" in c for c in cmds), cmds)
+
+    def test_owner_lock_row_no_adjust_button(self):
+        # owner 查看 lock 行：无 [调整进度]（progress 专用，lock 用 delivery）
+        src, told = _make_src_server(player="玩家A")
+        detail = self._detail_with_done_row(
+            "claimed", 0, claimant_uuid=None, claimant_name=None, owner_name="玩家A",
+        )
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 7})
+        cmds = _all_click_values(told[0])
+        self.assertFalse(any("progress" in c for c in cmds), cmds)
+
 
 if __name__ == "__main__":
     unittest.main()

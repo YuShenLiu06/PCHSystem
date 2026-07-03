@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.jwt import create_access_token
 from app.models.user import Player
+from app.services import notification_service
 
 
 @pytest.fixture(autouse=True)
@@ -828,3 +829,92 @@ async def test_progress_detail_includes_contributors_field(client):
     assert rows[rid_p]["contributors"][0]["player_name"] == "bob"
     # lock 行 contributors 为空数组
     assert rows[rid_l]["contributors"] == []
+
+
+# ---------- progress 贡献者通知：owner 写操作 → 通知贡献者 ----------
+async def _pending_categories(player_uuid: uuid.UUID) -> list[str]:
+    """查某玩家未投递通知的 category 列表。"""
+    async with async_session_factory() as s:
+        pending = await notification_service.fetch_pending(s, player_uuid)
+    return [p.category for p in pending]
+
+
+@pytest.mark.asyncio
+async def test_release_progress_notifies_contributors(client):
+    """owner release progress 行（有贡献者）→ 每位贡献者收 sheet_progress_reset；owner 自己无。"""
+    owner_uuid, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    carol_uuid, bearer_carol = await _make_player("carol")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 10, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 3)
+    await _contribute(client, bearer_carol, sid, rid, 4)
+
+    resp = await client.post(f"/sheets/{sid}/rows/{rid}/release", headers=_auth(bearer_owner))
+    assert resp.status_code == 200
+
+    assert (await _pending_categories(bob_uuid)).count("sheet_progress_reset") == 1
+    assert (await _pending_categories(carol_uuid)).count("sheet_progress_reset") == 1
+    # owner 是 actor，_notify 自动跳过（不发自己）
+    assert "sheet_progress_reset" not in (await _pending_categories(owner_uuid))
+
+
+@pytest.mark.asyncio
+async def test_set_progress_notifies_contributors_on_change(client):
+    """owner PATCH /progress 改值 → 贡献者收 sheet_progress_changed（payload old/new/need）。"""
+    _, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 100, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 10)  # delivered=10
+
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 30},
+        headers=_auth(bearer_owner),
+    )
+    assert resp.status_code == 200
+
+    async with async_session_factory() as s:
+        pending = await notification_service.fetch_pending(s, bob_uuid)
+    changed = [p for p in pending if p.category == "sheet_progress_changed"]
+    assert len(changed) == 1
+    assert changed[0].payload["old"] == 10
+    assert changed[0].payload["new"] == 30
+    assert changed[0].payload["need"] == 100
+
+
+@pytest.mark.asyncio
+async def test_set_progress_no_notify_on_same_value(client):
+    """owner PATCH 同值 → 贡献者无 sheet_progress_changed（变化守卫，避免噪音）。"""
+    _, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 100, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 10)  # delivered=10
+
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 10},  # 同值
+        headers=_auth(bearer_owner),
+    )
+    assert resp.status_code == 200
+    assert "sheet_progress_changed" not in (await _pending_categories(bob_uuid))
+
+
+@pytest.mark.asyncio
+async def test_upsert_progress_to_lock_notifies_contributors(client):
+    """owner upsert 把 progress 行改 mode=lock → 清贡献者，贡献者收 sheet_progress_reset。"""
+    _, bearer_owner = await _make_player("alice")
+    bob_uuid, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_owner))).json()["id"]
+    rid = (await _upsert_row(client, bearer_owner, sid, "iron", 100, mode=1))["id"]
+    await _contribute(client, bearer_bob, sid, rid, 10)
+
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "iron", "need_qty": 100, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer_owner),
+    )
+    assert resp.status_code == 200
+    assert "sheet_progress_reset" in (await _pending_categories(bob_uuid))

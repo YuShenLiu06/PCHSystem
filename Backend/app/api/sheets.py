@@ -337,7 +337,13 @@ async def upsert_row(
     prev_row = await sheet_repo.get_row_by_item(session, sheet_id, body.item_name)
     old_need = prev_row.need_qty if prev_row is not None else None
     claimant_uuid = prev_row.claimant_uuid if prev_row is not None else None
+    prev_mode = prev_row.mode if prev_row is not None else None
     mode_changed = prev_row is not None and prev_row.mode != body.mode
+    # mode 从 progress 变走时，repo upsert 会 clear_contributors，必须预取名单用于通知
+    progress_contributors: list[tuple[uuid.UUID, str]] = []
+    if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
+        _contrib_map = await sheet_repo.list_contributors(session, [prev_row.id])
+        progress_contributors = _contrib_map.get(prev_row.id, [])
     try:
         row = await sheet_repo.upsert_row(
             session,
@@ -363,6 +369,23 @@ async def upsert_row(
                     "item_name": body.item_name,
                 },
             )
+        if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
+            # progress→lock：repo 已清空贡献者，通知每位贡献者贡献已被重置
+            for contrib_uuid, _cname in progress_contributors:
+                await _notify(
+                    session,
+                    recipient_uuid=contrib_uuid,
+                    actor=player,
+                    category="sheet_progress_reset",
+                    title="贡献已被拥有者清空",
+                    body=f"拥有者调整了 [{body.item_name}] 的模式，进度与贡献已重置",
+                    payload={
+                        "sheet_id": sheet_id,
+                        "sheet_title": sheet.title,
+                        "row_id": row.id,
+                        "item_name": body.item_name,
+                    },
+                )
         elif (
             not mode_changed
             and claimant_uuid is not None
@@ -563,9 +586,15 @@ async def release_row(
     # 必须先存不可变快照，通知时引用快照值。
     prev_claimant = old_row.claimant_uuid
     prev_item = old_row.item_name
+    prev_mode = old_row.mode
     is_claimant_self = prev_claimant == player.uuid
     if not is_claimant_self and not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    # progress 行：repo release 会 clear_contributors，必须在 repo 调用前预取名单
+    progress_contributors: list[tuple[uuid.UUID, str]] = []
+    if prev_mode == sheet_repo.MODE_PROGRESS:
+        _contrib_map = await sheet_repo.list_contributors(session, [old_row.id])
+        progress_contributors = _contrib_map.get(old_row.id, [])
     try:
         row = await sheet_repo.release_row(session, sheet_id, row_id)
         if row is not None and prev_claimant is not None:
@@ -594,6 +623,23 @@ async def release_row(
                     category="sheet_released",
                     title="锁定已被拥有者解除",
                     body=f"拥有者解除了你对 [{prev_item}] 的锁定",
+                    payload={
+                        "sheet_id": sheet_id,
+                        "sheet_title": sheet.title,
+                        "row_id": row_id,
+                        "item_name": prev_item,
+                    },
+                )
+        # progress 行：owner 解除会清空贡献者，通知每位贡献者（actor==recipient 自动跳过）
+        if row is not None and prev_mode == sheet_repo.MODE_PROGRESS:
+            for contrib_uuid, _cname in progress_contributors:
+                await _notify(
+                    session,
+                    recipient_uuid=contrib_uuid,
+                    actor=player,
+                    category="sheet_progress_reset",
+                    title="贡献已被拥有者清空",
+                    body=f"拥有者解除了 [{prev_item}] 的进度行，你的贡献已清空",
                     payload={
                         "sheet_id": sheet_id,
                         "sheet_title": sheet.title,
@@ -745,6 +791,19 @@ async def set_row_progress(
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    current = await sheet_repo.get_row(session, sheet_id, row_id)
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    old_row = current[0]
+    if old_row.mode != sheet_repo.MODE_PROGRESS:
+        # lock 行用 /delivery；提前 409（repo mode 守卫同样会抛，这里更早失败）
+        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict")
+    old_delivered = old_row.delivered_qty
+    prev_item = old_row.item_name
+    # repo set_row_progress 不动 contributors，提前快照用于通知（与 release 一致）
+    contrib_snapshot: list[tuple[uuid.UUID, str]] = (
+        (await sheet_repo.list_contributors(session, [old_row.id])).get(old_row.id, [])
+    )
     try:
         row = await sheet_repo.set_row_progress(
             session, sheet_id, row_id, body.delivered_qty
@@ -771,6 +830,30 @@ async def set_row_progress(
                     "need": row.need_qty,
                 },
             )
+            # 通知每位贡献者进度被调整（actor==recipient 自动跳过；
+            # 同值不通知，避免 owner 误操作产生噪音）
+            if body.delivered_qty != old_delivered:
+                for contrib_uuid, _cname in contrib_snapshot:
+                    await _notify(
+                        session,
+                        recipient_uuid=contrib_uuid,
+                        actor=player,
+                        category="sheet_progress_changed",
+                        title="进度已被拥有者调整",
+                        body=(
+                            f"拥有者将 [{prev_item}] 的进度调整为 "
+                            f"{body.delivered_qty}/{row.need_qty}（原 {old_delivered}）"
+                        ),
+                        payload={
+                            "sheet_id": sheet_id,
+                            "sheet_title": sheet.title,
+                            "row_id": row_id,
+                            "item_name": prev_item,
+                            "old": old_delivered,
+                            "new": body.delivered_qty,
+                            "need": row.need_qty,
+                        },
+                    )
         await session.commit()
     except SheetRowConflict as exc:
         await session.rollback()

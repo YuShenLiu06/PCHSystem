@@ -74,7 +74,7 @@ async def claim(sheet_id, row_id, player, session):
 
 ## 3. `category` 枚举注册表
 
-### 3.1 首期（sheets 专用，7 类）
+### 3.1 首期（sheets 专用，9 类）
 
 | category | 触发端点 | 接收者 | 文案要点 |
 |---|---|---|---|
@@ -82,10 +82,12 @@ async def claim(sheet_id, row_id, player, session):
 | `sheet_delivered` | `PATCH .../delivery`（未满） | **拥有者** | 「{actor} 上报交付 {delivered}/{need} [{item}]」 |
 | `sheet_done` | `PATCH .../delivery`（≥need→done） | **拥有者** | 「{actor} 已备齐 [{item}]」 |
 | `sheet_released` | `POST .../release`（认领人自放） | **拥有者** | 「{actor} 取消了对 [{item}] 的认领」 |
-| `sheet_released` | `POST .../release`（owner 解锁） | **认领人** | 「拥有者解除了你对 [{item}] 的锁定」 |
+| `sheet_released` | `POST .../release`（owner 解除 lock 行） | **认领人** | 「拥有者解除了你对 [{item}] 的锁定」 |
 | `sheet_rejected` | `POST .../reject`（owner 打回 / 认领人自取消） | **认领人** | 「[{item}] 已打回，delivered 归零，可重做」 |
 | `sheet_qty_changed` | `PUT .../rows` 改 need_qty 且行已认领 | **认领人** | 「[{item}] 所需数量变为 {new}（原 {old}），delivered 已按需封顶」 |
-| `sheet_row_deleted` | `DELETE .../rows/{rid}` / `DELETE /sheets/{sid}`（owner） | **该行认领人** | 「[{item}] 已被拥有者删除，认领取消」 |
+| `sheet_row_deleted` | `DELETE .../rows/{rid}` / `DELETE /sheets/{sid}`（owner） | **该行认领人/贡献者** | 「[{item}] 已被拥有者删除，认领/贡献取消」 |
+| `sheet_progress_changed` | `PATCH .../progress`（owner，值变化） | **该行贡献者** | 「[{item}] 进度已被 {actor} 调整为 {new}/{need}（原 {old}）」 |
+| `sheet_progress_reset` | `POST .../release`（progress 行）/ `PUT .../rows` 改 mode（progress→lock） | **该行贡献者** | 「[{item}] 进度已被 {actor} 重置，贡献清空」 |
 
 ### 3.2 扩展规约
 

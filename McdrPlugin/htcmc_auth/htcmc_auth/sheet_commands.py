@@ -44,6 +44,7 @@ from .messages import (
     SHEET_OK_ROW_DELETED,
     SHEET_OK_CLAIMED,
     SHEET_OK_DELIVERED,
+    SHEET_OK_PROGRESS_SET,
     SHEET_OK_RELEASED,
     SHEET_OK_REJECTED,
     SHEET_DELIVER_HINT,
@@ -172,6 +173,16 @@ def _sheet_root(src, ctx):
             "deliver <表id> <行号> <数量>  数量为绝对值，先 view 看当前",
         ),
         _line("done", "标备齐（lock 模式快捷）", "!!PCH sheet done ", "done <表id> <行号>"),
+        _line(
+            "progress",
+            RTextList(
+                RText("调整进度（拥有者，", color=RColor.gray),
+                RText("绝对值", color=RColor.yellow),
+                RText("）", color=RColor.gray),
+            ),
+            "!!PCH sheet progress ",
+            "progress <表id> <行号> <绝对值>  progress 模式拥有者专用",
+        ),
         _line("release", "解除锁定", "!!PCH sheet release ", "release <表id> <行号>  认领人/拥有者"),
         _line("reject", "打回", "!!PCH sheet reject ", "reject <表id> <行号>  认领人/拥有者"),
         RText("通知：\n", color=RColor.aqua),
@@ -483,6 +494,46 @@ def _sheet_deliver(src, ctx):
 
         def _show(data):
             server.tell(player_name, SHEET_OK_DELIVERED.format(
+                item=data.get("item_name", ""),
+                delivered=data.get("delivered_qty", qty),
+                need=data.get("need_qty", "?"),
+            ))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_progress(src, ctx):
+    """拥有者调整 progress 行进度（绝对值，可增可减）。先 view 验 mode==progress。
+
+    delivered_qty 是绝对值（与后端 schema ge=0 一致）；lock 行 → 后端 409，故先 view 拦截。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    row_id = ctx["row_id"]
+    qty = ctx["delivered_qty"]
+
+    @new_thread('htcmc_sheet_progress')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
+        if row is None:
+            return
+        if int(row.get("mode", 0)) != 1:  # 非 progress：后端会 409，提前拦截省一次往返
+            server.tell(player_name, SHEET_CONFLICT)
+            return
+        outcome = sheet_client.set_row_progress(CONFIG, player_uuid, sheet_id, row_id, qty)
+
+        def _show(data):
+            server.tell(player_name, SHEET_OK_PROGRESS_SET.format(
                 item=data.get("item_name", ""),
                 delivered=data.get("delivered_qty", qty),
                 need=data.get("need_qty", "?"),
