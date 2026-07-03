@@ -74,9 +74,33 @@ SHEET_OK_REJECTED = "§a已打回/取消备齐 [{item}]（delivered 归零）"
 SHEET_DELIVER_HINT = "§7提示：deliver 的数量是绝对值，先 !!PCH sheet view 看当前 delivered 再决定"
 SHEET_NOTIFY_EMPTY = "§7暂无未读通知"
 
+# === 项目三阶段生命周期（collecting → constructing → archived）===
+# 阶段标签：collecting 收集中(§b) / constructing 施工中(§e) / archived 已归档(§a)
+# 未知 status 兜底灰字原值（防后端新增状态时崩溃）
+SHEET_PHASE_LABEL = {
+    "collecting": "§b收集中§r",
+    "constructing": "§e施工中§r",
+    "archived": "§a已归档§r",
+}
+# advance 流转回执
+SHEET_OK_ADVANCED_CONSTRUCTING = "§a项目 #{id} 已进入施工阶段"
+SHEET_OK_ARCHIVED = "§a项目 #{id} 已归档§r §7（文档：{path}）§r"
+SHEET_ARCHIVED_READONLY = "§c项目已归档，只读"
+SHEET_ARCHIVE_UNCONFIGURED = "§c归档服务未配置，请联系管理员"
+SHEET_BAD_TARGET = "§c目标阶段非法（仅支持 constructing / archived）"
+
 
 def _status_color(status: str) -> str:
     return _STATUS_COLOR.get(status, "§f")
+
+
+def format_phase_label(status: str) -> str:
+    """项目阶段横幅文本：collecting/constructing/archived → 中文颜色标签。
+
+    未知 status 兜底灰字原值（防后端新增状态时崩溃）。返回纯字符串（§码），
+    用于嵌入 RText 段。
+    """
+    return SHEET_PHASE_LABEL.get(str(status), f"§7{status}§r")
 
 
 # progress 行贡献者显示上限：受 MC 聊天行宽限制，至多 2 位 + 省略号（后端已按 contributed_qty desc 排序）
@@ -225,26 +249,62 @@ def format_row_clickable(
     return RTextList(*seg)
 
 
-def format_owner_footer(sheet_id) -> RTextList:
-    """拥有者底部管理栏：新增物品（默认 lock）/ 改标题 / 删表。"""
-    return RTextList(
-        rtext_button(
+def format_owner_footer(sheet_id, status: str = "collecting") -> RTextList:
+    """拥有者底部管理栏：阶段流转按钮 + 增删改按钮（按 status 显隐）。
+
+    阶段流转（owner/admin 触发，真实 RBAC 以后端 403 为准）：
+      collecting  → [进入施工]（advance constructing）+ [直接归档]（advance archived）
+      constructing → [标记施工完成并归档]（advance archived）
+      archived    → 只读终态：不渲染任何流转/增删改按钮（后端对写操作返 409 SheetArchived）
+
+    非归档态额外保留原有 [新增物品]/[改标题]/[删表] 管理按钮。
+    未知 status 兜底按 collecting 处理（保守显示，避免误锁管理操作）。
+    """
+    status = str(status) if status is not None else "collecting"
+    segs: list = []
+
+    # 1) 阶段流转按钮（按状态机）
+    if status == "collecting":
+        segs.append(rtext_button(
+            "[进入施工]", f"!!PCH sheet advance {sheet_id} constructing",
+            color=RColor.green, hover="进入施工阶段（collecting → constructing）",
+        ))
+        segs.append(RText(" ", color=RColor.gray))
+        segs.append(rtext_button(
+            "[直接归档]", f"!!PCH sheet advance {sheet_id} archived",
+            color=RColor.yellow,
+            hover="跳过施工直接归档（生成只读文档，不可逆）",
+        ))
+        segs.append(RText(" ", color=RColor.gray))
+    elif status == "constructing":
+        segs.append(rtext_button(
+            "[标记施工完成并归档]", f"!!PCH sheet advance {sheet_id} archived",
+            color=RColor.yellow,
+            hover="施工完成，生成只读归档文档（不可逆）",
+        ))
+        segs.append(RText(" ", color=RColor.gray))
+    # archived：只读，无流转按钮
+
+    # 2) 增删改管理按钮（archived 态隐藏——后端只读，操作会 409）
+    if status != "archived":
+        segs.append(rtext_button(
             "[新增物品]", f"!!PCH sheet add {sheet_id} ",
             color=RColor.aqua,
             hover="新增行（默认 lock；续输：物品 数量 [progress] [排序]）",
-        ),
-        RText(" ", color=RColor.gray),
-        rtext_button(
+        ))
+        segs.append(RText(" ", color=RColor.gray))
+        segs.append(rtext_button(
             "[改标题]", f"!!PCH sheet rename {sheet_id} ",
             color=RColor.aqua, hover="修改表标题（续输新标题）",
-        ),
-        RText(" ", color=RColor.gray),
-        rtext_button(
+        ))
+        segs.append(RText(" ", color=RColor.gray))
+        segs.append(rtext_button(
             "[删表]", f"!!PCH sheet delete {sheet_id}",
             color=RColor.red, hover="删除整表（级联删行，谨慎）",
-        ),
-        RText("\n", color=RColor.gray),
-    )
+        ))
+
+    segs.append(RText("\n", color=RColor.gray))
+    return RTextList(*segs)
 
 
 # === notifications 文案（按 category 映射）===

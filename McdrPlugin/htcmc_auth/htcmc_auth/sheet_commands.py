@@ -37,6 +37,7 @@ from .messages import (
     rtext_button,
     format_row_clickable,
     format_owner_footer,
+    format_phase_label,
     SHEET_OK_CREATED,
     SHEET_OK_RENAMED,
     SHEET_OK_DELETED,
@@ -46,6 +47,11 @@ from .messages import (
     SHEET_OK_DELIVERED,
     SHEET_OK_RELEASED,
     SHEET_OK_REJECTED,
+    SHEET_OK_ADVANCED_CONSTRUCTING,
+    SHEET_OK_ARCHIVED,
+    SHEET_ARCHIVED_READONLY,
+    SHEET_ARCHIVE_UNCONFIGURED,
+    SHEET_BAD_TARGET,
     SHEET_DELIVER_HINT,
     SHEET_NOTIFY_EMPTY,
     format_notification,
@@ -159,6 +165,10 @@ def _sheet_root(src, ctx):
         _line("rename", "改表标题", "!!PCH sheet rename ", "rename <表id> <新标题>"),
         _line("delete", "删表", "!!PCH sheet delete ", "delete <表id>"),
         _line("delrow", "删行", "!!PCH sheet delrow ", "delrow <表id> <行号>"),
+        _line(
+            "advance", "阶段流转（拥有者）", "!!PCH sheet advance ",
+            "advance <表id> [constructing|archived]  收集→施工→归档",
+        ),
         RText("认领 / 交付：\n", color=RColor.aqua),
         _line("claim", "认领", "!!PCH sheet claim ", "claim <表id> <行号>"),
         _line(
@@ -263,6 +273,7 @@ def _sheet_view(src, ctx):
 
         def _show(data):
             rows = data.get("rows") or []
+            status = str(data.get("status") or "collecting")
             # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
             # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
             owner_uuid = str(data.get("owner_uuid") or "")
@@ -273,6 +284,13 @@ def _sheet_view(src, ctx):
                 title=data.get("title") or "",
                 owner=owner_name or "?",
             )), RText("\n")]
+            # 项目阶段横幅（三阶段生命周期：collecting/constructing/archived）
+            parts.append(RTextList(
+                RText("§7[阶段: ", color=RColor.gray),
+                RText(format_phase_label(status)),
+                RText("§7]§r", color=RColor.gray),
+                RText("\n"),
+            ))
             if not rows:
                 parts.append(RText(SHEET_DETAIL_EMPTY))
                 parts.append(RText("\n"))
@@ -285,7 +303,7 @@ def _sheet_view(src, ctx):
                         player_uuid=player_uuid,
                     ))
             if is_owner:
-                parts.append(format_owner_footer(sheet_id))
+                parts.append(format_owner_footer(sheet_id, status))
             server.tell(player_name, RTextList(*parts))
 
         _resolve(server, player_name, outcome, on_success=_show)
@@ -360,6 +378,84 @@ def _sheet_delete(src, ctx):
 
         def _show(_data):
             server.tell(player_name, SHEET_OK_DELETED.format(id=sheet_id))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+# === 阶段流转（advance）===
+# MCDR Literal 节点不存入 context（仅 Argument 子类存值，见 MCDR 命令树文档），
+# 故 to=constructing/archived/缺省 三分支各注册一个轻量包装回调，把 to 值硬编码传入。
+# S-1：https://docs.mcdreforged.com/en/latest/plugin_dev/command.html §Context
+
+def _sheet_advance_default(src, ctx):
+    """!!PCH sheet advance <sheet_id> —— 缺省 to，按后端状态机默认推进。"""
+    _sheet_advance_impl(src, ctx, to=None)
+
+
+def _sheet_advance_to_constructing(src, ctx):
+    """!!PCH sheet advance <sheet_id> constructing。"""
+    _sheet_advance_impl(src, ctx, to="constructing")
+
+
+def _sheet_advance_to_archived(src, ctx):
+    """!!PCH sheet advance <sheet_id> archived。"""
+    _sheet_advance_impl(src, ctx, to="archived")
+
+
+def _sheet_advance_impl(src, ctx, *, to):
+    """advance 共享实现：调 advance_sheet → 按错误码 / 新状态译中文回执。
+
+    advance 端点独有的错误码（不走通用 _resolve）：
+      400 → 非法 to（SHEET_BAD_TARGET）
+      503 → 归档未配置（SHEET_ARCHIVE_UNCONFIGURED）
+      409 已 archived → SHEET_ARCHIVED_READONLY（区分于通用 409 状态非法）
+    其余 403/404/429/网络失败复用 _resolve。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+
+    @new_thread('htcmc_sheet_advance')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.advance_sheet(CONFIG, player_uuid, sheet_id, to)
+
+        # advance 专属错误码先于 _resolve 兜底处理
+        if isinstance(outcome, sheet_client.HttpError):
+            err = outcome
+            detail = (err.detail or "").lower()
+            if err.status == 400:
+                server.tell(player_name, SHEET_BAD_TARGET)
+                return
+            if err.status == 503:
+                server.tell(player_name, SHEET_ARCHIVE_UNCONFIGURED)
+                return
+            if err.status == 409 and "archiv" in detail:
+                # 后端返 SheetArchived 时 detail 含 archived 字样 → 只读回执
+                server.tell(player_name, SHEET_ARCHIVED_READONLY)
+                return
+
+        def _show(data):
+            new_status = str(data.get("status") or "")
+            if new_status == "archived":
+                path = data.get("archived_path") or "(路径缺失)"
+                server.tell(player_name, SHEET_OK_ARCHIVED.format(id=data.get("id", sheet_id), path=path))
+            elif new_status == "constructing":
+                server.tell(player_name, SHEET_OK_ADVANCED_CONSTRUCTING.format(id=data.get("id", sheet_id)))
+            else:
+                # 兜底：未知新状态（后端未来扩展），回执通用成功 + 当前阶段原值
+                server.tell(player_name, "§a项目 #{id} 已流转至 [{phase}]".format(
+                    id=data.get("id", sheet_id),
+                    phase=data.get("status", "?"),
+                ))
 
         _resolve(server, player_name, outcome, on_success=_show)
 
