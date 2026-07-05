@@ -734,19 +734,13 @@ def _sheet_submit_oneclick(src, ctx):
             _resolve(server, player_name, view)
             return
         rows = view.get("rows") or []
-        actions = scanner.match_rows(rows, inventory)
+        actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid)
 
         done_lines: list = []
         skip_lines: list = []
         for action in actions:
-            if action.action == "claim_deliver":
-                # 先 claim，成功后再 delivery(need) → done
-                claim_out = sheet_client.claim_row(CONFIG, player_uuid, sheet_id, action.row_id)
-                if not isinstance(claim_out, dict):
-                    # claim 失败（403/409/404/网络）→ 该行记跳过，不阻断其他行
-                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
-                        item=action.item_name, reason="认领失败（已被认领或状态变化）")))
-                    continue
+            if action.action == "deliver":
+                # lock 行已认领且自己为认领人，直接 deliver(need) 绝对值 → done
                 deliv_out = sheet_client.deliver_row(
                     CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
                 if isinstance(deliv_out, dict):

@@ -193,11 +193,11 @@ class TestReadHeldItem:
 
 
 # ---- match_rows ----
-
+# lock 行需带 claimant_uuid 用于判定 is_claimant（与后端 _row_dict 字段一致）
 ROWS = [
-    {"id": 1, "item_name": "石头", "registry_id": "minecraft:stone", "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "open"},
-    {"id": 2, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot", "need_qty": 32, "delivered_qty": 0, "mode": 0, "status": "claimed"},
-    {"id": 3, "item_name": "橡木板", "registry_id": "minecraft:oak_planks", "need_qty": 128, "delivered_qty": 0, "mode": 0, "status": "open"},
+    {"id": 1, "item_name": "石头", "registry_id": "minecraft:stone", "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "open", "claimant_uuid": None},
+    {"id": 2, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot", "need_qty": 32, "delivered_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"},
+    {"id": 3, "item_name": "橡木板", "registry_id": "minecraft:oak_planks", "need_qty": 128, "delivered_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"},
     {"id": 4, "item_name": "无注册名", "registry_id": None, "need_qty": 10, "mode": 0, "status": "open"},
     {"id": 5, "item_name": "圆石", "registry_id": "minecraft:cobblestone", "need_qty": 100, "delivered_qty": 40, "mode": 1, "status": "claimed"},
     {"id": 6, "item_name": "泥土", "registry_id": "minecraft:dirt", "need_qty": 10, "delivered_qty": 10, "mode": 1, "status": "done"},
@@ -209,20 +209,35 @@ def _by_row(actions, row_id):
 
 
 class TestMatchRows:
-    def test_lock_open_够数_claim_deliver(self):
-        a1 = _by_row(match_rows(ROWS, {"minecraft:stone": 64}), 1)
-        assert a1.action == "claim_deliver"
-        assert a1.qty == 64
+    def test_lock_open_未认领_skip(self):
+        # lock open 行：必须先手动认领，不进入一键提交
+        a1 = _by_row(match_rows(ROWS, {"minecraft:stone": 64}, player_uuid="uuid-A"), 1)
+        assert a1.action == "skip"
+        assert "需先认领" in a1.reason
 
-    def test_lock_已认领_skip(self):
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}), 2)
+    def test_lock_claimed_自己认领_够数_deliver(self):
+        # lock claimed + 自己是认领人 + have>=need → 直接 deliver（不再 claim）
+        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 2)
+        assert a2.action == "deliver"
+        assert a2.qty == 32
+
+    def test_lock_claimed_他人认领_skip(self):
+        # lock claimed 但自己是其他玩家 → skip
+        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-B"), 2)
         assert a2.action == "skip"
-        assert "认领" in a2.reason
+        assert "已被他人认领" in a2.reason
 
-    def test_lock_不够数_skip(self):
-        a3 = _by_row(match_rows(ROWS, {"minecraft:oak_planks": 64}), 3)
+    def test_lock_claimed_自己认领_不够数_skip(self):
+        # lock claimed + 自己认领但数量不足 → skip
+        a3 = _by_row(match_rows(ROWS, {"minecraft:oak_planks": 64}, player_uuid="uuid-A"), 3)
         assert a3.action == "skip"
         assert "不足" in a3.reason
+
+    def test_lock_未传player_uuid视为非认领人_skip(self):
+        # 不传 player_uuid（默认空串）→ lock claimed 行也 skip
+        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}), 2)
+        assert a2.action == "skip"
+        assert "已被他人认领" in a2.reason
 
     def test_无registry_id不产生action(self):
         actions = match_rows(ROWS, {})
@@ -253,11 +268,11 @@ class TestMatchRows:
             "minecraft:oak_planks": 1,
             "minecraft:cobblestone": 64,
             "minecraft:dirt": 1,
-        })
+        }, player_uuid="uuid-A")
         assert sorted(a.row_id for a in actions) == [1, 2, 3, 5, 6]
 
     def test_lock_need为0跳过(self):
-        rows = [{"id": 8, "item_name": "x", "registry_id": "minecraft:stone", "need_qty": 0, "mode": 0, "status": "open"}]
-        a8 = _by_row(match_rows(rows, {"minecraft:stone": 99}), 8)
+        rows = [{"id": 8, "item_name": "x", "registry_id": "minecraft:stone", "need_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"}]
+        a8 = _by_row(match_rows(rows, {"minecraft:stone": 99}, player_uuid="uuid-A"), 8)
         assert a8.action == "skip"
         assert "无需求" in a8.reason
