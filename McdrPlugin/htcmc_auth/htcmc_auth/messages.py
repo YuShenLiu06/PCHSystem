@@ -3,6 +3,15 @@ from typing import Any
 
 from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
+from .text_layout import (
+    CHAT_LINE_PX,
+    CJK_ADVANCE_PX,
+    SPACE_ADVANCE_PX,
+    center_leading,
+    right_align_suffix,
+    text_width_px,
+)
+
 # === § 码风格（旧代码兼容）===
 MSG_PREFIX_GRAY = "§7"
 MSG_SUCCESS = "§a"
@@ -146,6 +155,22 @@ def rtext_button(label: str, command: str, *, color=RColor.aqua, hover: str = ""
     return rt
 
 
+def format_section_separator(title: str = "物品列表") -> RText:
+    """主分隔符：§3 ════ title ════（dark_aqua 双线，title 居中）。返回不带 ``\\n``。
+
+    两侧 ═ 数量按目标行宽与 title 像素宽求出（向下取整确保不超宽）。
+    ═（U+2550 Box Drawing）advance 按 ``CJK_ADVANCE_PX`` 估算（经验值，真机校准）。
+    """
+    title_px = text_width_px(title)
+    n_each = max(
+        0,
+        (CHAT_LINE_PX - title_px - 2 * SPACE_ADVANCE_PX) // 2 // CJK_ADVANCE_PX,
+    )
+    bar = "═" * n_each
+    return RText(f"§3{bar} {title} {bar}")
+
+
+
 def format_row_clickable(
     row: dict,
     sheet_id,
@@ -244,7 +269,15 @@ def format_row_clickable(
             color=RColor.red, hover="删除此行（拥有者）",
         ))
 
-    seg = [RText(format_row_line(row)), RText("  ")]
+    line_text = format_row_line(row)
+    if not buttons:
+        # 无操作按钮（如非认领人看他人 claimed 行）：直接行文本 + 换行，不填充
+        return RTextList(RText(line_text), RText("\n"))
+    # 按钮组右对齐到聊天行右边界：行文本 + 计算填充 + 按钮组（按钮间单空格）。
+    # 行已超宽时 right_align_suffix 兜底返双空格（与旧行为一致），绝不返回负数空格。
+    suffix_text = " ".join(b.to_plain_text() for b in buttons)
+    pad = right_align_suffix(line_text, suffix_text)
+    seg = [RText(line_text), RText(pad)]
     for i, b in enumerate(buttons):
         if i > 0:
             seg.append(RText(" "))
@@ -253,38 +286,59 @@ def format_row_clickable(
     return RTextList(*seg)
 
 
+def _center_button_row(buttons, *, pad_color=RColor.gray) -> RTextList:
+    """把一组按钮在聊天行内居中：前置填充空格（按按钮组整体宽度算），按钮间单空格，末尾换行。
+
+    兼容任意数量按钮（1 个或多个），便于未来向 owner 栏追加按钮时自动居中。
+    超宽（按钮组宽 ≥ 行宽）时 ``center_leading`` 返空串，按钮自然左对齐不崩。
+    """
+    if not buttons:
+        return RTextList(RText("\n", color=pad_color))
+    group_text = " ".join(b.to_plain_text() for b in buttons)
+    leading = center_leading(group_text)
+    parts = [RText(leading, color=pad_color)]
+    for i, b in enumerate(buttons):
+        if i > 0:
+            parts.append(RText(" ", color=pad_color))
+        parts.append(b)
+    parts.append(RText("\n", color=pad_color))
+    return RTextList(*parts)
+
+
 def format_submit_footer(sheet_id) -> RTextList:
-    """公开快捷栏（所有查看者可见）：一键提交——扫背包按 registry_id 匹配行批量上交（纯申报，不清背包）。"""
-    return RTextList(
+    """公开快捷栏（所有查看者可见）：一键提交——扫背包按 registry_id 匹配行批量上交（纯申报，不清背包）。
+
+    按钮居中（走 ``_center_button_row``）。
+    """
+    return _center_button_row([
         rtext_button(
             "[一键提交]", f"!!PCH sheet submit {sheet_id}",
             color=RColor.aqua,
             hover="扫背包按 registry_id 匹配行批量上交（纯申报，不清背包；lock 行需已认领）",
         ),
-        RText("\n", color=RColor.gray),
-    )
+    ])
 
 
 def format_owner_footer(sheet_id) -> RTextList:
-    """拥有者底部管理栏：新增物品（默认走 addhand，手持建行）/ 改标题 / 删表。"""
-    return RTextList(
+    """拥有者底部管理栏：新增物品（默认走 addhand，手持建行）/ 改标题 / 删表。
+
+    按钮组整体居中（走 ``_center_button_row``），未来追加按钮自动居中。
+    """
+    return _center_button_row([
         rtext_button(
             "[新增物品]", f"!!PCH sheet addhand {sheet_id} ",
             color=RColor.aqua,
             hover="用手持物品建行（续输：数量 [lock|progress] [排序]）",
         ),
-        RText(" ", color=RColor.gray),
         rtext_button(
             "[改标题]", f"!!PCH sheet rename {sheet_id} ",
             color=RColor.aqua, hover="修改表标题（续输新标题）",
         ),
-        RText(" ", color=RColor.gray),
         rtext_button(
             "[删表]", f"!!PCH sheet delete {sheet_id}",
             color=RColor.red, hover="删除整表（级联删行，谨慎）",
         ),
-        RText("\n", color=RColor.gray),
-    )
+    ])
 
 
 # === notifications 文案（按 category 映射）===
