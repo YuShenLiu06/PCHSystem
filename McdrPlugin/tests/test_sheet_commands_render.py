@@ -51,21 +51,24 @@ class ViewEmptyRowsTest(unittest.TestCase):
             sheet_commands._sheet_view(src, {"sheet_id": 3})
         msg = str(told[0])
         self.assertIn("（无行）", msg)
+        self.assertIn("[一键提交]", msg)  # 公开底栏（owner 也见）
         self.assertIn("[新增物品]", msg)
         # suggest 命令末尾留空格续输：数量 [lock|progress] [排序]
         self.assertIn("!!PCH sheet addhand 3 ", _all_click_values(told[0]))
 
     def test_non_owner_no_management_buttons_on_empty_rows(self):
-        # 非拥有者看别人的空表：只有 (无行) 提示，不显示管理栏（RBAC 以后端为准）
+        # 非拥有者看别人的空表：(无行) 提示 + 公开 [一键提交]；不显示管理栏（RBAC 以后端为准）
         src, told = _make_src_server(player="玩家A")
         detail = {"id": 3, "title": "清单T", "owner_name": "别人", "rows": []}
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 3})
         msg = str(told[0])
         self.assertIn("（无行）", msg)
+        self.assertIn("[一键提交]", msg)  # 公开底栏（submit 无权限要求）
         self.assertNotIn("[新增物品]", msg)
         self.assertNotIn("[删表]", msg)
-        self.assertEqual(_all_click_values(told[0]), [])  # 无任何可点击按钮
+        # 仅一个公开按钮（submit）；无任何管理按钮
+        self.assertEqual(_all_click_values(told[0]), ["!!PCH sheet submit 3"])
 
 
 class ListEmptyTest(unittest.TestCase):
@@ -168,6 +171,27 @@ class ViewPermissionTest(unittest.TestCase):
             sheet_commands._sheet_view(src, {"sheet_id": 7})
         cmds = _all_click_values(told[0])
         self.assertFalse(any("progress" in c for c in cmds), cmds)
+
+
+class ViewSubmitButtonTest(unittest.TestCase):
+    """_sheet_view 公开「一键提交」底栏：所有查看者可见（submit 无权限要求）。"""
+
+    def test_non_owner_sees_submit_button(self):
+        # 非拥有者查看含行表：底部见 [一键提交]（公开）；行尾无 [改ID]（owner 专用）
+        src, told = _make_src_server(player="玩家A")
+        detail = {
+            "id": 7, "title": "清单S", "owner_name": "别人",
+            "rows": [{"id": 1, "item_name": "铁锭", "mode": 0, "status": "open",
+                      "need_qty": 64, "delivered_qty": 0, "claimant_name": None}],
+        }
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 7})
+        msg = str(told[0])
+        self.assertIn("[一键提交]", msg)
+        self.assertNotIn("[改ID]", msg)  # setreg owner 专用，非 owner 行尾隐藏
+        cmds = _all_click_values(told[0])
+        self.assertIn("!!PCH sheet submit 7", cmds)
+        self.assertFalse(any("setreg" in c for c in cmds), cmds)
 
 
 class SetregHandTest(unittest.TestCase):

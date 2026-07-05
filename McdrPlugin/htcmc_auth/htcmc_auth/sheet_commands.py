@@ -37,6 +37,7 @@ from .messages import (
     rtext_button,
     format_row_clickable,
     format_owner_footer,
+    format_submit_footer,
     SHEET_OK_CREATED,
     SHEET_OK_RENAMED,
     SHEET_OK_DELETED,
@@ -327,6 +328,7 @@ def _sheet_view(src, ctx):
                         player_name=player_name,
                         player_uuid=player_uuid,
                     ))
+            parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
             if is_owner:
                 parts.append(format_owner_footer(sheet_id))
             server.tell(player_name, RTextList(*parts))

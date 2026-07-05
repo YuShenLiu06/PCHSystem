@@ -235,6 +235,11 @@ def format_row_clickable(
         ))
     if is_owner:
         buttons.append(rtext_button(
+            "[改ID]", f"!!PCH sheet setreg {sheet_id} {rid} ",
+            color=RColor.yellow,
+            hover="改行 registry_id（直接回车=手持物品；或空格后输入新 registry_id）",
+        ))
+        buttons.append(rtext_button(
             "[删行]", f"!!PCH sheet delrow {sheet_id} {rid}",
             color=RColor.red, hover="删除此行（拥有者）",
         ))
@@ -246,6 +251,18 @@ def format_row_clickable(
         seg.append(b)
     seg.append(RText("\n"))
     return RTextList(*seg)
+
+
+def format_submit_footer(sheet_id) -> RTextList:
+    """公开快捷栏（所有查看者可见）：一键提交——扫背包按 registry_id 匹配行批量上交（纯申报，不清背包）。"""
+    return RTextList(
+        rtext_button(
+            "[一键提交]", f"!!PCH sheet submit {sheet_id}",
+            color=RColor.aqua,
+            hover="扫背包按 registry_id 匹配行批量上交（纯申报，不清背包；lock 行需已认领）",
+        ),
+        RText("\n", color=RColor.gray),
+    )
 
 
 def format_owner_footer(sheet_id) -> RTextList:

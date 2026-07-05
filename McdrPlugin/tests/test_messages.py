@@ -12,6 +12,7 @@ from htcmc_auth.messages import (  # noqa: E402
     rtext_button,
     format_row_clickable,
     format_owner_footer,
+    format_submit_footer,
     _status_color,
 )
 
@@ -153,14 +154,18 @@ class FormatRowClickableTest(unittest.TestCase):
         self.assertIn("铁锭", s)       # 行文本仍保留
         self.assertIn("[认领]", s)
         self.assertIn("[删行]", s)     # 拥有者追加
+        self.assertIn("[改ID]", s)     # 拥有者追加（setreg 改 registry_id）
         cmds = _click_values(rtl)
         self.assertIn("!!PCH sheet claim 3 5", cmds)
         self.assertIn("!!PCH sheet delrow 3 5", cmds)
+        # setreg 末尾留空格：回车=手持物品 / 空格后续输 registry_id
+        self.assertIn("!!PCH sheet setreg 3 5 ", cmds)
 
     def test_open_row_non_owner_no_delrow(self):
         rtl = format_row_clickable(self._row(), 3, is_owner=False)
         self.assertIn("[认领]", str(rtl))
         self.assertNotIn("[删行]", str(rtl))
+        self.assertNotIn("[改ID]", str(rtl))  # setreg owner 专用
 
     def test_claimed_lock_non_claimant_no_priv_buttons(self):
         # 非认领人非拥有者看 lock claimed 行：不显示任何特权按钮（仅行文本）
@@ -273,6 +278,17 @@ class OwnerFooterTest(unittest.TestCase):
         self.assertIn("!!PCH sheet addhand 3 ", cmds)  # 默认走 addhand，留空格续输
         self.assertIn("!!PCH sheet rename 3 ", cmds)
         self.assertIn("!!PCH sheet delete 3", cmds)
+
+
+class SubmitFooterTest(unittest.TestCase):
+    def test_submit_footer_has_button(self):
+        # 公开底栏（所有人可见）：单按钮 [一键提交] → submit <id>
+        rtl = format_submit_footer(3)
+        s = str(rtl)
+        self.assertIn("[一键提交]", s)
+        cmds = _click_values(rtl)
+        # submit 单参命令已完整，无尾随空格（回车即执行）
+        self.assertIn("!!PCH sheet submit 3", cmds)
 
 
 if __name__ == "__main__":
