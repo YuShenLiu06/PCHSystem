@@ -52,6 +52,7 @@ from .messages import (
     format_notification,
     SHEET_NO_DATA_API,
     SHEET_ADDHAND_NEED_HAND,
+    SHEET_SETREG_NEED_HAND,
     SHEET_OK_ADDHAND,
     SHEET_OK_SETREG,
     SHEET_SUBMIT_HEAD,
@@ -189,7 +190,7 @@ def _sheet_root(src, ctx):
             "setreg",
             "改行物品 id",
             "!!PCH sheet setreg ",
-            "setreg <表id> <行号> <registry_id>  更新指定行的物品 id",
+            "setreg <表id> <行号> [registry_id]  更新指定行的物品 id（缺省走手持物品）",
         ),
         RText("认领 / 交付：\n", color=RColor.aqua),
         _line("claim", "认领", "!!PCH sheet claim ", "claim <表id> <行号>"),
@@ -734,19 +735,13 @@ def _sheet_submit_oneclick(src, ctx):
             _resolve(server, player_name, view)
             return
         rows = view.get("rows") or []
-        actions = scanner.match_rows(rows, inventory)
+        actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid)
 
         done_lines: list = []
         skip_lines: list = []
         for action in actions:
-            if action.action == "claim_deliver":
-                # 先 claim，成功后再 delivery(need) → done
-                claim_out = sheet_client.claim_row(CONFIG, player_uuid, sheet_id, action.row_id)
-                if not isinstance(claim_out, dict):
-                    # claim 失败（403/409/404/网络）→ 该行记跳过，不阻断其他行
-                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
-                        item=action.item_name, reason="认领失败（已被认领或状态变化）")))
-                    continue
+            if action.action == "deliver":
+                # lock 行已认领且自己为认领人，直接 deliver(need) 绝对值 → done
                 deliv_out = sheet_client.deliver_row(
                     CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
                 if isinstance(deliv_out, dict):
@@ -838,22 +833,37 @@ def _sheet_addhand(src, ctx):
 
 
 def _sheet_setreg(src, ctx):
-    """改指定行的 registry_id（按行现有 item_name 定位，其余字段透传，仅 registry_id 是新值）。"""
+    """改指定行的 registry_id（按行现有 item_name 定位，其余字段透传，仅 registry_id 是新值）。
+
+    registry_id 可选：缺省时读玩家手持物品的 registry_id（与 addhand 一致）。
+    """
     player_name = _require_player(src)
     if not player_name:
         return
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
-    registry_id = ctx["registry_id"]
+    registry_id = ctx.get("registry_id")
 
     @new_thread('htcmc_sheet_setreg')
     def _do():
+        nonlocal registry_id
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
+        # registry_id 缺省 → 读手持物品（与 addhand 一致）
+        if not registry_id:
+            api = server.get_plugin_instance("minecraft_data_api")
+            if api is None:
+                server.tell(player_name, SHEET_NO_DATA_API)
+                return
+            held = scanner.read_held_item(api, player_name)
+            if held is None:
+                server.tell(player_name, SHEET_SETREG_NEED_HAND)
+                return
+            registry_id = held[0]
         row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
         if row is None:
             return

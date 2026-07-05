@@ -77,6 +77,7 @@ SHEET_NOTIFY_EMPTY = "§7暂无未读通知"
 # 一键提交 / 手持建行 / 改 registry_id
 SHEET_NO_DATA_API = "§c未安装 minecraft_data_api 插件，无法扫描背包"
 SHEET_ADDHAND_NEED_HAND = "§c请先手持物品再使用 addhand"
+SHEET_SETREG_NEED_HAND = "§c请先手持物品或提供 registry_id 参数"
 SHEET_OK_ADDHAND = "§a已用手持物品新建/更新行：{item} ×{need}（{mode}）"
 SHEET_OK_SETREG = "§a已更新行 #{row_id} 的物品 id 为 {registry_id}"
 # submit 汇总回执段
@@ -248,12 +249,12 @@ def format_row_clickable(
 
 
 def format_owner_footer(sheet_id) -> RTextList:
-    """拥有者底部管理栏：新增物品（默认 lock）/ 改标题 / 删表。"""
+    """拥有者底部管理栏：新增物品（默认走 addhand，手持建行）/ 改标题 / 删表。"""
     return RTextList(
         rtext_button(
-            "[新增物品]", f"!!PCH sheet add {sheet_id} ",
+            "[新增物品]", f"!!PCH sheet addhand {sheet_id} ",
             color=RColor.aqua,
-            hover="新增行（默认 lock；续输：物品 数量 [progress] [排序]）",
+            hover="用手持物品建行（续输：数量 [lock|progress] [排序]）",
         ),
         RText(" ", color=RColor.gray),
         rtext_button(

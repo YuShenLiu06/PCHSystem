@@ -270,7 +270,7 @@ class OwnerFooterTest(unittest.TestCase):
         self.assertIn("[改标题]", s)
         self.assertIn("[删表]", s)
         cmds = _click_values(rtl)
-        self.assertIn("!!PCH sheet add 3 ", cmds)      # 默认 lock，留空格续输
+        self.assertIn("!!PCH sheet addhand 3 ", cmds)  # 默认走 addhand，留空格续输
         self.assertIn("!!PCH sheet rename 3 ", cmds)
         self.assertIn("!!PCH sheet delete 3", cmds)
 

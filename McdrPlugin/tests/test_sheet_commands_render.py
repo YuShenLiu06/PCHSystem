@@ -44,6 +44,7 @@ def _all_click_values(obj):
 class ViewEmptyRowsTest(unittest.TestCase):
     def test_owner_sees_add_button_on_empty_rows(self):
         # 拥有者看自己的空表：应同时看到 (无行) 提示 + [新增物品] 等管理按钮
+        # [新增物品] 默认走 addhand（手持建行），suggest 命令为 !!PCH sheet addhand <id>_
         src, told = _make_src_server(player="玩家A")
         detail = {"id": 3, "title": "清单T", "owner_name": "玩家A", "rows": []}
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
@@ -51,8 +52,8 @@ class ViewEmptyRowsTest(unittest.TestCase):
         msg = str(told[0])
         self.assertIn("（无行）", msg)
         self.assertIn("[新增物品]", msg)
-        # suggest 命令末尾留空格续输：物品 数量 ...
-        self.assertIn("!!PCH sheet add 3 ", _all_click_values(told[0]))
+        # suggest 命令末尾留空格续输：数量 [lock|progress] [排序]
+        self.assertIn("!!PCH sheet addhand 3 ", _all_click_values(told[0]))
 
     def test_non_owner_no_management_buttons_on_empty_rows(self):
         # 非拥有者看别人的空表：只有 (无行) 提示，不显示管理栏（RBAC 以后端为准）
@@ -167,6 +168,64 @@ class ViewPermissionTest(unittest.TestCase):
             sheet_commands._sheet_view(src, {"sheet_id": 7})
         cmds = _all_click_values(told[0])
         self.assertFalse(any("progress" in c for c in cmds), cmds)
+
+
+class SetregHandTest(unittest.TestCase):
+    """_sheet_setreg 的 registry_id 缺省时读手持物品兜底。"""
+
+    def _make_src_server(self, player="tester"):
+        told = []
+        server = mock.Mock()
+        server.tell.side_effect = lambda name, msg: told.append(msg)
+        # minecraft_data_api 插件实例替身（非 None 即视为已安装）
+        api = mock.Mock()
+        server.get_plugin_instance.return_value = api
+        src = mock.Mock()
+        src.is_player = True
+        src.player = player
+        src.get_server.return_value = server
+        return src, told, server, api
+
+    def test_缺省registry_id_读手持物品(self):
+        # ctx 不含 registry_id → 读手持物品的 registry_id 传给 upsert_row
+        src, told, server, api = self._make_src_server()
+        row = {"id": 1, "item_name": "石头", "need_qty": 64, "mode": 0, "sort_order": 0}
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet",
+                               return_value={"id": 7, "rows": [row]}), \
+             mock.patch.object(sheet_commands.scanner, "read_held_item",
+                               return_value=("minecraft:stone", 32)), \
+             mock.patch.object(sheet_commands.sheet_client, "upsert_row",
+                               return_value={"id": 1, "registry_id": "minecraft:stone"}) as upsert_mock:
+            sheet_commands._sheet_setreg(src, {"sheet_id": 7, "row_id": 1})
+        # upsert_row 应收到 registry_id=手持物品 id（关键字参数）
+        _, kwargs = upsert_mock.call_args
+        self.assertEqual(kwargs.get("registry_id"), "minecraft:stone")
+
+    def test_缺省registry_id_空手回显提示(self):
+        # ctx 不含 registry_id + 空手 → 回显 SHEET_SETREG_NEED_HAND，不调 upsert_row
+        src, told, server, api = self._make_src_server()
+        with mock.patch.object(sheet_commands.scanner, "read_held_item",
+                               return_value=None), \
+             mock.patch.object(sheet_commands.sheet_client, "upsert_row") as upsert_mock:
+            sheet_commands._sheet_setreg(src, {"sheet_id": 7, "row_id": 1})
+        told_str = " ".join(str(m) for m in told)
+        self.assertIn("手持物品", told_str)
+        upsert_mock.assert_not_called()
+
+    def test_显式registry_id_不读手持(self):
+        # ctx 含 registry_id → 不调用 read_held_item，直接用参数
+        src, told, server, api = self._make_src_server()
+        row = {"id": 1, "item_name": "石头", "need_qty": 64, "mode": 0, "sort_order": 0}
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet",
+                               return_value={"id": 7, "rows": [row]}), \
+             mock.patch.object(sheet_commands.scanner, "read_held_item",
+                               return_value=None) as held_mock, \
+             mock.patch.object(sheet_commands.sheet_client, "upsert_row",
+                               return_value={"id": 1, "registry_id": "minecraft:cobblestone"}) as upsert_mock:
+            sheet_commands._sheet_setreg(src, {"sheet_id": 7, "row_id": 1, "registry_id": "minecraft:cobblestone"})
+        held_mock.assert_not_called()
+        _, kwargs = upsert_mock.call_args
+        self.assertEqual(kwargs.get("registry_id"), "minecraft:cobblestone")
 
 
 if __name__ == "__main__":

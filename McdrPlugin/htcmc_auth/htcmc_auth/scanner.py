@@ -121,9 +121,9 @@ def read_held_item(api, player: str) -> Optional[tuple]:
 
 @dataclass
 class MatchAction:
-    """一行匹配结果。``action`` ∈ {"claim_deliver", "contribute", "skip"}。
+    """一行匹配结果。``action`` ∈ {"deliver", "contribute", "skip"}。
 
-    * claim_deliver：lock 行 open 且 have≥need，串行 claim + delivery(need) → done。``qty=need``。
+    * deliver：lock 行已认领且自己为认领人，have≥need，``deliver_row(need)`` 绝对值 → done。``qty=need``。
     * contribute：progress 行未满，``contribute(min(have, need-delivered))`` 封顶到 need。
     * skip：不符合条件（``reason`` 给中文原因供回执）。
     """
@@ -144,10 +144,14 @@ def _to_int(value, default: int = 0) -> int:
         return default
 
 
-def match_rows(rows: list, inventory: dict) -> list:
+def match_rows(rows: list, inventory: dict, player_uuid: str = "") -> list:
     """按 registry_id 精确匹配表行 → ``list[MatchAction]``。
 
     无 registry_id 的行不参与（不产生 action）；每个匹配行恰好一个 action（含 skip）。
+
+    lock 模式必须**已是认领人**才进入提交：``player_uuid`` 与行的 ``claimant_uuid`` 匹配
+    且 status=claimed、have≥need → ``deliver``；其余 lock 行 → ``skip``。
+    ``player_uuid`` 默认空串（等价于"非认领人"），保持向后兼容。
     """
     actions: list = []
     for r in rows:
@@ -165,12 +169,16 @@ def match_rows(rows: list, inventory: dict) -> list:
         have = _to_int(inventory.get(rid, 0))
 
         if mode == 0:  # lock
-            if status == "open" and need > 0 and have >= need:
-                actions.append(MatchAction(row_id, rid, item_name, mode, "claim_deliver", need))
+            is_claimant = (
+                bool(player_uuid)
+                and str(r.get("claimant_uuid") or "") == player_uuid
+            )
+            if is_claimant and status == "claimed" and need > 0 and have >= need:
+                actions.append(MatchAction(row_id, rid, item_name, mode, "deliver", need))
             else:
                 actions.append(MatchAction(
                     row_id, rid, item_name, mode, "skip", 0,
-                    _skip_reason_lock(status, need, have),
+                    _skip_reason_lock(status, need, have, is_claimant),
                 ))
         else:  # progress
             if need > 0 and status != "done" and delivered < need and have > 0:
@@ -184,9 +192,13 @@ def match_rows(rows: list, inventory: dict) -> list:
     return actions
 
 
-def _skip_reason_lock(status, need: int, have: int) -> str:
-    if status != "open":
-        return "已被认领或已备齐"
+def _skip_reason_lock(status, need: int, have: int, is_claimant: bool = False) -> str:
+    if status == "open":
+        return "需先认领"
+    if status == "claimed" and not is_claimant:
+        return "已被他人认领"
+    if status == "done":
+        return "已备齐"
     if need <= 0:
         return "无需求"
     return f"数量不足（{have}/{need}）"
