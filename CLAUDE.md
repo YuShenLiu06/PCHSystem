@@ -184,3 +184,5 @@ PCHSystem/
 ---
 
 *最后更新：2026-07-03（sheet registry_id 字段 + 一键提交：迁移 0009 + 4 写入途径 + MCDR submit/addhand/setreg + scanner.py + 全端测试绿；发现既有 add/set/addhand mode-Literal 不生效 bug，记入待处理）*
+
+*增量（2026-07-05）：sheet view tellraw 像素级美化——新增 `text_layout.py` 像素宽度估算模块 + `format_section_separator` 分节标题（`════ 物品列表 ════`）+ 行尾按钮右对齐 / 底栏按钮居中；`format_section_separator` 配色回归 §6 色板「重要/标题」`§6§l`（gold+bold）；MCDR 测试 113 绿。发现并记入待处理：worktree 工作树 `Frontend/vite.config.ts` 端口改 8002 属 worktree 本地污染，勿提交。*
