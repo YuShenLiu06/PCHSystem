@@ -194,12 +194,17 @@ def _register_commands(server: PluginServerInterface):
                     )
                 )
             )
-            # 改行 registry_id：按行号定位，QuotableText 允许带空格（实际 registry_id 无空格，但保持一致）
+            # 改行 registry_id：按行号定位，registry_id 可选（缺省读手持物品）；
+            # QuotableText 允许带空格（实际 registry_id 无空格，但保持一致）
             .then(
                 Literal("setreg")
                 .then(
                     Integer("sheet_id")
-                    .then(Integer("row_id").then(QuotableText("registry_id").runs(_sheet_setreg)))
+                    .then(
+                        Integer("row_id")
+                        .runs(_sheet_setreg)
+                        .then(QuotableText("registry_id").runs(_sheet_setreg))
+                    )
                 )
             )
             # 协作
