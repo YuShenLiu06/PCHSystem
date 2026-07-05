@@ -5,8 +5,6 @@ from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
 from .text_layout import (
     CHAT_LINE_PX,
-    CJK_ADVANCE_PX,
-    SPACE_ADVANCE_PX,
     center_leading,
     right_align_suffix,
     text_width_px,
@@ -156,18 +154,20 @@ def rtext_button(label: str, command: str, *, color=RColor.aqua, hover: str = ""
 
 
 def format_section_separator(title: str = "物品列表") -> RText:
-    """主分隔符：§3 ════ title ════（dark_aqua 双线，title 居中）。返回不带 ``\\n``。
+    """主分隔符：════ title ════（gold + bold 双线，title 居中）。返回不带 ``\\n``。
 
-    两侧 ═ 数量按目标行宽与 title 像素宽求出（向下取整确保不超宽）。
+    用 ``RColor.gold + RStyle.bold``（McdrPlugin/CLAUDE.md §6 色板「重要/标题」语义）。
+    两侧 ═ 数量按目标行宽与 title 像素宽求出（向下取整确保不超宽）；
+    **粗体每字符 advance +1px**，故 title / 空格 / ═ 的宽度均按粗体态（``§l`` 前缀）估算。
     ═（U+2550 Box Drawing）advance 按 ``CJK_ADVANCE_PX`` 估算（经验值，真机校准）。
     """
-    title_px = text_width_px(title)
-    n_each = max(
-        0,
-        (CHAT_LINE_PX - title_px - 2 * SPACE_ADVANCE_PX) // 2 // CJK_ADVANCE_PX,
-    )
+    # 粗体态宽度：§l 前缀让 text_width_px 自动对每字符 +1px（见 text_layout.bold 规则）
+    title_px = text_width_px(f"§l{title}")
+    space_px = text_width_px("§l ")
+    bar_px = text_width_px("§l═")
+    n_each = max(0, (CHAT_LINE_PX - title_px - 2 * space_px) // 2 // bar_px)
     bar = "═" * n_each
-    return RText(f"§3{bar} {title} {bar}")
+    return RText(f"{bar} {title} {bar}", color=RColor.gold).set_styles(RStyle.bold)
 
 
 

@@ -13,8 +13,10 @@ from htcmc_auth.messages import (  # noqa: E402
     format_row_clickable,
     format_owner_footer,
     format_submit_footer,
+    format_section_separator,
     _status_color,
 )
+from htcmc_auth.text_layout import CHAT_LINE_PX, text_width_px  # noqa: E402
 
 
 def _click_values(rtext_list):
@@ -289,6 +291,36 @@ class SubmitFooterTest(unittest.TestCase):
         cmds = _click_values(rtl)
         # submit 单参命令已完整，无尾随空格（回车即执行）
         self.assertIn("!!PCH sheet submit 3", cmds)
+
+
+class FormatSectionSeparatorTest(unittest.TestCase):
+    """分节分隔符：gold+bold 双线，title 居中；渲染总宽 ≤ CHAT_LINE_PX（粗体已计入）。"""
+
+    SEPARATOR_TITLES = [
+        "物品列表",        # 实际场景：行列表标题
+        "列表管理",        # 实际场景：owner 管理栏
+        "短",             # 边界：极短 title（bar 最多）
+        "一个比较长的分节标题示例",  # 边界：长 title（bar 最少）
+        "",               # 边界：空 title
+    ]
+
+    def test_rendered_width_fits_chat_line(self):
+        # 关键契约：粗体（§l）下每字符 +1px；若公式漏算粗体（仍按非粗体求 bar 数），
+        # 渲染会超 320px 换行。本测试以 §l 前缀重建粗体宽度来锁定。
+        for title in self.SEPARATOR_TITLES:
+            rt = format_section_separator(title)
+            rendered_px = text_width_px(f"§l{rt.to_plain_text()}")
+            self.assertLessEqual(
+                rendered_px, CHAT_LINE_PX,
+                f"title={title!r} 分隔符粗体渲染宽 {rendered_px}px > {CHAT_LINE_PX}px（会换行）",
+            )
+
+    def test_title_centered_symmetric_bars(self):
+        # 两侧 bar 数相等（视觉居中）：形如 "<bar> <title> <bar>"
+        for title in ["物品列表", "列表管理", "短", "一个比较长的分节标题示例"]:
+            s = format_section_separator(title).to_plain_text()
+            left, right = s.split(f" {title} ")
+            self.assertEqual(left, right, f"title={title!r} 两侧 ═ 数不等（未居中）")
 
 
 if __name__ == "__main__":
