@@ -24,6 +24,21 @@ class Settings(BaseSettings):
     # 投影解析：上传字节上限（默认 50MB）
     litematic_max_upload_bytes: int = 50 * 1024 * 1024
 
+    # 归档根目录绝对路径（迁移 0009 sheet 三阶段生命周期的 archived 产物落盘位置）。
+    # 空串 = 未配置：归档端点返 503，不启动 fail-fast 避免阻塞其他端点（计划 §归档服务 config）。
+    archive_root: str = ""
+    # 可选：仅加载静态 TemplateSection 覆盖文案（产品/运营改 header/footer 不动代码）。
+    # 空串 = 不加载；目录不存在时 loader 静默返空。
+    markdown_fragments_dir: str = ""
+
+    # wiki 内容 git 仓（独立部署；后端把归档推送过去，wiki.js 双向同步）。空 = 未配置，
+    # publisher 不推（R-8 重写后：归档 DB 成功即生效，wiki 同步为可选 best-effort 副产物）。
+    wiki_git_remote_url: str = ""
+    wiki_git_branch: str = "main"
+    wiki_git_token: str = ""  # R-11：经 .env 注入，不进代码库
+    wiki_git_author_name: str = "PCHSystem"
+    wiki_git_author_email: str = "pchsystem@local"
+
     @field_validator("mcdr_service_token")
     @classmethod
     def _mcdr_service_token_non_empty(cls, v: str) -> str:

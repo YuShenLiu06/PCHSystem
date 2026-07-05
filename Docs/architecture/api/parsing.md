@@ -18,7 +18,7 @@
 | 方法 | 路径 | 鉴权 | body | 成功 | 说明 |
 |---|---|---|---|---|---|
 | POST | `/parsing/litematic` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.litematic`） | 200 `ParsedMaterialPreview` | 解析 + 翻译，返回方块组 + 容器组预览；不落库 |
-| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0009）；`item_name` 缺失时后端翻译补中文名。见 [`sheets.md`](./sheets.md) |
+| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。见 [`sheets.md`](./sheets.md) |
 
 - 上限：文件 ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。
 - 解析为 CPU 密集，跑在 `asyncio.to_thread`（RS-7，不阻塞事件循环）。
@@ -63,7 +63,7 @@ ParsedMaterialList(blocks, container_items, meta)   # 纯 registry id + count
 PreviewItem(item_id, item_name, count) + untranslated[]
    │  前端预览 → 确认（生成表时透传 registry_id = PreviewItem.item_id）
    ▼
-POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id，迁移 0009）
+POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id，迁移 0010）
 ```
 
 - `MaterialParser`（`parsers/base.py`）：文件字节 → 分组清单（**不翻译**）。换格式（`.schem` / `.nbt`）新增子类。
@@ -128,4 +128,4 @@ Backend/app/services/parsing/
 
 ---
 
-*最后更新：2026-07-03（`POST /sheets/from-items` 现透传 `registry_id` = `PreviewItem.item_id`，写入 `sheet_rows.registry_id`，迁移 0009；`PreviewItem` 本身不变）*
+*最后更新：2026-07-03（`POST /sheets/from-items` 现透传 `registry_id` = `PreviewItem.item_id`，写入 `sheet_rows.registry_id`，迁移 0010；`PreviewItem` 本身不变）*

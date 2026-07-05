@@ -31,12 +31,14 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       MCDR_SERVICE_TOKEN: ${MCDR_SERVICE_TOKEN}
       WEB_BASE_URL: ${WEB_BASE_URL}
+      ARCHIVE_ROOT: /app/archive
     ports:
       - "8000:8000"
     volumes:
       # 只挂载源码目录：改 .py 文件后 uvicorn --reload 自动重启，依赖变更（pyproject.toml）才需 rebuild
       - ./Backend/app:/app/app
       - ./Backend/alembic:/app/alembic
+      - ./Archive:/app/archive   # 归档 markdown 落盘（持久化 + 未来 wiki 同步入口）
 
 volumes:
   pgdata:

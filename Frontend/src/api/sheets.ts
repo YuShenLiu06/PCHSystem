@@ -1,11 +1,19 @@
 import { http } from '../utils/http'
 
 // 与 Backend/app/schemas/sheet.py 对齐的 TS 类型
+
+// 项目生命周期阶段：collecting（收集中，默认）→ constructing（施工中）→ archived（已归档，只读终态）
+// 允许 collecting → archived 直跳（跳过施工）。详见 Docs/architecture/api/sheets.md
+export type SheetStatus = 'collecting' | 'constructing' | 'archived'
+
 export interface SheetSummary {
   id: number
   owner_uuid: string
   owner_name: string
   title: string
+  status: SheetStatus
+  archived_path: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
@@ -69,10 +77,18 @@ export interface SheetFromItemsRequest {
   items: SheetItemIn[]
 }
 
-/** GET /sheets —— owner 传 "me" 只看自己，省略看全部 */
-export async function listSheets(owner?: 'me' | string): Promise<SheetSummary[]> {
+/** GET /sheets —— owner 传 "me" 只看自己；status 过滤 collecting|constructing|archived|active（active=收集+施工） */
+export interface ListSheetsOptions {
+  owner?: 'me'
+  status?: SheetStatus | 'active'
+}
+
+export async function listSheets(opts?: ListSheetsOptions): Promise<SheetSummary[]> {
+  const params: Record<string, string> = {}
+  if (opts?.owner) params.owner = opts.owner
+  if (opts?.status) params.status = opts.status
   const { data } = await http.get<SheetSummary[]>('/sheets', {
-    params: owner ? { owner } : undefined,
+    params: Object.keys(params).length > 0 ? params : undefined,
   })
   return data
 }
@@ -170,5 +186,42 @@ export async function releaseRow(id: number, rowId: number): Promise<RowDetail> 
 /** POST /sheets/{id}/rows/{rowId}/reject —— 拥有者打回（done→claimed, delivered 归零），无 body */
 export async function rejectRow(id: number, rowId: number): Promise<RowDetail> {
   const { data } = await http.post<RowDetail>(`/sheets/${id}/rows/${rowId}/reject`)
+  return data
+}
+
+/**
+ * POST /sheets/{id}/advance —— owner/admin 阶段流转。
+ * to 给定则 query 带 ?to=；省略则后端按状态机推进（collecting→constructing，constructing→archived）。
+ * 返回流转后的 SheetDetail（含新 status / 归档后的 archived_path/archived_at）。
+ */
+export async function advanceSheet(id: number, to?: 'constructing' | 'archived'): Promise<SheetDetail> {
+  const { data } = await http.post<SheetDetail>(`/sheets/${id}/advance`, undefined, {
+    params: to ? { to } : undefined,
+  })
+  return data
+}
+
+/**
+ * GET /sheets/{id}/archive —— 取归档 markdown 文档（text/markdown，纯字符串，非 JSON）。
+ * 用 transformResponse 阻止 axios 把响应体当 JSON 解析（响应可能是空或非合法 JSON 的 md 文本）。
+ */
+export async function getSheetArchive(id: number): Promise<string> {
+  const { data } = await http.get<string>(`/sheets/${id}/archive`, {
+    responseType: 'text',
+    transformResponse: (r) => r,
+  })
+  return data
+}
+
+/**
+ * GET /sheets/{id}/archive/assets/{filename} —— 取归档产物（如 contributions.png）为 Blob。
+ * 用 Blob 而非裸 URL：asset 端点需 JWT，<img> 直连发不出 Authorization 头，
+ * 故用 axios（拦截器注入 Bearer）拉 blob → 调用方 URL.createObjectURL 给 <img>。
+ * 无图（404）由调用方 try/catch 静默跳过。
+ */
+export async function getSheetArchiveAsset(id: number, filename: string): Promise<Blob> {
+  const { data } = await http.get<Blob>(`/sheets/${id}/archive/assets/${filename}`, {
+    responseType: 'blob',
+  })
   return data
 }

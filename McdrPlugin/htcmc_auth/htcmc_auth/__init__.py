@@ -15,6 +15,9 @@ from .sheet_commands import (
     _sheet_create,
     _sheet_rename,
     _sheet_delete,
+    _sheet_advance_default,
+    _sheet_advance_to_constructing,
+    _sheet_advance_to_archived,
     _sheet_upsert,
     _sheet_delrow,
     _sheet_claim,
@@ -126,6 +129,18 @@ def _register_commands(server: PluginServerInterface):
                 .then(Integer("sheet_id").then(QuotableText("title").runs(_sheet_rename)))
             )
             .then(Literal("delete").then(Integer("sheet_id").runs(_sheet_delete)))
+            # 阶段流转（owner/admin）：advance <sheet_id> [constructing|archived]
+            # 字面量目标对齐 add/set 风格；Literal 不进 ctx，故三回调各自硬编码 to
+            # （S-1：https://docs.mcdreforged.com/en/latest/plugin_dev/command.html §Context）
+            .then(
+                Literal("advance")
+                .then(
+                    Integer("sheet_id")
+                    .runs(_sheet_advance_default)  # 缺省 to：后端按状态机默认推进
+                    .then(Literal("constructing").runs(_sheet_advance_to_constructing))
+                    .then(Literal("archived").runs(_sheet_advance_to_archived))
+                )
+            )
             # 行级 upsert：add / set 同端点，mode 可选（默认 lock；字面量 lock|progress），sort 可选
             .then(
                 Literal("add")

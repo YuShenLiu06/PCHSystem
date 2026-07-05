@@ -17,7 +17,16 @@
 
 #### Added
 
-- _（待补）_
+- **归档贡献占比 matplotlib 饼图**：新 `archive/chart.py`（Agg + 惰性 import；rc_context 配 Noto Sans CJK SC；≤5 全显 / >5 top5+其他；空返 b""）；`write_bytes_atomic` 写 `projects/{id}/`；service 集成渲染+写盘+统一 cleanup。pyproject 加 `matplotlib>=3.8`；Dockerfile 装 git/fontconfig + 单字体 Noto Sans CJK SC。`6240449`
+- **aggregate_contributor_totals 改 union_all**：lock delivered + progress contributed 合并按人，HAVING>0 剔除零和。`7305c20`
+- **归档产物每项目独立文件夹** `projects/{id}/index.md` + contributions.png；section 加 emoji（📦/🏆/📊/📅）。`7305c20` `6240449`
+- **`GET /sheets/{id}/archive/assets/{filename}`**（image/png，basename 白名单+穿越守卫，鉴权 get_current_player）。`072b0ba`
+- **wiki git publisher**（`archive/publisher.py`，默认 off · best-effort；subprocess git，token 内嵌 push URL 不落盘；失败仅 notify(wiki_publish_failed)，不回滚 DB）。config 加 WIKI_GIT_*。`6e205b4`
+
+#### Changed
+
+- **R-8 重写**：wiki.js GraphQL 单向 → git 双向（独立内容仓+PR+拥有者编辑；业务库不回写）。`2395e7d`
+- 去 material_table section + 死 context（rows/contributors_map）。`7305c20`
 
 ### McdrPlugin
 
@@ -35,13 +44,13 @@
 
 #### Added
 
-- _（待补）_
+- SheetEditor 归档 dialog `<pre>` 下方贡献占比 `<img>`（axios blob→object URL，dialog close revoke；无图静默）。`072b0ba`
 
 ### 文档与计划
 
 #### Added
 
-- _（待补）_
+- R-8 重写（根 CLAUDE.md）+ wiki-service.md 重写（git 双向+PR+host 权衡）+ architecture/data-model/api/markdown-service/guied/Frontend·Backend CLAUDE 归档产物对齐。`2395e7d`
 
 ---
 

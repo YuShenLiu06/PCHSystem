@@ -14,8 +14,12 @@ import {
   setRowProgress,
   releaseRow,
   rejectRow,
+  advanceSheet,
+  getSheetArchive,
+  getSheetArchiveAsset,
   type SheetDetail,
   type RowDetail,
+  type SheetStatus,
 } from '../../api/sheets'
 import { formatQty } from '../../utils/qty'
 import { useAuthStore } from '../../stores/auth'
@@ -67,6 +71,90 @@ const canEdit = computed(() => {
   return sheet.value.owner_uuid === p.uuid || p.role === 'admin' || p.role === 'owner'
 })
 
+// 已归档 = 只读终态：隐藏所有写操作（行 CRUD / 流转 / 改标题 / 删除）。R-9：仅可见性，真实拒绝在后端 409
+const isReadOnly = computed(() => sheet.value?.status === 'archived')
+
+// 项目阶段 el-tag 配色 + 文案
+function phaseTagType(status: SheetStatus | undefined): 'info' | 'warning' | 'success' {
+  if (status === 'constructing') return 'warning'
+  if (status === 'archived') return 'success'
+  return 'info' // collecting / 未加载
+}
+
+function phaseLabel(status: SheetStatus | undefined): string {
+  if (status === 'constructing') return '施工中'
+  if (status === 'archived') return '已归档'
+  return '收集中'
+}
+
+// 归档文档预览
+const archiveVisible = ref(false)
+const archiveLoading = ref(false)
+const archiveContent = ref('')
+// 贡献占比图 object URL（asset 端点需 JWT，<img> 直连发不出头，故 axios 拉 blob 再 createObjectURL）
+const archiveImgUrl = ref('')
+const ARCHIVE_CHART_FILENAME = 'contributions.png'
+
+function revokeArchiveImgUrl(): void {
+  if (archiveImgUrl.value) {
+    URL.revokeObjectURL(archiveImgUrl.value)
+    archiveImgUrl.value = ''
+  }
+}
+
+// 阶段流转（owner/admin 触发）。to 省略时后端按状态机推进
+async function onAdvance(to: 'constructing' | 'archived'): Promise<void> {
+  const isArchive = to === 'archived'
+  try {
+    if (isArchive) {
+      await ElMessageBox.confirm(
+        '将生成归档文档，项目转为只读（不可再编辑）。是否继续？',
+        '归档确认',
+        { type: 'warning', confirmButtonText: '归档', cancelButtonText: '取消' },
+      )
+    }
+  } catch {
+    return // 用户取消
+  }
+  try {
+    const updated = await advanceSheet(sheetId.value, to)
+    sheet.value = updated // 整体替换，含新 status / archived_path / archived_at
+    ElMessage.success(isArchive ? '已归档' : '已进入施工阶段')
+  } catch (e: unknown) {
+    // 409 已归档 / 非法转移：给出友好提示
+    const msg = errorMessage(e)
+    ElMessage.error(msg)
+  }
+}
+
+// 查看归档文档（仅 archived 态可用）
+async function onShowArchive(): Promise<void> {
+  archiveLoading.value = true
+  archiveContent.value = ''
+  revokeArchiveImgUrl()
+  archiveVisible.value = true
+  try {
+    archiveContent.value = await getSheetArchive(sheetId.value)
+    // 贡献占比图（无图项目 404 → 静默不显，不影响 md 预览）
+    try {
+      const blob = await getSheetArchiveAsset(sheetId.value, ARCHIVE_CHART_FILENAME)
+      archiveImgUrl.value = URL.createObjectURL(blob)
+    } catch {
+      // 无贡献占比图（项目无贡献者）→ 不显图，吞掉
+    }
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e) ?? '加载归档文档失败')
+    archiveVisible.value = false
+  } finally {
+    archiveLoading.value = false
+  }
+}
+
+// 归档 dialog 关闭：释放 object URL 避免内存泄漏
+function onArchiveDialogClose(): void {
+  revokeArchiveImgUrl()
+}
+
 // 当前玩家是否为该行的认领人
 function isClaimant(row: RowDetail): boolean {
   const p = auth.player
@@ -75,7 +163,11 @@ function isClaimant(row: RowDetail): boolean {
 
 function errorMessage(e: unknown): string {
   if (typeof e === 'object' && e !== null && 'response' in e) {
-    const resp = (e as { response?: { data?: { detail?: string } } }).response
+    const resp = (e as { response?: { status?: number; data?: { detail?: string } } }).response
+    // 409 = 已归档/非法转移：行操作/流转被后端拒绝
+    if (resp?.status === 409) {
+      return resp?.data?.detail ?? '项目已归档，只读'
+    }
     return resp?.data?.detail ?? '请求失败'
   }
   return '请求失败'
@@ -337,7 +429,7 @@ async function onReject(row: RowDetail): Promise<void> {
 
 async function onDeleteSheet(): Promise<void> {
   try {
-    await ElMessageBox.confirm(`确认删除表格「${sheet.value?.title ?? ''}」？此操作不可恢复。`, '删除确认', {
+    await ElMessageBox.confirm(`确认删除项目「${sheet.value?.title ?? ''}」？此操作不可恢复。`, '删除确认', {
       type: 'warning',
       confirmButtonText: '删除',
       cancelButtonText: '取消',
@@ -347,7 +439,7 @@ async function onDeleteSheet(): Promise<void> {
   }
   try {
     await deleteSheet(sheetId.value)
-    ElMessage.success('表格已删除')
+    ElMessage.success('项目已删除')
     router.push('/sheets')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -366,7 +458,11 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
   <el-card v-loading="loading">
     <template #header>
       <div v-if="sheet" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-        <el-button link @click="back">← 返回列表</el-button>
+        <el-button link @click="back">← 返回项目列表</el-button>
+        <!-- 阶段横幅 -->
+        <el-tag :type="phaseTagType(sheet.status)" size="default" effect="plain">
+          阶段：{{ phaseLabel(sheet.status) }}
+        </el-tag>
         <span v-if="!titleEditing" style="font-weight: 600; font-size: 16px;">{{ sheet.title }}</span>
         <el-input
           v-else
@@ -375,23 +471,31 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
           maxlength="128"
           @keyup.enter="onSaveTitle"
         />
-        <el-button v-if="canEdit && !titleEditing" link type="primary" @click="titleEditing = true">改标题</el-button>
-        <template v-if="canEdit && titleEditing">
+        <el-button v-if="canEdit && !isReadOnly && !titleEditing" link type="primary" @click="titleEditing = true">改标题</el-button>
+        <template v-if="canEdit && !isReadOnly && titleEditing">
           <el-button type="primary" size="small" @click="onSaveTitle">保存</el-button>
           <el-button size="small" @click="() => { titleEditing = false; titleDraft = sheet!.title }">取消</el-button>
         </template>
         <span style="flex: 1;" />
+        <!-- owner 阶段流转按钮（非 archived 态） -->
+        <template v-if="canEdit && !isReadOnly">
+          <el-button v-if="sheet.status === 'collecting'" size="small" type="warning" plain @click="onAdvance('constructing')">进入施工</el-button>
+          <el-button v-if="sheet.status === 'collecting'" size="small" type="success" plain @click="onAdvance('archived')">直接归档</el-button>
+          <el-button v-if="sheet.status === 'constructing'" size="small" type="success" plain @click="onAdvance('archived')">标记施工完成并归档</el-button>
+        </template>
+        <!-- 已归档：查看归档文档 -->
+        <el-button v-if="isReadOnly" size="small" @click="onShowArchive">查看归档文档</el-button>
         <span style="color: #888; font-size: 12px;">所有者：{{ sheet.owner_name }}</span>
-        <el-button v-if="canEdit" type="danger" plain @click="onDeleteSheet">删除表格</el-button>
+        <el-button v-if="canEdit && !isReadOnly" type="danger" plain @click="onDeleteSheet">删除项目</el-button>
       </div>
-      <div v-else>表格详情</div>
+      <div v-else>项目详情</div>
     </template>
 
     <el-result v-if="errorMsg && !sheet" icon="error" title="加载失败" :sub-title="errorMsg" />
 
     <template v-else-if="sheet">
-      <!-- 新增行（仅拥有者可见） -->
-      <div v-if="canEdit" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+      <!-- 新增行（仅拥有者可见 + 非 archived 只读态） -->
+      <div v-if="canEdit && !isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <el-input v-model="newRow.item_name" placeholder="物品名" style="width: 200px;" maxlength="128" />
         <el-input v-model="newRow.registry_id" placeholder="注册名（可空，如 minecraft:stone）" style="width: 240px;" maxlength="128" />
         <el-input-number v-model="newRow.need_qty" :min="0" controls-position="right" style="width: 130px;" />
@@ -407,7 +511,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="物品名" min-width="180">
           <template #default="{ row }">
             <el-input
-              v-if="canEdit && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
               v-model="rowDrafts[row.id].item_name"
               maxlength="128"
             />
@@ -417,7 +521,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="注册名" min-width="200">
           <template #default="{ row }">
             <el-input
-              v-if="canEdit && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
               v-model="rowDrafts[row.id].registry_id"
               placeholder="minecraft:stone"
               maxlength="128"
@@ -430,7 +534,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="需要数量" width="120">
           <template #default="{ row }">
             <el-input-number
-              v-if="canEdit && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
               v-model="rowDrafts[row.id].need_qty"
               :min="0"
               controls-position="right"
@@ -447,7 +551,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="模式" width="110">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -506,7 +610,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="排序" width="120">
           <template #default="{ row }">
             <el-input-number
-              v-if="canEdit && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
               v-model="rowDrafts[row.id].sort_order"
               :min="0"
               controls-position="right"
@@ -514,32 +618,46 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
             <span v-else>{{ row.sort_order }}</span>
           </template>
         </el-table-column>
-        <!-- 动作列：按 角色×状态 条件渲染 -->
+        <!-- 动作列：按 角色×状态 条件渲染；archived 只读态隐藏全部写操作 -->
         <el-table-column label="操作" width="240" align="center">
           <template #default="{ row }">
-            <!-- 拥有者：行内编辑保存/删除 -->
-            <template v-if="canEdit">
-              <el-button type="primary" size="small" @click="onSaveRow(row)">保存</el-button>
-              <el-button type="danger" size="small" @click="onDeleteRow(row)">删除</el-button>
+            <template v-if="!isReadOnly">
+              <!-- 拥有者：行内编辑保存/删除 -->
+              <template v-if="canEdit">
+                <el-button type="primary" size="small" @click="onSaveRow(row)">保存</el-button>
+                <el-button type="danger" size="small" @click="onDeleteRow(row)">删除</el-button>
+              </template>
+              <!-- lock 任意玩家 × open → 认领（progress 行无认领按钮，改为上交材料） -->
+              <el-button v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" size="small" type="primary" @click="onClaim(row)">认领</el-button>
+              <!-- progress 任意玩家 × 非 done → 上交材料 -->
+              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+              <!-- lock 认领人 × claimed → 标备齐 + 放弃 -->
+              <template v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'">
+                <el-button size="small" type="success" @click="onSetDelivery(row)">标备齐</el-button>
+                <el-button v-if="!canEdit" size="small" @click="onRelease(row)">放弃</el-button>
+              </template>
+              <!-- 拥有者 × lock & claimed|done → 解除锁定（progress 行改用「调整进度」） -->
+              <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" size="small" plain @click="onRelease(row)">解除锁定</el-button>
+              <!-- 拥有者 × progress → 调整进度（直接设 delivered_qty 绝对值，可增可减，不动贡献者名单） -->
+              <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" plain @click="onAdjustProgress(row)">调整进度</el-button>
+              <!-- 认领人|拥有者 × done × lock → 打回（progress 无打回语义） -->
+              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" plain @click="onReject(row)">打回</el-button>
             </template>
-            <!-- lock 任意玩家 × open → 认领（progress 行无认领按钮，改为上交材料） -->
-            <el-button v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" size="small" type="primary" @click="onClaim(row)">认领</el-button>
-            <!-- progress 任意玩家 × 非 done → 上交材料 -->
-            <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
-            <!-- lock 认领人 × claimed → 标备齐 + 放弃 -->
-            <template v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'">
-              <el-button size="small" type="success" @click="onSetDelivery(row)">标备齐</el-button>
-              <el-button v-if="!canEdit" size="small" @click="onRelease(row)">放弃</el-button>
-            </template>
-            <!-- 拥有者 × lock & claimed|done → 解除锁定（progress 行改用「调整进度」） -->
-            <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" size="small" plain @click="onRelease(row)">解除锁定</el-button>
-            <!-- 拥有者 × progress → 调整进度（直接设 delivered_qty 绝对值，可增可减，不动贡献者名单） -->
-            <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" plain @click="onAdjustProgress(row)">调整进度</el-button>
-            <!-- 认领人|拥有者 × done × lock → 打回（progress 无打回语义） -->
-            <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" plain @click="onReject(row)">打回</el-button>
+            <span v-else style="color: #aaa;">—</span>
           </template>
         </el-table-column>
       </el-table>
     </template>
   </el-card>
+
+  <!-- 归档文档预览（text/markdown，保留白空格 + 等宽字体）+ 贡献占比图 -->
+  <el-dialog v-model="archiveVisible" title="归档文档" width="80%" top="5vh" @close="onArchiveDialogClose">
+    <div v-loading="archiveLoading">
+      <pre style="white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; max-height: 50vh; overflow: auto; margin: 0;">{{ archiveContent }}</pre>
+      <img v-if="archiveImgUrl" :src="archiveImgUrl" alt="贡献占比" style="max-width: 100%; margin-top: 12px;" />
+    </div>
+    <template #footer>
+      <el-button @click="archiveVisible = false">关闭</el-button>
+    </template>
+  </el-dialog>
 </template>

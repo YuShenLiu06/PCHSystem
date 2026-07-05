@@ -16,7 +16,7 @@ from app.core.db import async_session_factory
 from app.models.sheet import Sheet, SheetRow
 from app.models.user import Player
 from app.repositories import sheet_repo
-from app.repositories.sheet_repo import SheetRowConflict
+from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 
 
 async def _seed_player(name: str = "alice") -> uuid.UUID:
@@ -725,3 +725,443 @@ async def test_upsert_row_overwrites_registry_id_when_provided():
         )
         await s.commit()
         assert row.registry_id == "minecraft:cobblestone"
+
+
+# ---------- 项目阶段生命周期（迁移 0009）----------
+# 三阶段：collecting（默认）→ constructing → archived（只读终态）；collecting 可直跳 archived。
+# 所有写操作入口经 _assert_writable 守卫：archived → SheetArchived；不存在 → 交给后续逻辑返 None→404。
+
+
+async def _make_sheet(title: str = "S") -> int:
+    """seed 一张 collecting 态表，返回 sheet_id。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, title)
+        await s.commit()
+        return sheet.id
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_collecting_to_constructing():
+    # Arrange
+    sid = await _make_sheet()
+    # Act
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.advance_sheet(
+            s, sid, sheet_repo.SHEET_PHASE_CONSTRUCTING
+        )
+        await s.commit()
+    # Assert
+    assert sheet is not None
+    assert sheet.status == sheet_repo.SHEET_PHASE_CONSTRUCTING
+    assert sheet.archived_path is None
+    assert sheet.archived_at is None
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_constructing_to_archived_with_path():
+    # Arrange：先到 constructing
+    sid = await _make_sheet()
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s, sid, sheet_repo.SHEET_PHASE_CONSTRUCTING
+        )
+        await s.commit()
+    # Act：constructing → archived（带 archived_path）
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.advance_sheet(
+            s,
+            sid,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid}/index.md",
+        )
+        await s.commit()
+    # Assert
+    assert sheet.status == sheet_repo.SHEET_PHASE_ARCHIVED
+    assert sheet.archived_path == f"projects/{sid}/index.md"
+    assert sheet.archived_at is not None
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_collecting_directly_to_archived():
+    # Arrange：collecting 态（跳过施工）
+    sid = await _make_sheet()
+    # Act
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.advance_sheet(
+            s,
+            sid,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid}/index.md",
+        )
+        await s.commit()
+    # Assert
+    assert sheet.status == sheet_repo.SHEET_PHASE_ARCHIVED
+    assert sheet.archived_path == f"projects/{sid}/index.md"
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_archived_raises_sheet_archived():
+    # Arrange：先归档
+    sid = await _make_sheet()
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s,
+            sid,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid}/index.md",
+        )
+        await s.commit()
+    # Act / Assert：archived 终态，任何 advance → SheetArchived
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.advance_sheet(
+                s, sid, sheet_repo.SHEET_PHASE_CONSTRUCTING
+            )
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_idempotent_same_status_raises_conflict():
+    # Arrange：collecting 态
+    sid = await _make_sheet()
+    # Act / Assert：to == 当前 → SheetRowConflict（幂等拒绝）
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.advance_sheet(
+                s, sid, sheet_repo.SHEET_PHASE_COLLECTING
+            )
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_archived_without_path_raises_value_error():
+    # Arrange
+    sid = await _make_sheet()
+    # Act / Assert：to=archived 但缺 archived_path → ValueError（契约违反）
+    async with async_session_factory() as s:
+        with pytest.raises(ValueError):
+            await sheet_repo.advance_sheet(
+                s, sid, sheet_repo.SHEET_PHASE_ARCHIVED
+            )
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_invalid_transition_raises_conflict():
+    """constructing → collecting 是回退非法转移 → SheetRowConflict。"""
+    # Arrange：先到 constructing
+    sid = await _make_sheet()
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s, sid, sheet_repo.SHEET_PHASE_CONSTRUCTING
+        )
+        await s.commit()
+    # Act / Assert
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict):
+            await sheet_repo.advance_sheet(
+                s, sid, sheet_repo.SHEET_PHASE_COLLECTING
+            )
+
+
+@pytest.mark.asyncio
+async def test_advance_sheet_missing_returns_none():
+    # Arrange / Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.advance_sheet(
+            s, 999999, sheet_repo.SHEET_PHASE_CONSTRUCTING
+        )
+    # Assert：不存在 → None（api 层翻译 404）
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_write_on_archived_sheet_raises_sheet_archived():
+    """先 advance 到 archived，再调多个写函数都应 raise SheetArchived（守卫代表覆盖）。"""
+    # Arrange：建表 + 行，然后归档
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(s, sheet.id, "x", 10, 0, 0)
+        await s.commit()
+        sid, rid = sheet.id, row.id
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s,
+            sid,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid}/index.md",
+        )
+        await s.commit()
+
+    # Act / Assert：覆盖多个写函数入口守卫
+    alice = await _seed_player("alice")
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.upsert_row(s, sid, "x", 99, 0, 0)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.claim_row(s, sid, rid, alice)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.delete_row(s, sid, rid)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.delete_sheet(s, sid)
+
+
+@pytest.mark.asyncio
+async def test_write_on_archived_sheet_progress_paths_guarded():
+    """progress 路径写函数（contribute/set_row_progress）在 archived 上同样守卫。"""
+    # Arrange：建表 + progress 行，然后归档
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(s, sheet.id, "x", 10, 1, 0)
+        await s.commit()
+        sid, rid = sheet.id, row.id
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s,
+            sid,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid}/index.md",
+        )
+        await s.commit()
+
+    alice = await _seed_player("alice")
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.contribute_row(s, sid, rid, alice, 1)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.set_row_progress(s, sid, rid, 5)
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.release_row(s, sid, rid)
+
+
+# ---------- list_sheets status_filter ----------
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_filter_active():
+    """status=active 返 collecting+constructing，不返 archived。"""
+    sid1 = await _make_sheet("A")  # collecting
+    sid2 = await _make_sheet("B")  # collecting → constructing
+    sid3 = await _make_sheet("C")  # → archived
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s, sid2, sheet_repo.SHEET_PHASE_CONSTRUCTING
+        )
+        await sheet_repo.advance_sheet(
+            s,
+            sid3,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid3}/index.md",
+        )
+        await s.commit()
+
+    async with async_session_factory() as s:
+        active = await sheet_repo.list_sheets(s, status_filter="active")
+        titles = {sh.title for sh, _ in active}
+    assert titles == {"A", "B"}  # C 已 archived 不返
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_filter_archived():
+    sid1 = await _make_sheet("A")  # collecting
+    sid2 = await _make_sheet("B")  # → archived
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s,
+            sid2,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid2}/index.md",
+        )
+        await s.commit()
+
+    async with async_session_factory() as s:
+        archived = await sheet_repo.list_sheets(s, status_filter="archived")
+        titles = {sh.title for sh, _ in archived}
+    assert titles == {"B"}
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_filter_combined_with_owner():
+    """status_filter 与 owner_uuid 可组合。"""
+    owner_a = await _seed_player("alice")
+    owner_b = await _seed_player("bob")
+    async with async_session_factory() as s:
+        await sheet_repo.create_sheet(s, owner_a, "A1")  # active
+        await sheet_repo.create_sheet(s, owner_b, "B1")  # active
+        a2 = await sheet_repo.create_sheet(s, owner_a, "A2")  # → archived
+        await sheet_repo.advance_sheet(
+            s,
+            a2.id,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{a2.id}/index.md",
+        )
+        await s.commit()
+
+    # owner_a 的 active 表
+    async with async_session_factory() as s:
+        active_a = await sheet_repo.list_sheets(
+            s, owner_uuid=owner_a, status_filter="active"
+        )
+        assert {sh.title for sh, _ in active_a} == {"A1"}
+    # owner_a 的 archived 表
+    async with async_session_factory() as s:
+        archived_a = await sheet_repo.list_sheets(
+            s, owner_uuid=owner_a, status_filter="archived"
+        )
+        assert {sh.title for sh, _ in archived_a} == {"A2"}
+    # owner_b 的 archived（空）
+    async with async_session_factory() as s:
+        archived_b = await sheet_repo.list_sheets(
+            s, owner_uuid=owner_b, status_filter="archived"
+        )
+        assert archived_b == []
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_no_filter_returns_all_including_archived():
+    """status_filter=None 不过滤，archived 也返（保持历史行为）。"""
+    sid1 = await _make_sheet("A")
+    sid2 = await _make_sheet("B")
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s,
+            sid2,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid2}/index.md",
+        )
+        await s.commit()
+
+    async with async_session_factory() as s:
+        all_sheets = await sheet_repo.list_sheets(s)
+        assert {sh.title for sh, _ in all_sheets} == {"A", "B"}
+
+
+# ---------- aggregate_contributor_totals（精确贡献量排行） ----------
+
+
+async def _seed_named_player(name: str) -> uuid.UUID:
+    """seed player 并设 current_name（aggregate 排序兜底用名字）。"""
+    u = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=u, current_name=name))
+        await s.commit()
+    return u
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_sums_per_player():
+    # Arrange：两个 progress 行；alice 在两行各上交 → 应合并总量
+    sid = await _make_sheet("聚合")
+    alice = await _seed_named_player("alice")
+    bob = await _seed_named_player("bob")
+    async with async_session_factory() as s:
+        rid1 = await sheet_repo.upsert_row(s, sid, "圆石", 100, sheet_repo.MODE_PROGRESS, 0)
+        rid2 = await sheet_repo.upsert_row(s, sid, "铁锭", 100, sheet_repo.MODE_PROGRESS, 1)
+        await sheet_repo.contribute_row(s, sid, rid1.id, alice, 30)
+        await sheet_repo.contribute_row(s, sid, rid1.id, bob, 10)
+        await sheet_repo.contribute_row(s, sid, rid2.id, alice, 50)  # alice 跨行再 +50
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：alice=80（30+50），bob=10
+    by_name = {name: qty for _u, name, qty in totals}
+    assert by_name == {"alice": 80, "bob": 10}
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_orders_by_qty_desc():
+    # Arrange：alice 100（最高）> bob 50 > carol 50（同票，名字 bob<carol 升序）
+    sid = await _make_sheet("排序")
+    alice = await _seed_named_player("alice")
+    bob = await _seed_named_player("bob")
+    carol = await _seed_named_player("carol")
+    async with async_session_factory() as s:
+        r1 = await sheet_repo.upsert_row(s, sid, "A", 999, sheet_repo.MODE_PROGRESS, 0)
+        await sheet_repo.contribute_row(s, sid, r1.id, alice, 100)
+        await sheet_repo.contribute_row(s, sid, r1.id, bob, 50)
+        await sheet_repo.contribute_row(s, sid, r1.id, carol, 50)
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：顺序 alice, bob, carol
+    names = [name for _u, name, _q in totals]
+    assert names == ["alice", "bob", "carol"]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_empty():
+    # Arrange：表无 progress 行 / 无贡献者
+    sid = await _make_sheet("空")
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert
+    assert totals == []
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_lock_claimed_not_delivered_excluded():
+    # Arrange：lock 行认领但 delivered=0（仅 claim）→ HAVING>0 剔除；只 progress 上交者入榜
+    sid = await _make_sheet("lock 未交付")
+    alice = await _seed_named_player("alice")
+    claimant = await _seed_named_player("claimant")
+    async with async_session_factory() as s:
+        lock_row = await sheet_repo.upsert_row(s, sid, "锁", 64, sheet_repo.MODE_LOCK, 0)
+        prog_row = await sheet_repo.upsert_row(s, sid, "进", 64, sheet_repo.MODE_PROGRESS, 1)
+        # lock 仅认领（claimant 不进 contributors 表，delivered_qty=0 → 不计入）
+        await sheet_repo.claim_row(s, sid, lock_row.id, claimant)
+        await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 7)
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：只有 alice（claimant 仅 claim 未交付，delivered=0 被剔除）
+    assert totals == [(alice, "alice", 7)]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_includes_lock_delivered():
+    # Arrange：lock 行认领并交付 → claimant 按 delivered_qty 计入；progress 上交者各自计
+    sid = await _make_sheet("lock 已交付")
+    claimant = await _seed_named_player("claimant")
+    alice = await _seed_named_player("alice")
+    bob = await _seed_named_player("bob")
+    async with async_session_factory() as s:
+        lock_row = await sheet_repo.upsert_row(s, sid, "锁", 64, sheet_repo.MODE_LOCK, 0)
+        prog_row = await sheet_repo.upsert_row(s, sid, "进", 100, sheet_repo.MODE_PROGRESS, 1)
+        await sheet_repo.claim_row(s, sid, lock_row.id, claimant)
+        await sheet_repo.set_row_delivery(s, sid, lock_row.id, 64)  # claimant 交付 64
+        await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 30)
+        await sheet_repo.contribute_row(s, sid, prog_row.id, bob, 10)
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：claimant=64（lock 交付）最高，alice=30，bob=10
+    assert totals == [(claimant, "claimant", 64), (alice, "alice", 30), (bob, "bob", 10)]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_contributor_totals_merges_lock_and_progress_same_player():
+    # Arrange：同一玩家既是 lock claimant（交付）又是 progress 贡献者 → 两支合并
+    sid = await _make_sheet("合并")
+    alice = await _seed_named_player("alice")
+    async with async_session_factory() as s:
+        lock_row = await sheet_repo.upsert_row(s, sid, "锁", 10, sheet_repo.MODE_LOCK, 0)
+        prog_row = await sheet_repo.upsert_row(s, sid, "进", 100, sheet_repo.MODE_PROGRESS, 1)
+        await sheet_repo.claim_row(s, sid, lock_row.id, alice)
+        await sheet_repo.set_row_delivery(s, sid, lock_row.id, 10)  # lock 交付 10
+        await sheet_repo.contribute_row(s, sid, prog_row.id, alice, 25)  # progress 上交 25
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        totals = await sheet_repo.aggregate_contributor_totals(s, sid)
+    # Assert：alice=35（lock 10 + progress 25 合并）
+    assert totals == [(alice, "alice", 35)]

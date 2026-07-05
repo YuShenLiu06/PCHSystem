@@ -12,7 +12,7 @@
 - **时间戳**：`TIMESTAMPTZ`，统一存 UTC。
 - **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单（**规划中**，未落地）。
 - **schema 划分与实现状态**：
-  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations`，迁移 0001-0003，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors`，迁移 0004/0005/0007/0008/0009，§10）、`notifications`（`notifications`，迁移 0006，§11）
+  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations`，迁移 0001-0003，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors`，迁移 0004/0005/0007/0008/0009/0010，§10）、`notifications`（`notifications`，迁移 0006，§11）
   - 🚧 **规划中（未落地）**：`projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 schema 中的 5 个，§3-§7 为设计预案）；`web_accounts` / `bind_tokens`（§2.4/§2.5，`!!bind` 流程）
 
 ## 1. 全局 ER 图
@@ -278,7 +278,12 @@ erDiagram
 | `id` | bigserial | PK | |
 | `owner_uuid` | uuid | FK→players.uuid, not null | 表主（身份锚 R-5） |
 | `title` | text | not null | 表标题 |
+| `status` | text | not null default 'collecting', CHECK ∈ (collecting/constructing/archived)（迁移 0009） | **项目阶段**：collecting（材料收集，默认）/ constructing（施工占位）/ archived（只读终态），见 §10.4 |
+| `archived_path` | text | null（仅 archived 非空，一致性 CHECK） | 归档产物相对 `ARCHIVE_ROOT` 的 POSIX 路径（如 `projects/42/index.md`，每项目独立文件夹，同目录含 `contributions.png` 占比饼图）；wiki-service git 双向同步入口 |
+| `archived_at` | timestamptz | null（仅 archived 非空，一致性 CHECK） | 归档时间 |
 | `created_at` / `updated_at` | timestamptz | not null default now() | |
+
+约束（迁移 0009）：`ck_sheets_status_values`（status ∈ collecting/constructing/archived）+ `ck_sheets_status_archive_consistency`（`status='archived' ⇒ archived_path/archived_at 非空`；`status ∈ (collecting,constructing) ⇒ 二者 null`）。索引：`ix_sheets_status`。`status` 用 `server_default='collecting'` 自动回填现有行（无额外 UPDATE）。
 
 ### 10.2 `sheet_rows`（表格行）
 | 列 | 类型 | 约束 | 说明 |
@@ -286,7 +291,7 @@ erDiagram
 | `id` | bigserial | PK | |
 | `sheet_id` | bigint | FK→sheets.id `ON DELETE CASCADE`, not null | 删表级联删行 |
 | `item_name` | text | not null | 显示名/自由文本（红线 R-6 不覆盖 sheets）；新建时若缺失，后端据 `registry_id` 用翻译表自动补中文名 |
-| `registry_id` | text | null | MC 物品注册名 `namespace:path`（隐式可空，迁移 0009）；**一键提交按此精确匹配表行**；block id ≠ item id 时存原值（不归一化，见 mcdr-plugin §6） |
+| `registry_id` | text | null | MC 物品注册名 `namespace:path`（隐式可空，迁移 0010）；**一键提交按此精确匹配表行**；block id ≠ item id 时存原值（不归一化，见 mcdr-plugin §6） |
 | `need_qty` | integer | not null default 0 | 原始整数，永不存换算结果 |
 | `mode` | smallint | not null default 0 | 0=lock（二元备齐，单人锁定）/ 1=progress（进度，多人贡献者列表） |
 | `status` | text | not null default 'open' | open / claimed / done（见下不变量） |
@@ -295,7 +300,7 @@ erDiagram
 | `sort_order` | integer | not null default 0 | |
 | `updated_at` | timestamptz | not null default now() | |
 
-约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。`registry_id` 为 nullable、无唯一约束，仅作「一键提交」匹配键（迁移 0009）。
+约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。`registry_id` 为 nullable、无唯一约束，仅作「一键提交」匹配键（迁移 0010）。
 
 **双模式不变量**（迁移 0005 协作改进 + 0007 progress 多人贡献者，推翻原 spec D-4）：
 - **lock（mode=0）**：单认领人状态机 `open → claimed → done`（claim / delivery / release / reject）；`open ⇒ claimant IS NULL ∧ delivered=0`，`claimed ⇒ claimant NOT NULL`，`done ⇒ claimant NOT NULL ∧ delivered≥need`。
@@ -313,6 +318,38 @@ erDiagram
 
 > **权限（RBAC，后端为准）**：JWT 已登录可读所有表；表的 `owner_uuid` 或 admin/owner 角色可写；CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。
+
+### 10.4 项目生命周期状态机（迁移 0009）
+
+> 与 §10.2「行级双模式不变量」**正交**：行级 `status`（open/claimed/done）描述单条物品的认领协作；项目级 `status`（collecting/constructing/archived）描述整个 sheet（项目）的生命周期。
+
+```
+   advance(to=constructing)        advance(to=archived，写盘+通知)
+collecting ─────────────────────▶ constructing ─────────────────────▶ archived
+    └────────── advance(to=archived，跳过施工，写盘+通知) ──────────────▶▲
+```
+
+| 转移 | 触发者 | 副作用 |
+|---|---|---|
+| collecting → constructing | owner/admin | 仅置 `status=constructing`（静默，不发通知） |
+| collecting → archived（直跳） | owner/admin | 渲染 md → 原子写盘 → DB 置 archived 三字段 + `sheet_archived` 通知 → commit |
+| constructing → archived | owner/admin | 同上（标记施工完成并归档） |
+
+**不变量**：
+- `archived` = **终态只读**——repo 层 `_assert_writable` 守卫：archived 之后任何写操作（行级 upsert/claim/delivery/contribute/release/reject/progress、删行、删表、advance）抛 `SheetArchived` → api 翻译 409。archived 后行数据视为**冻结**（无 DB 触发器，应用层守卫；admin 直连改行会使归档 md 过期，文档标注此风险）。
+- 一致性 CHECK `ck_sheets_status_archive_consistency` 保证：`archived ⇔ archived_path + archived_at 非空`；`collecting/constructing ⇔ 二者 null`。
+- `advance(to=当前状态)` 幂等拒绝 → `SheetRowConflict` → 409（避免重复通知/覆盖 archived_at）。
+- 并发：`advance_sheet` 用 `SELECT ... FOR UPDATE` 锁 sheet 行。
+
+**归档文件路径约定**：`archived_path` 存相对 `ARCHIVE_ROOT` 的 POSIX 路径，指向**每项目独立文件夹**下的 `index.md`（`projects/{sheet_id}/index.md`），同目录还含 `contributions.png`（matplotlib 渲染的贡献占比饼图，CJK 字体 Noto Sans CJK SC；≤5 人全显，>5 人 top5 + 其他）。文件夹覆盖（archived 终态不重归档，`{sheet_id}` 稳定可预测）。这是 **wiki-service git 双向同步入口**（后端 publisher 把 `projects/<id>/` 整目录提交推送到独立 wiki 内容 git 仓；默认 off，红线 R-8）。
+
+**归档 markdown section 结构**（去逐行材料清单）：
+
+- `# 📦 项目归档：{title}` —— 标题
+- `## 🏆 贡献者统计` —— `aggregate_contributor_totals` 用 union_all 把 lock 行 `delivered_qty`（按 claimant）+ progress 行 `contributed_qty`（按贡献者）合并按人聚合，`HAVING SUM > 0` 剔除零和，输出精确排行
+- `## 📊 贡献占比` —— 引用同目录 `![贡献占比](contributions.png)`（PNG 饼图）
+- `## 📅 时间线` —— 收集/施工/归档阶段时间戳
+- footer：`由 PCHSystem 自动生成`
 
 ---
 
