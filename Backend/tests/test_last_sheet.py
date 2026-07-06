@@ -9,6 +9,8 @@ import uuid
 
 import pytest
 
+import app.api.deps as deps
+from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.jwt import create_access_token
 from app.models.user import Player
@@ -137,3 +139,26 @@ async def test_last_sheet_per_player_independent(client):
     # bob 的 last_sheet 应为他自己的表
     resp = await client.get("/me/last_sheet", headers=_auth(bearer_b))
     assert resp.json() == {"sheet_id": sid_b}
+
+
+@pytest.mark.asyncio
+async def test_get_last_sheet_via_service_token_channel(client, monkeypatch):
+    """MCDR service-token + X-Player-UUID 代玩家通道也应能读 last_sheet（RS-8 双通道）。
+
+    回归保护：防未来收紧 header 校验时 MCDR 代玩家通道（!!sheet 的实际链路）静默断裂。
+    """
+    # 注入 service token（函数级，monkeypatch 自动还原，不污染同模块 JWT 用例）
+    monkeypatch.setattr(deps, "_settings", get_settings())
+    deps._settings.mcdr_service_token = "svc"
+
+    u, bearer = await _make_player("alice")
+    # JWT 通道建表 + 查看，记录 last_sheet_id
+    resp = await client.post("/sheets", json={"title": "表1"}, headers=_auth(bearer))
+    sid = resp.json()["id"]
+    await client.get(f"/sheets/{sid}", headers=_auth(bearer))
+
+    # 改走 service-token + X-Player-UUID（无 Authorization）读 last_sheet
+    svc_headers = {"X-Service-Token": "svc", "X-Player-UUID": str(u)}
+    resp = await client.get("/me/last_sheet", headers=svc_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"sheet_id": sid}

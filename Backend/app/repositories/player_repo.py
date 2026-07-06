@@ -30,9 +30,17 @@ async def get_by_uuid(
 
 
 async def set_last_sheet(session: AsyncSession, player_uuid: uuid.UUID, sheet_id: int) -> None:
-    """记录玩家最后查看的表格 ID（尽力写，仅 flush，由 api 层 commit）。"""
+    """记录玩家最后查看的表格 ID（尽力写，仅 flush，由 api 层 commit）。
+
+    IS DISTINCT FROM 守卫：仅当 last_sheet_id 实际变化时才 UPDATE，避免 Web 详情
+    轮询（Frontend usePolling 默认 2s）每轮对同一张表产生写放大。对 NULL 安全
+    （NULL → N 首次设置亦命中）。
+    """
     await session.execute(
-        update(Player).where(Player.uuid == player_uuid).values(last_sheet_id=sheet_id)
+        update(Player)
+        .where(Player.uuid == player_uuid)
+        .where(Player.last_sheet_id.is_distinct_from(sheet_id))
+        .values(last_sheet_id=sheet_id)
     )
     await session.flush()
 

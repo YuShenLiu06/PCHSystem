@@ -111,8 +111,6 @@ def view_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int) -> SheetOu
 def get_last_sheet(cfg: HtcmcAuthConfig, player_uuid: str) -> SheetOutcome:
     """GET /me/last_sheet → {"sheet_id": int|null}。"""
     return _request(cfg, "GET", "/me/last_sheet", player_uuid)
-    """GET /sheets/{sheet_id} → SheetDetail（含 rows）。"""
-    return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid)
 
 
 def create_sheet(cfg: HtcmcAuthConfig, player_uuid: str, title: str) -> SheetOutcome:

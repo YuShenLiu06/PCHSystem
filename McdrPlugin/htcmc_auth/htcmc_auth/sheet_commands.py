@@ -355,7 +355,8 @@ def _sheet_list_impl(server, player_name, *, mine: bool, status: str | None):
             for s in data:
                 sid = s.get("id")
                 # 每行渲染阶段标签（format_phase_label 已有 § 颜色码）
-                status_label = format_phase_label(s.get("status"))
+                # or "collecting" 防 None 兜底，与 _render_sheet_detail 一致
+                status_label = format_phase_label(s.get("status") or "collecting")
                 parts.append(RTextList(
                     RText(SHEET_LIST_ITEM.format(
                         id=sid,
