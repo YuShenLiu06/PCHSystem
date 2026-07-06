@@ -29,3 +29,6 @@ McdrPlugin/htcmc_auth/config.json
 /Run
 /tempt/
 .mcp.json
+
+# Docker Compose 本地 override（含机器特定绝对路径，勿提交）
+docker-compose.override.yml
