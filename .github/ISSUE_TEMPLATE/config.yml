@@ -1,0 +1,2 @@
+# 禁止空白 issue，引导用户选择模板
+blank_issues_enabled: false

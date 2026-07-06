@@ -145,16 +145,18 @@ curl http://localhost:8000/healthz
 
 ## 当前状态
 
-**v0.3.0 已发布**（2026-07-03，三组件分别打 tag：`backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`）。已落地：
+**v0.4.0 已发布**（2026-07-06，三组件分别打 tag：`backend-v0.4.0` / `htcmc_auth-v0.4.0` / `frontend-v0.4.0`）。已落地：
 
-- **鉴权链路**（M1+M2+F1-F4）：MCDR `!!PCH login` → 后端 token → 前端 `/auth` 兑换 JWT → `/me`
-- **双通道鉴权**：Web 走 JWT，MCDR 走 service-token + `X-Player-UUID` 代玩家写（RBAC 等价）
-- **sheets 协作**：Web 与 MC 对等（认领/交付/打回/解除）+ progress 多人贡献者模式 + 轮询自动刷新
-- **投影解析生成表格**：`.litematic` 上传 → litemapy 解析 + 中文翻译 → 一键生成 Sheet
-- **统一通知抽象层**：业务事件 → DB 记库 → MCDR 轮询投递 + 离线补推
-- **MCDR `!!PCH sheet` 命令树**（14 子命令）+ 通知轮询
-- **sheet 快速重开**（2026-07-06）：`!!sheet`（重开上次）/ `!!sheet <id>`（直开）/ `!!PCH sheet last`；后端 `GET /me/last_sheet`（双通道鉴权）+ `GET /sheets/{id}` best-effort 记录 `last_sheet_id`（迁移 0011）
-- **sheet list 增强**（2026-07-06）：默认进行中（active）+ 自己参与的优先（owner/claimant/contributor 三源排序）+ 每行阶段标签；list 旗标支持单字母简写 `-m/-c/-t/-a/-l`（可组合如 `-ma`）
+- **鉴权链路**：MCDR `!!PCH login` → 后端 token → 前端 `/auth` 兑换 JWT → `/me`
+- **双通道鉴权**：Web 走 JWT，MCDR 走 service-token + `X-Player-UUID` 代玩家写（权限等价）
+- **项目协作**（原 sheets）：Web 与 MC 对等（认领/交付/打回/解除）+ 多人上报进度 + 自动刷新
+- **投影解析生成清单**：`.litematic` 上传 → litemapy 解析 + 中文翻译 → 一键生成项目
+- **项目三阶段 + 归档自动化**：收集中 → 建造中 → 归档；归档自动生成 Markdown 说明 + 贡献占比饼图（按项目独立文件夹存放）
+- **统一通知**：业务事件 → 数据库记库 → MCDR 轮询投递 + 离线补推
+- **游戏端命令**：`!!PCH sheet` 命令树（14 条）+ 通知轮询
+- **一键提交 / 快速重开 / 智能列表**（v0.4.0）：扫背包批量上交、`!!sheet` 重开上次 / `<id>` 直开、列表默认进行中且自己参与的优先 + 每行阶段标签 + 简写旗标 `-m/-c/-t/-a/-l`
+- **改物品 ID + 归档饼图预览**（v0.4.0）：游戏端行内「改ID」按钮；前端归档预览显示贡献占比图
+- **wiki 内容 git 双向同步**（v0.4.0，默认关闭）：归档经独立 wiki 内容仓双向同步，支持拥有者编辑与 PR 审查（业务库仍由后端独占，不回写）
 
 变更记录见 [`CHANGELOG.md`](./CHANGELOG.md)，后续规划见 [`Docs/Plans/`](./Docs/Plans/)。
 
