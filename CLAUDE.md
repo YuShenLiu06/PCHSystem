@@ -183,6 +183,11 @@ PCHSystem/
 - [x] MCDR 一键提交 `!!PCH sheet submit`（依赖 minecraft_data_api；扫背包含潜影盒嵌套 → 按 registry_id 精确匹配 → lock claim+deliver(need) / progress contribute 封顶到 need；纯申报不清背包）+ `scanner.py`（1.20.4-/1.20.5+ 双 NBT 路径，纯函数可单测，27 用例）
 - [x] CSV 导出列追加 `registry_id`；全端对齐验证：后端 200 测试绿（含 10 条新用例 + 5 处 CSV 表头修正）/ 前端 19 测试绿 + vue-tsc / MCDR scanner 27 测试绿
 
+**已完成（2026-07-06，sheet 快速重开 + list 增强）**：
+- [x] 快速重开上次表格：迁移 `0011_players_last_sheet_id`（`users.players` 加 `last_sheet_id INTEGER NULL`，无 FK/无索引，对齐 `registry_id` 先例——表删后自然失效）+ `GET /sheets/{id}` JSON 详情路径 best-effort 写入（csv 导出与 404 不记，失败仅记日志）+ 新增 `GET /me/last_sheet`（双通道鉴权 `get_current_player`，响应 `{sheet_id: int|null}`；`player_repo.set_last_sheet`/`get_last_sheet` flush-only）+ MCDR `!!sheet`（无参重开上次 / `<id>` 直开，第二命令根）/ `!!PCH sheet last`（等同无参 `!!sheet`）
+- [x] sheet list 增强：后端 `list_sheets` 加可选 `player_uuid`——参与优先排序（owner / lock 行 claimant / progress 行 contributor 三源 UNION 置顶，组内按 id 升序，`order_by id.in_(involved).desc(), id.asc()`），`GET /sheets` 透传 `player.uuid`，`player_uuid=None` 时按 id 升序向后兼容；`status` 过滤参数后端默认仍 None（由 MCDR 端默认传 `active`）；MCDR `sheet list` 默认进行中（active=collecting+constructing，排除归档）+ 自己参与的优先 + 每行阶段标签（`format_phase_label`）
+- [x] MCDR list 简写旗标：`-m`(mine)/`-c`(collecting)/`-t`(constructing)/`-a`(archived)/`-l`(all)，可组合如 `-ma`；完整 `--mine` 等向后兼容；未知旗标回显助记提示（`_parse_list_flag_tokens` 纯函数化单测）
+
 **待处理**：
 - [ ] **既有 bug（v0.3.0 起）**：`!!PCH sheet add/set/addhand ... progress` 的 `Literal` 字面量未写入 `ctx`（MCDR 仅 ArgumentNode 入 context，见 mcdr-api-cheatsheet §4），`ctx.get("mode")` 恒 None → 实际建 lock 行；addhand 镜像继承。待统一修（建议字面量节点回调显式传 mode，或改读 command path）
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
@@ -191,6 +196,6 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-07-03（R-8 重写为 wiki.js git 双向同步 + 归档升级：贡献者聚合含 lock、去材料清单、每项目独立文件夹、matplotlib 贡献占比饼图、asset 端点 + wiki git publisher；registry_id 字段 + 一键提交：迁移 0010 + 4 写入途径 + MCDR submit/addhand/setreg + scanner.py + 全端测试绿）*
+*最后更新：2026-07-06（sheet 快速重开 + list 增强：迁移 `0011_players_last_sheet_id`（`users.players.last_sheet_id` 无 FK/索引）+ `GET /me/last_sheet`（双通道鉴权）+ `GET /sheets/{id}` best-effort 记录 + MCDR `!!sheet`/`!!PCH sheet last` 快捷；`list_sheets` 加 `player_uuid` 参与优先排序三源 UNION + MCDR list 默认 active + 阶段标签 + 简写旗标 `-m/-c/-t/-a/-l`）*
 
 *增量（2026-07-05）：sheet view tellraw 像素级美化——新增 `text_layout.py` 像素宽度估算模块 + `format_section_separator` 分节标题（`════ 物品列表 ════`）+ 行尾按钮右对齐 / 底栏按钮居中；`format_section_separator` 配色回归 §6 色板「重要/标题」`§6§l`（gold+bold）；MCDR 测试 113 绿。发现并记入待处理：worktree 工作树 `Frontend/vite.config.ts` 端口改 8002 属 worktree 本地污染，勿提交。*
