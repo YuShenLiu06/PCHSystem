@@ -61,8 +61,17 @@ SHEET_BAD_REQUEST = "§c参数有误: {detail}"
 SHEET_UUID_FAIL = "§c获取 UUID 失败: {err}"
 SHEET_HEAD = "§6§l[PCH 表格]§r"
 SHEET_LIST_EMPTY = "§7（无表格）"
-SHEET_LIST_ITEM = "§a#{id} §7[{owner}] §f{title}"
+SHEET_LIST_ITEM = "§a#{id} §7[{owner}]§r {status} §f{title}§r"
+SHEET_LAST_EMPTY = "§7暂无最近打开的表格，§7用 !!PCH sheet list 查看列表§r"
 SHEET_LIST_MINE = "§7（仅看自己）"
+# list 旗标助记与未知旗标回显。
+# 简写 -m/-c/-t/-a/-l 可组合（如 -ma = mine + archived）；完整 --mine 等仍支持。
+# collecting 与 constructing 首字母同为 c，故 constructing 取 t（construcT）。
+SHEET_LIST_FLAG_HINT = (
+    "§7旗标: §b-m§7 我的 §b-c§7 收集 §b-t§7 施工 §b-a§7 归档 §b-l§7 全部"
+    "§7（可组合如 §b-ma§7）；或完整 §f--mine/--collecting/--constructing/--archived/--all§r"
+)
+SHEET_LIST_FLAG_UNKNOWN = "§c未知旗标: {token}§r\n" + SHEET_LIST_FLAG_HINT
 SHEET_DETAIL_TITLE = "§6§l#{id} {title}§r §7[owner: {owner}]"
 SHEET_DETAIL_EMPTY = "§7（无行）"
 # mode 0=lock 1=progress；status open/claimed/done

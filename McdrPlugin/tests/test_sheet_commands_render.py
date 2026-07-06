@@ -111,10 +111,10 @@ class ListEmptyTest(unittest.TestCase):
         self.assertIn("!!PCH sheet create ", _all_click_values(told[0]))  # 末尾留空格续输标题
 
     def test_empty_list_mine_shows_create_button(self):
-        # --mine 无表：同样给 [建表]
+        # --mine 无表：同样给 [建表]（新 flags 解析器）
         src, told = _make_src_server(player="玩家A")
         with mock.patch.object(sheet_commands.sheet_client, "list_sheets", return_value=[]):
-            sheet_commands._sheet_list_mine(src, {})
+            sheet_commands._sheet_list_flags(src, {"flags": "--mine"})
         msg = str(told[0])
         self.assertIn("（仅看自己）", msg)
         self.assertIn("[建表]", msg)
@@ -278,6 +278,197 @@ class SetregHandTest(unittest.TestCase):
         held_mock.assert_not_called()
         _, kwargs = upsert_mock.call_args
         self.assertEqual(kwargs.get("registry_id"), "minecraft:cobblestone")
+
+
+class SheetQuickTest(unittest.TestCase):
+    """_sheet_quick 快速重开上次查看的表（!!sheet / !!PCH sheet last）。"""
+
+    def test_last_sheet_present_renders_detail(self):
+        # get_last_sheet 返回 {"sheet_id": 5} → 渲染 #5 详情（调用 view_sheet）
+        src, told = _make_src_server(player="玩家A")
+        detail = {"id": 5, "title": "上次表", "owner_name": "玩家A", "status": "collecting", "rows": []}
+        with mock.patch.object(sheet_commands.sheet_client, "get_last_sheet",
+                               return_value={"sheet_id": 5}), \
+             mock.patch.object(sheet_commands.sheet_client, "view_sheet",
+                               return_value=detail) as view_mock:
+            sheet_commands._sheet_quick(src, {})
+        # view_sheet 应被调用
+        view_mock.assert_called_once()
+        msg = str(told[0])
+        self.assertIn("上次表", msg)
+        self.assertIn("收集中", msg)
+
+    def test_last_sheet_none_shows_empty_message(self):
+        # get_last_sheet 返回 {"sheet_id": None} → 回显 SHEET_LAST_EMPTY，不调 view_sheet
+        src, told = _make_src_server(player="玩家A")
+        with mock.patch.object(sheet_commands.sheet_client, "get_last_sheet",
+                               return_value={"sheet_id": None}), \
+             mock.patch.object(sheet_commands.sheet_client, "view_sheet") as view_mock:
+            sheet_commands._sheet_quick(src, {})
+        # view_sheet 不应被调用
+        view_mock.assert_not_called()
+        msg = str(told[0])
+        self.assertIn("暂无最近打开的表格", msg)
+
+
+class ListStatusTest(unittest.TestCase):
+    """list 命令状态过滤与渲染：默认进行中 + 状态标签 + flags 解析。"""
+
+    def test_list_default_renders_status_label(self):
+        # _sheet_list_default（无 flags）→ 渲染每行的阶段标签（如「收集中」）
+        src, told = _make_src_server(player="玩家A")
+        sheets = [
+            {"id": 1, "owner_name": "玩家A", "title": "表A", "status": "collecting"},
+            {"id": 2, "owner_name": "玩家B", "title": "表B", "status": "constructing"},
+        ]
+        with mock.patch.object(sheet_commands.sheet_client, "list_sheets",
+                               return_value=sheets) as list_mock:
+            sheet_commands._sheet_list_default(src, {})
+        # list_sheets 应收到 status="active"（进行中 = collecting + constructing）
+        _, kwargs = list_mock.call_args
+        self.assertEqual(kwargs.get("status"), "active")
+        # 渲染含状态标签
+        msg = str(told[0])
+        self.assertIn("收集中", msg)
+        self.assertIn("施工中", msg)
+
+    def test_list_flags_parses_mine_archived(self):
+        # _sheet_list_flags 解析 "--mine --archived" → mine=True, status="archived"
+        src, told = _make_src_server(player="玩家A")
+        with mock.patch.object(sheet_commands.sheet_client, "list_sheets",
+                               return_value=[]) as list_mock:
+            sheet_commands._sheet_list_flags(src, {"flags": "--mine --archived"})
+        # list_sheets 应收到 mine=True, status="archived"
+        _, kwargs = list_mock.call_args
+        self.assertTrue(kwargs.get("mine"))
+        self.assertEqual(kwargs.get("status"), "archived")
+
+    def test_list_flags_unknown_token_errors(self):
+        # _sheet_list_flags 遇未知 token → 回显错误提示
+        src, told = _make_src_server(player="玩家A")
+        sheet_commands._sheet_list_flags(src, {"flags": "--unknown"})
+        msg = str(told[0])
+        self.assertIn("未知旗标", msg)
+
+    def test_list_flags_all_sets_status_none(self):
+        # _sheet_list_flags 解析 "--all" → status=None（后端返回全部）
+        src, told = _make_src_server(player="玩家A")
+        with mock.patch.object(sheet_commands.sheet_client, "list_sheets",
+                               return_value=[]) as list_mock:
+            sheet_commands._sheet_list_flags(src, {"flags": "--all"})
+        # list_sheets 应收到 status=None
+        _, kwargs = list_mock.call_args
+        self.assertIsNone(kwargs.get("status"))
+
+    def test_list_default_sends_active_status(self):
+        # _sheet_list_default（无 flags）→ 传 status="active"
+        src, told = _make_src_server(player="玩家A")
+        with mock.patch.object(sheet_commands.sheet_client, "list_sheets",
+                               return_value=[]) as list_mock:
+            sheet_commands._sheet_list_default(src, {})
+        # list_sheets 应收到 status="active"
+        _, kwargs = list_mock.call_args
+        self.assertEqual(kwargs.get("status"), "active")
+
+
+class ListFlagShortTest(unittest.TestCase):
+    """_parse_list_flag_tokens 单字母简写 + 组合 + 完整向后兼容。"""
+
+    def test_short_m_mine(self):
+        mine, status, unknown = sheet_commands._parse_list_flag_tokens(["-m"])
+        self.assertTrue(mine)
+        self.assertEqual(status, "active")
+        self.assertIsNone(unknown)
+
+    def test_short_c_collecting(self):
+        mine, status, unknown = sheet_commands._parse_list_flag_tokens(["-c"])
+        self.assertFalse(mine)
+        self.assertEqual(status, "collecting")
+        self.assertIsNone(unknown)
+
+    def test_short_t_constructing(self):
+        # constructing 取 t（避开 collecting 的 c）
+        _, status, unknown = sheet_commands._parse_list_flag_tokens(["-t"])
+        self.assertEqual(status, "constructing")
+        self.assertIsNone(unknown)
+
+    def test_short_a_archived(self):
+        _, status, unknown = sheet_commands._parse_list_flag_tokens(["-a"])
+        self.assertEqual(status, "archived")
+        self.assertIsNone(unknown)
+
+    def test_short_l_all(self):
+        # -l = all → status=None（不过滤）
+        _, status, unknown = sheet_commands._parse_list_flag_tokens(["-l"])
+        self.assertIsNone(status)
+        self.assertIsNone(unknown)
+
+    def test_combo_ma(self):
+        # -ma = mine + archived（组合简写）
+        mine, status, unknown = sheet_commands._parse_list_flag_tokens(["-ma"])
+        self.assertTrue(mine)
+        self.assertEqual(status, "archived")
+        self.assertIsNone(unknown)
+
+    def test_combo_separate_shorts(self):
+        # -m -a 分开写等价 -ma
+        mine, status, unknown = sheet_commands._parse_list_flag_tokens(["-m", "-a"])
+        self.assertTrue(mine)
+        self.assertEqual(status, "archived")
+        self.assertIsNone(unknown)
+
+    def test_unknown_short_char_returns_token(self):
+        # -x 非法字母 → unknown 回填原 token
+        _, _, unknown = sheet_commands._parse_list_flag_tokens(["-x"])
+        self.assertEqual(unknown, "-x")
+
+    def test_bare_token_returns_unknown(self):
+        # 裸 token（无 -- 前缀）→ unknown
+        _, _, unknown = sheet_commands._parse_list_flag_tokens(["foo"])
+        self.assertEqual(unknown, "foo")
+
+    def test_long_forms_backward_compatible(self):
+        # 完整 --mine --archived 仍生效（向后兼容）
+        mine, status, unknown = sheet_commands._parse_list_flag_tokens(["--mine", "--archived"])
+        self.assertTrue(mine)
+        self.assertEqual(status, "archived")
+        self.assertIsNone(unknown)
+
+    def test_long_form_typo_returns_unknown(self):
+        # 完整形式拼写错（--mining）→ unknown
+        _, _, unknown = sheet_commands._parse_list_flag_tokens(["--mining"])
+        self.assertEqual(unknown, "--mining")
+
+    def test_empty_tokens_defaults_active(self):
+        # 无旗标 → 默认 active
+        mine, status, unknown = sheet_commands._parse_list_flag_tokens([])
+        self.assertFalse(mine)
+        self.assertEqual(status, "active")
+        self.assertIsNone(unknown)
+
+
+class ListShortIntegrationTest(unittest.TestCase):
+    """_sheet_list_flags 端到端：简写透传到 list_sheets，未知简写回显提示。"""
+
+    def test_flags_short_ma_passes_mine_archived(self):
+        src, told = _make_src_server(player="玩家A")
+        with mock.patch.object(sheet_commands.sheet_client, "list_sheets",
+                               return_value=[]) as list_mock:
+            sheet_commands._sheet_list_flags(src, {"flags": "-ma"})
+        _, kwargs = list_mock.call_args
+        self.assertTrue(kwargs.get("mine"))
+        self.assertEqual(kwargs.get("status"), "archived")
+
+    def test_flags_unknown_short_shows_hint(self):
+        # -x 非法 → 回显「未知旗标」+ 助记提示，且不调 list_sheets
+        src, told = _make_src_server(player="玩家A")
+        with mock.patch.object(sheet_commands.sheet_client, "list_sheets") as list_mock:
+            sheet_commands._sheet_list_flags(src, {"flags": "-x"})
+        msg = str(told[0])
+        self.assertIn("未知旗标", msg)
+        self.assertIn("-x", msg)
+        self.assertIn("-m", msg)  # 助记里列了可用简写
+        list_mock.assert_not_called()
 
 
 if __name__ == "__main__":

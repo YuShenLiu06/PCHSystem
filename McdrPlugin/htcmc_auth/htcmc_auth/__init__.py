@@ -9,9 +9,10 @@ from .config import HtcmcAuthConfig
 from .sheet_commands import (
     configure as sheet_configure,
     _sheet_root,
-    _sheet_list,
-    _sheet_list_mine,
+    _sheet_list_default,
+    _sheet_list_flags,
     _sheet_view,
+    _sheet_quick,
     _sheet_create,
     _sheet_rename,
     _sheet_delete,
@@ -119,10 +120,11 @@ def _register_commands(server: PluginServerInterface):
             # 表级
             .then(
                 Literal("list")
-                .runs(_sheet_list)
-                .then(Literal("--mine").runs(_sheet_list_mine))
+                .runs(_sheet_list_default)                 # !!PCH sheet list → 进行中，参与优先
+                .then(Text("flags").runs(_sheet_list_flags))  # !!PCH sheet list <flags...>
             )
             .then(Literal("view").then(Integer("sheet_id").runs(_sheet_view)))
+            .then(Literal("last").runs(_sheet_quick))  # !!PCH sheet last → 快速重开上次
             .then(Literal("create").then(QuotableText("title").runs(_sheet_create)))
             .then(
                 Literal("rename")
@@ -261,3 +263,13 @@ def _register_commands(server: PluginServerInterface):
     # sheet 是 !!PCH 的子命令（命令树内 Literal("sheet")），不在 !!help 单列；
     # 其子命令清单由 `!!PCH sheet` 根回调 _sheet_root 展示。文案只留系统名（issue 1/2）。
     server.register_help_message("!!PCH", "黄皮子积分系统")
+
+    # !!sheet 快捷别名根（第二根：无 !!PCH 前缀）
+    # S-1：多根注册是 MCDR 标准用法（已联网核实 basic.html）
+    sheet_alias = (
+        Literal("!!sheet")
+        .runs(_sheet_quick)                              # !!sheet → 重开上次
+        .then(Integer("sheet_id").runs(_sheet_view))    # !!sheet <id> → 直开
+    )
+    server.register_command(sheet_alias)
+    server.register_help_message("!!sheet", "快速打开上次查看的表格；!!sheet <id> 直达")

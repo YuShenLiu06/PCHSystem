@@ -93,13 +93,24 @@ def _request(
 
 # === sheets 表级 ===
 
-def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False) -> SheetOutcome:
-    """GET /sheets[?owner=me] → list[SheetSummary]。"""
-    params = {"owner": "me"} if mine else None
-    return _request(cfg, "GET", "/sheets", player_uuid, params=params)
+def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False, status: str | None = None) -> SheetOutcome:
+    """GET /sheets[?owner=me][&status=...] → list[SheetSummary]。"""
+    params = {}
+    if mine:
+        params["owner"] = "me"
+    if status:
+        params["status"] = status
+    return _request(cfg, "GET", "/sheets", player_uuid, params=params or None)
 
 
 def view_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
+    """GET /sheets/{sheet_id} → SheetDetail（含 rows）。"""
+    return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid)
+
+
+def get_last_sheet(cfg: HtcmcAuthConfig, player_uuid: str) -> SheetOutcome:
+    """GET /me/last_sheet → {"sheet_id": int|null}。"""
+    return _request(cfg, "GET", "/me/last_sheet", player_uuid)
     """GET /sheets/{sheet_id} → SheetDetail（含 rows）。"""
     return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid)
 

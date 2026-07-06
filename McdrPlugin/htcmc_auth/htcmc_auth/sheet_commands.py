@@ -32,8 +32,10 @@ from .messages import (
     SHEET_LIST_EMPTY,
     SHEET_LIST_ITEM,
     SHEET_LIST_MINE,
+    SHEET_LIST_FLAG_UNKNOWN,
     SHEET_DETAIL_TITLE,
     SHEET_DETAIL_EMPTY,
+    SHEET_LAST_EMPTY,
     rtext_button,
     format_row_clickable,
     format_owner_footer,
@@ -171,7 +173,7 @@ def _sheet_root(src, ctx):
         RText(SHEET_HEAD),
         RText(" 子命令（!!PCH sheet <子命令>）：\n", color=RColor.gold),
         RText("查看：\n", color=RColor.aqua),
-        _line("list", "表格列表（--mine 仅自己拥有）", "!!PCH sheet list ", "list [--mine]  列出表格"),
+        _line("list", "列表（默认进行中，自己参与的优先）", "!!PCH sheet list ", "list [-m|-c|-t|-a|-l]  旗标过滤（可组合如 -ma）；或完整 --mine 等"),
         _line("view", "查看表详情与行", "!!PCH sheet view ", "view <表id>  查看指定表"),
         RText("建表 / 改表（拥有者）：\n", color=RColor.aqua),
         _line("create", "新建表", "!!PCH sheet create ", "create <标题>  新建一张表"),
@@ -241,18 +243,89 @@ def _sheet_list(src, ctx):
     player_name = _require_player(src)
     if not player_name:
         return
-    _sheet_list_impl(src.get_server(), player_name, mine=bool(ctx.get("mine")))
+    _sheet_list_impl(src.get_server(), player_name, mine=False, status="active")
 
 
-def _sheet_list_mine(src, ctx):
-    """带 --mine 的分支。"""
+def _sheet_list_default(src, ctx):
+    """!!PCH sheet list（无 flags）→ 进行中表（status=active），参与优先。"""
     player_name = _require_player(src)
     if not player_name:
         return
-    _sheet_list_impl(src.get_server(), player_name, mine=True)
+    _sheet_list_impl(src.get_server(), player_name, mine=False, status="active")
 
 
-def _sheet_list_impl(server, player_name, *, mine: bool):
+# list 旗标简写映射（单字母 → 完整旗标）。
+# collecting 与 constructing 首字母同为 c，故 constructing 取 t（construcT）避免冲突。
+_LIST_FLAG_SHORT = {
+    "m": "--mine",
+    "c": "--collecting",
+    "t": "--constructing",
+    "a": "--archived",
+    "l": "--all",
+}
+
+
+def _parse_list_flag_tokens(tokens):
+    """解析 list 旗标 token 列表 → (mine, status, unknown_token)。
+
+    支持两种形式（可混用）：
+    - 完整：--mine / --collecting / --constructing / --archived / --all
+    - 简写：-m / -c / -t / -a / -l；可组合，如 -ma = --mine --archived
+
+    返回 (mine: bool, status: str|None, unknown: str|None)；
+    unknown 非 None 表示遇到非法 token（应由调用方回显 SHEET_LIST_FLAG_UNKNOWN）。
+    默认 status="active"（进行中 = collecting + constructing），与 _sheet_list_default 一致。
+    """
+    mine = False
+    status = "active"  # 默认进行中（与 _sheet_list_default 一致）
+    for token in tokens:
+        # 展开简写组合：-ma → ["--mine", "--archived"]
+        if token.startswith("--"):
+            forms = [token]
+        elif token.startswith("-") and len(token) > 1:
+            forms = []
+            for ch in token[1:]:
+                mapped = _LIST_FLAG_SHORT.get(ch)
+                if mapped is None:
+                    return None, None, token  # 非法简写字母
+                forms.append(mapped)
+        else:
+            return None, None, token  # 裸 token（非旗标）
+        for form in forms:
+            if form == "--mine":
+                mine = True
+            elif form == "--collecting":
+                status = "collecting"
+            elif form == "--constructing":
+                status = "constructing"
+            elif form == "--archived":
+                status = "archived"
+            elif form == "--all":
+                status = None  # None = 不过滤（后端返回全部）
+            else:
+                return None, None, token  # 完整形式拼写错
+    return mine, status, None
+
+
+def _sheet_list_flags(src, ctx):
+    """!!PCH sheet list <flags...> —— 旗标过滤（支持简写）。
+
+    完整：--mine / --collecting / --constructing / --archived / --all
+    简写：-m / -c / -t / -a / -l（可组合，如 -ma）；解析见 _parse_list_flag_tokens。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    flags_str = ctx.get("flags", "")
+    tokens = flags_str.split() if flags_str else []
+    mine, status, unknown = _parse_list_flag_tokens(tokens)
+    if unknown is not None:
+        src.get_server().tell(player_name, SHEET_LIST_FLAG_UNKNOWN.format(token=unknown))
+        return
+    _sheet_list_impl(src.get_server(), player_name, mine=mine, status=status)
+
+
+def _sheet_list_impl(server, player_name, *, mine: bool, status: str | None):
     @new_thread('htcmc_sheet_list')
     def _do():
         try:
@@ -260,7 +333,7 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        outcome = sheet_client.list_sheets(CONFIG, player_uuid, mine=mine)
+        outcome = sheet_client.list_sheets(CONFIG, player_uuid, mine=mine, status=status)
 
         def _show(data):
             if not data:
@@ -281,10 +354,13 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
             parts.append(RText("\n"))
             for s in data:
                 sid = s.get("id")
+                # 每行渲染阶段标签（format_phase_label 已有 § 颜色码）
+                status_label = format_phase_label(s.get("status"))
                 parts.append(RTextList(
                     RText(SHEET_LIST_ITEM.format(
                         id=sid,
                         owner=s.get("owner_name") or "?",
+                        status=status_label,
                         title=s.get("title") or "",
                     )),
                     RText("  "),
@@ -301,7 +377,65 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
     _do()
 
 
+def _render_sheet_detail(server, player_name, player_uuid, sheet_id):
+    """渲染表详情（从 _sheet_view._do 提取的纯函数，供 _sheet_view 与 _sheet_quick 复用）。
+
+    参数：server（MCDR ServerInterface）、player_name/uuid、sheet_id。
+    行为：调用 view_sheet → 按 outcome 分支 → 渲染 RText 详情并 tell。
+    错误路径由 _resolve 统一翻译（404/403/409/422/RATE_LIMITED/REMOVED/None）。
+    """
+    outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+
+    def _show(data):
+        rows = data.get("rows") or []
+        status = str(data.get("status") or "collecting")
+        # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
+        # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
+        owner_uuid = str(data.get("owner_uuid") or "")
+        owner_name = data.get("owner_name") or ""
+        is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
+        parts = [RText(SHEET_DETAIL_TITLE.format(
+            id=data.get("id"),
+            title=data.get("title") or "",
+            owner=owner_name or "?",
+        )), RText("\n")]
+        # 项目阶段横幅（三阶段生命周期：collecting/constructing/archived）
+        parts.append(RTextList(
+            RText("§7[阶段: ", color=RColor.gray),
+            RText(format_phase_label(status)),
+            RText("§7]§r", color=RColor.gray),
+            RText("\n"),
+        ))
+        # 物品列表主分隔符：无论空表与否都渲染（空表也需「物品列表」标题锚定，
+        # 否则（无行）提示顶在阶段横幅下，且与底部「列表管理」分隔符不对称）。
+        parts.append(format_section_separator("物品列表"))  # 需求1 主分隔符
+        parts.append(RText("\n"))
+        if not rows:
+            parts.append(format_centered_text(SHEET_DETAIL_EMPTY))  # 空表提示居中
+        else:
+            for r in rows:
+                parts.append(format_row_clickable(
+                    r, sheet_id,
+                    is_owner=is_owner,
+                    player_name=player_name,
+                    player_uuid=player_uuid,
+                ))
+            # 空行分隔（[一键提交] 与上方物品行间留白）+ 公开一键提交底栏
+            # 仅非空表渲染：空表无可匹配行，submit 无效故隐去（避免误导）
+            parts.append(RText("\n"))
+            parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
+        if is_owner:
+            parts.append(RText("\n"))  # 物品区/底栏 与「列表管理」之间空行
+            parts.append(format_section_separator("列表管理"))  # 与「物品列表」对称
+            parts.append(RText("\n"))
+            parts.append(format_owner_footer(sheet_id, status))
+        server.tell(player_name, RTextList(*parts))
+
+    _resolve(server, player_name, outcome, on_success=_show)
+
+
 def _sheet_view(src, ctx):
+    """!!PCH sheet view <sheet_id> —— 查看指定表详情。"""
     player_name = _require_player(src)
     if not player_name:
         return
@@ -315,54 +449,35 @@ def _sheet_view(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+        _render_sheet_detail(server, player_name, player_uuid, sheet_id)
 
-        def _show(data):
-            rows = data.get("rows") or []
-            status = str(data.get("status") or "collecting")
-            # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
-            # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
-            owner_uuid = str(data.get("owner_uuid") or "")
-            owner_name = data.get("owner_name") or ""
-            is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
-            parts = [RText(SHEET_DETAIL_TITLE.format(
-                id=data.get("id"),
-                title=data.get("title") or "",
-                owner=owner_name or "?",
-            )), RText("\n")]
-            # 项目阶段横幅（三阶段生命周期：collecting/constructing/archived）
-            parts.append(RTextList(
-                RText("§7[阶段: ", color=RColor.gray),
-                RText(format_phase_label(status)),
-                RText("§7]§r", color=RColor.gray),
-                RText("\n"),
-            ))
-            # 物品列表主分隔符：无论空表与否都渲染（空表也需「物品列表」标题锚定，
-            # 否则（无行）提示顶在阶段横幅下，且与底部「列表管理」分隔符不对称）。
-            parts.append(format_section_separator("物品列表"))  # 需求1 主分隔符
-            parts.append(RText("\n"))
-            if not rows:
-                parts.append(format_centered_text(SHEET_DETAIL_EMPTY))  # 空表提示居中
-            else:
-                for r in rows:
-                    parts.append(format_row_clickable(
-                        r, sheet_id,
-                        is_owner=is_owner,
-                        player_name=player_name,
-                        player_uuid=player_uuid,
-                    ))
-                # 空行分隔（[一键提交] 与上方物品行间留白）+ 公开一键提交底栏
-                # 仅非空表渲染：空表无可匹配行，submit 无效故隐去（避免误导）
-                parts.append(RText("\n"))
-                parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
-            if is_owner:
-                parts.append(RText("\n"))  # 物品区/底栏 与「列表管理」之间空行
-                parts.append(format_section_separator("列表管理"))  # 与「物品列表」对称
-                parts.append(RText("\n"))
-                parts.append(format_owner_footer(sheet_id, status))
-            server.tell(player_name, RTextList(*parts))
+    _do()
 
-        _resolve(server, player_name, outcome, on_success=_show)
+
+def _sheet_quick(src, ctx):
+    """!!sheet / !!PCH sheet last —— 快速重开上次查看的表（无参）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+
+    @new_thread('htcmc_sheet_quick')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.get_last_sheet(CONFIG, player_uuid)
+
+        def _on_last(value):
+            sheet_id = value.get("sheet_id")
+            if sheet_id is None:
+                server.tell(player_name, SHEET_LAST_EMPTY)
+                return
+            _render_sheet_detail(server, player_name, player_uuid, sheet_id)
+
+        _resolve(server, player_name, outcome, on_success=_on_last)
 
     _do()
 
