@@ -1191,3 +1191,59 @@ async def test_advance_sheet_archive_root_unconfigured_503(client, monkeypatch):
 
 
 # ---------- registry_id（隐式字段）----------
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_involved_first_ordering(client):
+    """端到端：参与的表排在前面（owner/claimant/contributor 三种角色）。"""
+    # Arrange：创建三个玩家
+    _, bearer_a = await _make_player("alice")
+    _, bearer_b = await _make_player("bob")
+    _, bearer_c = await _make_player("carol")
+
+    # alice 创建 2 张表
+    s1 = (await client.post("/sheets", json={"title": "Alice表1"}, headers=_auth(bearer_a))).json()["id"]
+    s2 = (await client.post("/sheets", json={"title": "Alice表2"}, headers=_auth(bearer_a))).json()["id"]
+    # bob 创建 2 张表
+    s3 = (await client.post("/sheets", json={"title": "Bob表1"}, headers=_auth(bearer_b))).json()["id"]
+    s4 = (await client.post("/sheets", json={"title": "Bob表2"}, headers=_auth(bearer_b))).json()["id"]
+    # carol 创建 1 张表
+    s5 = (await client.post("/sheets", json={"title": "Carol表1"}, headers=_auth(bearer_c))).json()["id"]
+
+    # alice 认领 s3 的一行（作为 claimant 参与）
+    await client.put(
+        f"/sheets/{s3}/rows",
+        json={"item_name": "stone", "need_qty": 64, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer_a),
+    )
+    await client.post(f"/sheets/{s3}/rows/1/claim", headers=_auth(bearer_a))
+
+    # alice 上交 s4 的一行（作为 contributor 参与）
+    await client.put(
+        f"/sheets/{s4}/rows",
+        json={"item_name": "dirt", "need_qty": 64, "mode": 1, "sort_order": 0},
+        headers=_auth(bearer_a),
+    )
+    await client.post(
+        f"/sheets/{s4}/rows/2/contribute",
+        json={"contributed_qty": 10},
+        headers=_auth(bearer_a),
+    )
+
+    # Act：alice 查询列表
+    resp = await client.get("/sheets", headers=_auth(bearer_a))
+    assert resp.status_code == 200
+    sheets = resp.json()
+
+    # Assert：alice 参与的表（s1, s2, s3, s4）应在前，未参与的（s5）在后
+    sheet_ids = [s["id"] for s in sheets]
+    involved = {s1, s2, s3, s4}
+    not_involved = {s5}
+
+    # 前 4 个应该是参与的表
+    assert set(sheet_ids[:4]) == involved
+    # 最后一个应该是未参与的表
+    assert sheet_ids[4] in not_involved
+    # 参与的表内部按 id 升序
+    involved_ids = [sid for sid in sheet_ids if sid in involved]
+    assert involved_ids == sorted(involved_ids)

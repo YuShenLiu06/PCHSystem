@@ -9,6 +9,7 @@ def test_paths_present():
         "/auth/exchange",
         "/auth/refresh",
         "/me",
+        "/me/last_sheet",
         "/healthz",
         "/sheets",
         "/sheets/export",

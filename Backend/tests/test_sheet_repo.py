@@ -1165,3 +1165,59 @@ async def test_aggregate_contributor_totals_merges_lock_and_progress_same_player
         totals = await sheet_repo.aggregate_contributor_totals(s, sid)
     # Assert：alice=35（lock 10 + progress 25 合并）
     assert totals == [(alice, "alice", 35)]
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_involved_first_ordering():
+    """参与优先排序：玩家参与的表（owner/claimant/contributor）排在前面，组内按 id 升序。"""
+    # Arrange：创建多个玩家和表
+    alice = await _seed_player("alice")
+    bob = await _seed_player("bob")
+    carol = await _seed_player("carol")
+
+    async with async_session_factory() as s:
+        # 创建 5 张表：1(alice所有), 2(alice所有), 3(bob所有), 4(bob所有), 5(carol所有)
+        s1 = await sheet_repo.create_sheet(s, alice, "Alice表1")
+        s2 = await sheet_repo.create_sheet(s, alice, "Alice表2")
+        s3 = await sheet_repo.create_sheet(s, bob, "Bob表1")
+        s4 = await sheet_repo.create_sheet(s, bob, "Bob表2")
+        s5 = await sheet_repo.create_sheet(s, carol, "Carol表1")
+        await s.commit()
+
+    # 让 alice 参与 s3（作为 claimant）
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, s3.id, "stone", 64, sheet_repo.MODE_LOCK, 0)
+        await sheet_repo.claim_row(s, s3.id, row.id, alice)
+        await s.commit()
+
+    # 让 alice 参与 s4（作为 contributor）
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, s4.id, "dirt", 64, sheet_repo.MODE_PROGRESS, 0)
+        await sheet_repo.contribute_row(s, s4.id, row.id, alice, 10)
+        await s.commit()
+
+    # Act：查询 alice 的列表（player_uuid=alice）
+    async with async_session_factory() as s:
+        sheets = await sheet_repo.list_sheets(s, player_uuid=alice)
+
+    # Assert：alice 参与的表（s1, s2, s3, s4）应在前面，未参与的（s5）在后面
+    # 组内按 id 升序
+    sheet_ids = [sh.id for sh, _ in sheets]
+    # 参与的：1, 2, 3, 4 → 应在前
+    # 未参与的：5 → 应在后
+    involved = {s1.id, s2.id, s3.id, s4.id}
+    not_involved = {s5.id}
+
+    # 前 4 个应该是参与的表
+    assert set(sheet_ids[:4]) == involved
+    # 最后一个应该是未参与的表
+    assert sheet_ids[4] in not_involved
+    # 参与的表内部按 id 升序
+    involved_ids = [sid for sid in sheet_ids if sid in involved]
+    assert involved_ids == sorted(involved_ids)
+
+    # 验证不传 player_uuid 时按 id 升序（向后兼容）
+    async with async_session_factory() as s:
+        sheets_no_uuid = await sheet_repo.list_sheets(s)
+    sheet_ids_no_uuid = [sh.id for sh, _ in sheets_no_uuid]
+    assert sheet_ids_no_uuid == sorted(sheet_ids_no_uuid)  # 全按 id 升序

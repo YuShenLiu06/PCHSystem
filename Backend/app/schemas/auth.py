@@ -38,3 +38,7 @@ class MeResponse(BaseModel):
     uuid: uuid.UUID
     name: str
     role: str
+
+
+class LastSheetResponse(BaseModel):
+    sheet_id: int | None

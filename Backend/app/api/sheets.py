@@ -14,6 +14,7 @@
 分层（红线）：api 调 repo，**commit 在 api 层**，repo 只 flush。
 状态机转移 + with_for_update 在 repo；非法转移 raise SheetRowConflict → api 翻译为 409。
 """
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -32,6 +33,7 @@ from app.models.sheet import (
 )
 from app.models.user import Player
 from app.repositories import sheet_repo
+from app.repositories.player_repo import set_last_sheet
 from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 from app.schemas.sheet import (
     RowContributeRequest,
@@ -69,6 +71,8 @@ _VALID_ADVANCE_TARGETS = frozenset({SHEET_PHASE_CONSTRUCTING, SHEET_PHASE_ARCHIV
 # 翻译器单例（复用 translators/lang/*.zh_cn.json，进程级 lru_cache）：registry_id → 中文 item_name。
 # 后续新增 mod 翻译表只需往 lang/ 目录加 JSON，本单例自动合并，零改动。
 _translator = preview_service.get_default_translator()
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_item_name(item_name: str | None, registry_id: str | None) -> str:
@@ -251,7 +255,7 @@ async def list_sheets(
 ) -> list[SheetSummary]:
     owner_uuid = player.uuid if owner == "me" else None
     sheets_with_names = await sheet_repo.list_sheets(
-        session, owner_uuid=owner_uuid, status_filter=status_filter
+        session, owner_uuid=owner_uuid, status_filter=status_filter, player_uuid=player.uuid
     )
     return [_to_summary(s, name) for s, name in sheets_with_names]
 
@@ -285,6 +289,12 @@ async def get_sheet(
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
+    # 有意为之：GET 详情时自动记录 last_sheet_id（best-effort，失败不影响返回）
+    try:
+        await set_last_sheet(session, player.uuid, sheet_id)
+        await session.commit()
+    except Exception:
+        logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)
     return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
 
 
