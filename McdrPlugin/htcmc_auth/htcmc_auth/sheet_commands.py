@@ -39,6 +39,7 @@ from .messages import (
     format_owner_footer,
     format_submit_footer,
     format_section_separator,
+    format_centered_text,
     format_phase_label,
     SHEET_OK_CREATED,
     SHEET_OK_RENAMED,
@@ -336,13 +337,13 @@ def _sheet_view(src, ctx):
                 RText("§7]§r", color=RColor.gray),
                 RText("\n"),
             ))
+            # 物品列表主分隔符：无论空表与否都渲染（空表也需「物品列表」标题锚定，
+            # 否则（无行）提示顶在阶段横幅下，且与底部「列表管理」分隔符不对称）。
+            parts.append(format_section_separator("物品列表"))  # 需求1 主分隔符
+            parts.append(RText("\n"))
             if not rows:
-                # 空表：不加主分隔符（无物品列表却显「物品列表」标题违和）
-                parts.append(RText(SHEET_DETAIL_EMPTY))
-                parts.append(RText("\n"))
+                parts.append(format_centered_text(SHEET_DETAIL_EMPTY))  # 空表提示居中
             else:
-                parts.append(format_section_separator("物品列表"))  # 需求1 主分隔符
-                parts.append(RText("\n"))
                 for r in rows:
                     parts.append(format_row_clickable(
                         r, sheet_id,
@@ -350,12 +351,13 @@ def _sheet_view(src, ctx):
                         player_name=player_name,
                         player_uuid=player_uuid,
                     ))
-            # 空行分隔（替代分隔符：[一键提交] 与上方物品行间留白）
-            parts.append(RText("\n"))
-            parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
+                # 空行分隔（[一键提交] 与上方物品行间留白）+ 公开一键提交底栏
+                # 仅非空表渲染：空表无可匹配行，submit 无效故隐去（避免误导）
+                parts.append(RText("\n"))
+                parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
             if is_owner:
-                parts.append(RText("\n"))  # [一键提交] 与「列表管理」之间空行
-                parts.append(format_section_separator("列表管理"))  # owner 管理栏主分隔符（与「物品列表」对称）
+                parts.append(RText("\n"))  # 物品区/底栏 与「列表管理」之间空行
+                parts.append(format_section_separator("列表管理"))  # 与「物品列表」对称
                 parts.append(RText("\n"))
                 parts.append(format_owner_footer(sheet_id, status))
             server.tell(player_name, RTextList(*parts))

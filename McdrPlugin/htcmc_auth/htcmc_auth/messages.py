@@ -329,6 +329,21 @@ def _center_button_row(buttons, *, pad_color=RColor.gray) -> RTextList:
     return RTextList(*parts)
 
 
+def format_centered_text(text: str, *, pad_color=RColor.gray) -> RTextList:
+    """把一段纯文本在聊天行内居中：前置填充（按像素宽）+ 文本 + 末尾换行。
+
+    复用 ``center_leading``（``text_width_px`` 自动剥 § 码 0 宽，故 ``text`` 可含色彩码，
+    如 ``SHEET_DETAIL_EMPTY`` 的 ``§7（无行）``）。超宽时 ``center_leading`` 返空串，
+    文本自然左对齐不崩。用于空表提示等无按钮的居中文案。
+    """
+    leading = center_leading(text)
+    return RTextList(
+        RText(leading, color=pad_color),
+        RText(text),
+        RText("\n", color=pad_color),
+    )
+
+
 def format_submit_footer(sheet_id) -> RTextList:
     """公开快捷栏（所有查看者可见）：一键提交——扫背包按 registry_id 匹配行批量上交（纯申报，不清背包）。
 

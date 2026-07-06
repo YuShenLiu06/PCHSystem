@@ -4,6 +4,7 @@
 依赖 tests/_stubs.py 让 @new_thread passthrough（同步执行回调），便于直接断言 server.tell。
 """
 import os
+import re
 import sys
 import unittest
 from unittest import mock
@@ -43,32 +44,59 @@ def _all_click_values(obj):
 
 class ViewEmptyRowsTest(unittest.TestCase):
     def test_owner_sees_add_button_on_empty_rows(self):
-        # 拥有者看自己的空表：应同时看到 (无行) 提示 + [新增物品] 等管理按钮
-        # [新增物品] 默认走 addhand（手持建行），suggest 命令为 !!PCH sheet addhand <id>_
+        # 拥有者看自己的空表：物品列表分隔符 + (无行) 提示 + [新增物品] 等管理按钮
+        # 空表隐藏 [一键提交]（无可匹配行，按钮无效）；[新增物品] 走 addhand（手持建行）
         src, told = _make_src_server(player="玩家A")
         detail = {"id": 3, "title": "清单T", "owner_name": "玩家A", "rows": []}
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 3})
         msg = str(told[0])
+        self.assertIn("物品列表", msg)  # 空表也渲染主分隔符（修复核心点）
         self.assertIn("（无行）", msg)
-        self.assertIn("[一键提交]", msg)  # 公开底栏（owner 也见）
+        self.assertNotIn("[一键提交]", msg)  # 空表隐藏 submit（无可匹配行）
         self.assertIn("[新增物品]", msg)
         # suggest 命令末尾留空格续输：数量 [lock|progress] [排序]
         self.assertIn("!!PCH sheet addhand 3 ", _all_click_values(told[0]))
 
     def test_non_owner_no_management_buttons_on_empty_rows(self):
-        # 非拥有者看别人的空表：(无行) 提示 + 公开 [一键提交]；不显示管理栏（RBAC 以后端为准）
+        # 非拥有者看别人的空表：物品列表分隔符 + (无行) 提示；空表隐藏 [一键提交]，无管理栏
         src, told = _make_src_server(player="玩家A")
         detail = {"id": 3, "title": "清单T", "owner_name": "别人", "rows": []}
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 3})
         msg = str(told[0])
+        self.assertIn("物品列表", msg)  # 空表也渲染主分隔符
         self.assertIn("（无行）", msg)
-        self.assertIn("[一键提交]", msg)  # 公开底栏（submit 无权限要求）
+        self.assertNotIn("[一键提交]", msg)  # 空表隐藏 submit
         self.assertNotIn("[新增物品]", msg)
         self.assertNotIn("[删表]", msg)
-        # 仅一个公开按钮（submit）；无任何管理按钮
-        self.assertEqual(_all_click_values(told[0]), ["!!PCH sheet submit 3"])
+        # 空表无 submit + 非 owner 无管理按钮 → 无任何 click 值
+        self.assertEqual(_all_click_values(told[0]), [])
+
+    def test_empty_rows_shows_item_list_separator_before_placeholder(self):
+        # 回归：空表必须渲染 ════ 物品列表 ════ 主分隔符，且位于（无行）之前
+        # （曾因分隔符放在 else 分支内被跳过，导致空表无标题锚、与「列表管理」不对称）
+        src, told = _make_src_server(player="玩家A")
+        detail = {"id": 3, "title": "清单T", "owner_name": "别人", "rows": []}
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 3})
+        msg = str(told[0])
+        self.assertIn("物品列表", msg)
+        self.assertIn("（无行）", msg)
+        # 分隔符必须在（无行）之前（锚定物品列表区块标题）
+        self.assertLess(msg.index("物品列表"), msg.index("（无行）"))
+
+    def test_empty_rows_placeholder_is_centered(self):
+        # 空表（无行）提示应居中显示（前置 center_leading 像素填充），而非顶格左对齐
+        src, told = _make_src_server(player="玩家A")
+        detail = {"id": 3, "title": "清单T", "owner_name": "别人", "rows": []}
+        with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
+            sheet_commands._sheet_view(src, {"sheet_id": 3})
+        msg = str(told[0])
+        # 找（无行）所在行；stub 原样保留 § 码，剥除后应以前置空格开头（居中填充）
+        line = next(l for l in msg.split("\n") if "（无行）" in l)
+        plain = re.sub(r"§.", "", line)
+        self.assertTrue(plain.startswith(" "), "（无行）应居中，实际行：%r" % line)
 
 
 class ListEmptyTest(unittest.TestCase):
