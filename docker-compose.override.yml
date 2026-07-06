@@ -1,0 +1,12 @@
+# 本地测试 override：把 backend 切到 sheets-lifecycle worktree 代码（不污染主仓）。
+# worktree: /home/yushen/opt/PCHSystem/.claude/worktrees/sheets-lifecycle
+# 用法：在主仓根 `docker compose up -d backend`（自动检测 volume 变更并 recreate）。
+# 测完删除本文件即恢复主仓代码。
+services:
+  backend:
+    volumes:
+      - /home/yushen/opt/PCHSystem/.claude/worktrees/sheets-lifecycle/Backend/app:/app/app
+      - /home/yushen/opt/PCHSystem/.claude/worktrees/sheets-lifecycle/Backend/alembic:/app/alembic
+      - /home/yushen/opt/PCHSystem/.claude/worktrees/sheets-lifecycle/Archive:/app/archive
+    environment:
+      ARCHIVE_ROOT: /app/archive

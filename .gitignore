@@ -27,3 +27,5 @@ McdrPlugin/htcmc_auth/config.json
 
 # 本地临时文件（如 ./Run 测试产物）
 /Run
+/tempt/
+.mcp.json
