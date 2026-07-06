@@ -144,9 +144,9 @@ async def test_get_sheet_csv_format(client):
     assert resp.headers["content-type"].startswith("text/csv")
     lines = resp.text.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
-    assert lines[1] == f"{sid},iron,64,0,open,,0,0"
+    assert lines[1] == f"{sid},iron,,64,0,open,,0,0"
 
 
 # ---------- PATCH /sheets/{id} ----------
@@ -533,9 +533,9 @@ async def test_export_all_returns_csv(client):
     assert resp.headers["content-type"].startswith("text/csv")
     lines = resp.text.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
-    assert f"{sid},iron,64,0,open,,0,0" in lines[1:]
+    assert f"{sid},iron,,64,0,open,,0,0" in lines[1:]
 
 
 # ---------- progress 行：多人贡献者（contribute） ----------
@@ -1056,6 +1056,87 @@ async def test_list_sheets_status_filter_active(client):
     assert resp.status_code == 200
     ids = [s["id"] for s in resp.json()]
     assert set(ids) == {s1, s2, s3}
+@pytest.mark.asyncio
+async def test_upsert_row_with_registry_id_stores_and_echoes(client):
+    """PUT 行带 item_name + registry_id → 行落库 + 回显 registry_id。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "item_name": "石头",
+            "need_qty": 64,
+            "mode": 0,
+            "sort_order": 0,
+            "registry_id": "minecraft:stone",
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["registry_id"] == "minecraft:stone"
+    assert body["item_name"] == "石头"
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_registry_id_only_auto_translates_name(client):
+    """仅传 registry_id（无 item_name）→ 后端翻译表补默认中文名（命中或回退 id，均非空）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"need_qty": 32, "mode": 0, "sort_order": 0, "registry_id": "minecraft:stone"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["registry_id"] == "minecraft:stone"
+    assert body["item_name"]  # 非空（翻译命中或回退 registry_id）
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_requires_name_or_registry(client):
+    """item_name 与 registry_id 都缺 → 422。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"need_qty": 1, "mode": 0, "sort_order": 0},  # 无 name / registry_id
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_registry_id_not_overwritten_when_omitted(client):
+    """已存在行的 registry_id：后续 upsert 不传 registry_id → 保留原值（None 不覆盖）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    first = (
+        await client.put(
+            f"/sheets/{sid}/rows",
+            json={
+                "item_name": "石头",
+                "need_qty": 64,
+                "mode": 0,
+                "sort_order": 0,
+                "registry_id": "minecraft:stone",
+            },
+            headers=_auth(bearer),
+        )
+    ).json()
+    assert first["registry_id"] == "minecraft:stone"
+    # 再次：同名不传 registry_id（只改 need）→ registry_id 保留
+    second = (
+        await client.put(
+            f"/sheets/{sid}/rows",
+            json={"item_name": "石头", "need_qty": 128, "mode": 0, "sort_order": 0},
+            headers=_auth(bearer),
+        )
+    ).json()
+    assert second["id"] == first["id"]
+    assert second["need_qty"] == 128
+    assert second["registry_id"] == "minecraft:stone"  # 未被擦
 
 
 @pytest.mark.asyncio
@@ -1107,3 +1188,62 @@ async def test_advance_sheet_archive_root_unconfigured_503(client, monkeypatch):
     # DB 未变（仍 collecting）
     detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
     assert detail["status"] == "collecting"
+
+
+# ---------- registry_id（隐式字段）----------
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_involved_first_ordering(client):
+    """端到端：参与的表排在前面（owner/claimant/contributor 三种角色）。"""
+    # Arrange：创建三个玩家
+    _, bearer_a = await _make_player("alice")
+    _, bearer_b = await _make_player("bob")
+    _, bearer_c = await _make_player("carol")
+
+    # alice 创建 2 张表
+    s1 = (await client.post("/sheets", json={"title": "Alice表1"}, headers=_auth(bearer_a))).json()["id"]
+    s2 = (await client.post("/sheets", json={"title": "Alice表2"}, headers=_auth(bearer_a))).json()["id"]
+    # bob 创建 2 张表
+    s3 = (await client.post("/sheets", json={"title": "Bob表1"}, headers=_auth(bearer_b))).json()["id"]
+    s4 = (await client.post("/sheets", json={"title": "Bob表2"}, headers=_auth(bearer_b))).json()["id"]
+    # carol 创建 1 张表
+    s5 = (await client.post("/sheets", json={"title": "Carol表1"}, headers=_auth(bearer_c))).json()["id"]
+
+    # alice 认领 s3 的一行（作为 claimant 参与）
+    await client.put(
+        f"/sheets/{s3}/rows",
+        json={"item_name": "stone", "need_qty": 64, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer_a),
+    )
+    await client.post(f"/sheets/{s3}/rows/1/claim", headers=_auth(bearer_a))
+
+    # alice 上交 s4 的一行（作为 contributor 参与）
+    await client.put(
+        f"/sheets/{s4}/rows",
+        json={"item_name": "dirt", "need_qty": 64, "mode": 1, "sort_order": 0},
+        headers=_auth(bearer_a),
+    )
+    await client.post(
+        f"/sheets/{s4}/rows/2/contribute",
+        json={"contributed_qty": 10},
+        headers=_auth(bearer_a),
+    )
+
+    # Act：alice 查询列表
+    resp = await client.get("/sheets", headers=_auth(bearer_a))
+    assert resp.status_code == 200
+    sheets = resp.json()
+
+    # Assert：alice 参与的表（s1, s2, s3, s4）应在前，未参与的（s5）在后
+    sheet_ids = [s["id"] for s in sheets]
+    involved = {s1, s2, s3, s4}
+    not_involved = {s5}
+
+    # 前 4 个应该是参与的表
+    assert set(sheet_ids[:4]) == involved
+    # 最后一个应该是未参与的表
+    assert sheet_ids[4] in not_involved
+    # 参与的表内部按 id 升序
+    involved_ids = [sid for sid in sheet_ids if sid in involved]
+    assert involved_ids == sorted(involved_ids)

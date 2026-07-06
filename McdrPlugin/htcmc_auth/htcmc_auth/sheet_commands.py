@@ -18,7 +18,7 @@ import uuid_api_remake  # RS-8：get_uuid(name)->str
 from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
-from . import sheet_client
+from . import sheet_client, scanner
 from .config import HtcmcAuthConfig
 from .messages import (
     SHEET_SERVICE_DOWN,
@@ -32,11 +32,16 @@ from .messages import (
     SHEET_LIST_EMPTY,
     SHEET_LIST_ITEM,
     SHEET_LIST_MINE,
+    SHEET_LIST_FLAG_UNKNOWN,
     SHEET_DETAIL_TITLE,
     SHEET_DETAIL_EMPTY,
+    SHEET_LAST_EMPTY,
     rtext_button,
     format_row_clickable,
     format_owner_footer,
+    format_submit_footer,
+    format_section_separator,
+    format_centered_text,
     format_phase_label,
     SHEET_OK_CREATED,
     SHEET_OK_RENAMED,
@@ -56,6 +61,19 @@ from .messages import (
     SHEET_DELIVER_HINT,
     SHEET_NOTIFY_EMPTY,
     format_notification,
+    SHEET_NO_DATA_API,
+    SHEET_ADDHAND_NEED_HAND,
+    SHEET_SETREG_NEED_HAND,
+    SHEET_OK_ADDHAND,
+    SHEET_OK_SETREG,
+    SHEET_SUBMIT_HEAD,
+    SHEET_SUBMIT_NO_API,
+    SHEET_SUBMIT_NO_ROWS,
+    SHEET_SUBMIT_DONE_LINE,
+    SHEET_SUBMIT_PROGRESS_LINE,
+    SHEET_SUBMIT_SKIP_LINE,
+    SHEET_SUBMIT_DONE_HEAD,
+    SHEET_SUBMIT_SKIP_HEAD,
 )
 
 # 由 __init__.py 在 on_load 中注入
@@ -155,7 +173,7 @@ def _sheet_root(src, ctx):
         RText(SHEET_HEAD),
         RText(" 子命令（!!PCH sheet <子命令>）：\n", color=RColor.gold),
         RText("查看：\n", color=RColor.aqua),
-        _line("list", "表格列表（--mine 仅自己拥有）", "!!PCH sheet list ", "list [--mine]  列出表格"),
+        _line("list", "列表（默认进行中，自己参与的优先）", "!!PCH sheet list ", "list [-m|-c|-t|-a|-l]  旗标过滤（可组合如 -ma）；或完整 --mine 等"),
         _line("view", "查看表详情与行", "!!PCH sheet view ", "view <表id>  查看指定表"),
         RText("建表 / 改表（拥有者）：\n", color=RColor.aqua),
         _line("create", "新建表", "!!PCH sheet create ", "create <标题>  新建一张表"),
@@ -169,6 +187,25 @@ def _sheet_root(src, ctx):
         _line(
             "advance", "阶段流转（拥有者）", "!!PCH sheet advance ",
             "advance <表id> [constructing|archived]  收集→施工→归档",
+        ),
+        RText("一键 / 物品 id：\n", color=RColor.aqua),
+        _line(
+            "submit",
+            "一键提交（扫背包匹配行）",
+            "!!PCH sheet submit ",
+            "submit <表id>  扫描背包，按 registry_id 匹配行批量上报（纯申报，不清背包）",
+        ),
+        _line(
+            "addhand",
+            "用手持物品建行",
+            "!!PCH sheet addhand ",
+            "addhand <表id> <数量> [lock|progress] [排序]  手持物物品 id 自动建行",
+        ),
+        _line(
+            "setreg",
+            "改行物品 id",
+            "!!PCH sheet setreg ",
+            "setreg <表id> <行号> [registry_id]  更新指定行的物品 id（缺省走手持物品）",
         ),
         RText("认领 / 交付：\n", color=RColor.aqua),
         _line("claim", "认领", "!!PCH sheet claim ", "claim <表id> <行号>"),
@@ -206,18 +243,89 @@ def _sheet_list(src, ctx):
     player_name = _require_player(src)
     if not player_name:
         return
-    _sheet_list_impl(src.get_server(), player_name, mine=bool(ctx.get("mine")))
+    _sheet_list_impl(src.get_server(), player_name, mine=False, status="active")
 
 
-def _sheet_list_mine(src, ctx):
-    """带 --mine 的分支。"""
+def _sheet_list_default(src, ctx):
+    """!!PCH sheet list（无 flags）→ 进行中表（status=active），参与优先。"""
     player_name = _require_player(src)
     if not player_name:
         return
-    _sheet_list_impl(src.get_server(), player_name, mine=True)
+    _sheet_list_impl(src.get_server(), player_name, mine=False, status="active")
 
 
-def _sheet_list_impl(server, player_name, *, mine: bool):
+# list 旗标简写映射（单字母 → 完整旗标）。
+# collecting 与 constructing 首字母同为 c，故 constructing 取 t（construcT）避免冲突。
+_LIST_FLAG_SHORT = {
+    "m": "--mine",
+    "c": "--collecting",
+    "t": "--constructing",
+    "a": "--archived",
+    "l": "--all",
+}
+
+
+def _parse_list_flag_tokens(tokens):
+    """解析 list 旗标 token 列表 → (mine, status, unknown_token)。
+
+    支持两种形式（可混用）：
+    - 完整：--mine / --collecting / --constructing / --archived / --all
+    - 简写：-m / -c / -t / -a / -l；可组合，如 -ma = --mine --archived
+
+    返回 (mine: bool, status: str|None, unknown: str|None)；
+    unknown 非 None 表示遇到非法 token（应由调用方回显 SHEET_LIST_FLAG_UNKNOWN）。
+    默认 status="active"（进行中 = collecting + constructing），与 _sheet_list_default 一致。
+    """
+    mine = False
+    status = "active"  # 默认进行中（与 _sheet_list_default 一致）
+    for token in tokens:
+        # 展开简写组合：-ma → ["--mine", "--archived"]
+        if token.startswith("--"):
+            forms = [token]
+        elif token.startswith("-") and len(token) > 1:
+            forms = []
+            for ch in token[1:]:
+                mapped = _LIST_FLAG_SHORT.get(ch)
+                if mapped is None:
+                    return None, None, token  # 非法简写字母
+                forms.append(mapped)
+        else:
+            return None, None, token  # 裸 token（非旗标）
+        for form in forms:
+            if form == "--mine":
+                mine = True
+            elif form == "--collecting":
+                status = "collecting"
+            elif form == "--constructing":
+                status = "constructing"
+            elif form == "--archived":
+                status = "archived"
+            elif form == "--all":
+                status = None  # None = 不过滤（后端返回全部）
+            else:
+                return None, None, token  # 完整形式拼写错
+    return mine, status, None
+
+
+def _sheet_list_flags(src, ctx):
+    """!!PCH sheet list <flags...> —— 旗标过滤（支持简写）。
+
+    完整：--mine / --collecting / --constructing / --archived / --all
+    简写：-m / -c / -t / -a / -l（可组合，如 -ma）；解析见 _parse_list_flag_tokens。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    flags_str = ctx.get("flags", "")
+    tokens = flags_str.split() if flags_str else []
+    mine, status, unknown = _parse_list_flag_tokens(tokens)
+    if unknown is not None:
+        src.get_server().tell(player_name, SHEET_LIST_FLAG_UNKNOWN.format(token=unknown))
+        return
+    _sheet_list_impl(src.get_server(), player_name, mine=mine, status=status)
+
+
+def _sheet_list_impl(server, player_name, *, mine: bool, status: str | None):
     @new_thread('htcmc_sheet_list')
     def _do():
         try:
@@ -225,7 +333,7 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        outcome = sheet_client.list_sheets(CONFIG, player_uuid, mine=mine)
+        outcome = sheet_client.list_sheets(CONFIG, player_uuid, mine=mine, status=status)
 
         def _show(data):
             if not data:
@@ -246,10 +354,14 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
             parts.append(RText("\n"))
             for s in data:
                 sid = s.get("id")
+                # 每行渲染阶段标签（format_phase_label 已有 § 颜色码）
+                # or "collecting" 防 None 兜底，与 _render_sheet_detail 一致
+                status_label = format_phase_label(s.get("status") or "collecting")
                 parts.append(RTextList(
                     RText(SHEET_LIST_ITEM.format(
                         id=sid,
                         owner=s.get("owner_name") or "?",
+                        status=status_label,
                         title=s.get("title") or "",
                     )),
                     RText("  "),
@@ -266,7 +378,65 @@ def _sheet_list_impl(server, player_name, *, mine: bool):
     _do()
 
 
+def _render_sheet_detail(server, player_name, player_uuid, sheet_id):
+    """渲染表详情（从 _sheet_view._do 提取的纯函数，供 _sheet_view 与 _sheet_quick 复用）。
+
+    参数：server（MCDR ServerInterface）、player_name/uuid、sheet_id。
+    行为：调用 view_sheet → 按 outcome 分支 → 渲染 RText 详情并 tell。
+    错误路径由 _resolve 统一翻译（404/403/409/422/RATE_LIMITED/REMOVED/None）。
+    """
+    outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+
+    def _show(data):
+        rows = data.get("rows") or []
+        status = str(data.get("status") or "collecting")
+        # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
+        # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
+        owner_uuid = str(data.get("owner_uuid") or "")
+        owner_name = data.get("owner_name") or ""
+        is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
+        parts = [RText(SHEET_DETAIL_TITLE.format(
+            id=data.get("id"),
+            title=data.get("title") or "",
+            owner=owner_name or "?",
+        )), RText("\n")]
+        # 项目阶段横幅（三阶段生命周期：collecting/constructing/archived）
+        parts.append(RTextList(
+            RText("§7[阶段: ", color=RColor.gray),
+            RText(format_phase_label(status)),
+            RText("§7]§r", color=RColor.gray),
+            RText("\n"),
+        ))
+        # 物品列表主分隔符：无论空表与否都渲染（空表也需「物品列表」标题锚定，
+        # 否则（无行）提示顶在阶段横幅下，且与底部「列表管理」分隔符不对称）。
+        parts.append(format_section_separator("物品列表"))  # 需求1 主分隔符
+        parts.append(RText("\n"))
+        if not rows:
+            parts.append(format_centered_text(SHEET_DETAIL_EMPTY))  # 空表提示居中
+        else:
+            for r in rows:
+                parts.append(format_row_clickable(
+                    r, sheet_id,
+                    is_owner=is_owner,
+                    player_name=player_name,
+                    player_uuid=player_uuid,
+                ))
+            # 空行分隔（[一键提交] 与上方物品行间留白）+ 公开一键提交底栏
+            # 仅非空表渲染：空表无可匹配行，submit 无效故隐去（避免误导）
+            parts.append(RText("\n"))
+            parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
+        if is_owner:
+            parts.append(RText("\n"))  # 物品区/底栏 与「列表管理」之间空行
+            parts.append(format_section_separator("列表管理"))  # 与「物品列表」对称
+            parts.append(RText("\n"))
+            parts.append(format_owner_footer(sheet_id, status))
+        server.tell(player_name, RTextList(*parts))
+
+    _resolve(server, player_name, outcome, on_success=_show)
+
+
 def _sheet_view(src, ctx):
+    """!!PCH sheet view <sheet_id> —— 查看指定表详情。"""
     player_name = _require_player(src)
     if not player_name:
         return
@@ -280,44 +450,35 @@ def _sheet_view(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+        _render_sheet_detail(server, player_name, player_uuid, sheet_id)
 
-        def _show(data):
-            rows = data.get("rows") or []
-            status = str(data.get("status") or "collecting")
-            # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
-            # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
-            owner_uuid = str(data.get("owner_uuid") or "")
-            owner_name = data.get("owner_name") or ""
-            is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
-            parts = [RText(SHEET_DETAIL_TITLE.format(
-                id=data.get("id"),
-                title=data.get("title") or "",
-                owner=owner_name or "?",
-            )), RText("\n")]
-            # 项目阶段横幅（三阶段生命周期：collecting/constructing/archived）
-            parts.append(RTextList(
-                RText("§7[阶段: ", color=RColor.gray),
-                RText(format_phase_label(status)),
-                RText("§7]§r", color=RColor.gray),
-                RText("\n"),
-            ))
-            if not rows:
-                parts.append(RText(SHEET_DETAIL_EMPTY))
-                parts.append(RText("\n"))
-            else:
-                for r in rows:
-                    parts.append(format_row_clickable(
-                        r, sheet_id,
-                        is_owner=is_owner,
-                        player_name=player_name,
-                        player_uuid=player_uuid,
-                    ))
-            if is_owner:
-                parts.append(format_owner_footer(sheet_id, status))
-            server.tell(player_name, RTextList(*parts))
+    _do()
 
-        _resolve(server, player_name, outcome, on_success=_show)
+
+def _sheet_quick(src, ctx):
+    """!!sheet / !!PCH sheet last —— 快速重开上次查看的表（无参）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+
+    @new_thread('htcmc_sheet_quick')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.get_last_sheet(CONFIG, player_uuid)
+
+        def _on_last(value):
+            sheet_id = value.get("sheet_id")
+            if sheet_id is None:
+                server.tell(player_name, SHEET_LAST_EMPTY)
+                return
+            _render_sheet_detail(server, player_name, player_uuid, sheet_id)
+
+        _resolve(server, player_name, outcome, on_success=_on_last)
 
     _do()
 
@@ -762,6 +923,190 @@ def _sheet_notify_list(src, ctx):
                 parts.append(RText(format_notification(n)))
                 parts.append(RText("\n"))
             server.tell(player_name, RTextList(*parts))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+# === 一键提交 / 手持建行 / 改 registry_id ===
+
+def _sheet_submit_oneclick(src, ctx):
+    """一键提交：扫描背包，按 registry_id 匹配表中行，串行上报。
+
+    纯申报语义（RS-4 衍生）：只读背包 + HTTP 上报，绝不清背包、不 data merge / clear。
+    单行失败不阻断其他行；汇总回执一次 tell（绿色 done/累计 + 黄色跳过原因）。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+
+    @new_thread('htcmc_sheet_submit')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        api = server.get_plugin_instance("minecraft_data_api")
+        if api is None:
+            server.tell(player_name, SHEET_SUBMIT_NO_API)
+            return
+        inventory = scanner.scan_inventory(api, player_name)
+        view = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+        if not isinstance(view, dict):
+            _resolve(server, player_name, view)
+            return
+        rows = view.get("rows") or []
+        actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid)
+
+        done_lines: list = []
+        skip_lines: list = []
+        for action in actions:
+            if action.action == "deliver":
+                # lock 行已认领且自己为认领人，直接 deliver(need) 绝对值 → done
+                deliv_out = sheet_client.deliver_row(
+                    CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
+                if isinstance(deliv_out, dict):
+                    done_lines.append(RText(SHEET_SUBMIT_DONE_LINE.format(
+                        item=action.item_name, qty=action.qty)))
+                else:
+                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                        item=action.item_name, reason="交付失败（状态变化）")))
+            elif action.action == "contribute":
+                contrib_out = sheet_client.contribute_row(
+                    CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
+                if isinstance(contrib_out, dict):
+                    delivered = int(contrib_out.get("delivered_qty", 0))
+                    need = int(contrib_out.get("need_qty", 0))
+                    done_lines.append(RText(SHEET_SUBMIT_PROGRESS_LINE.format(
+                        item=action.item_name, delivered=delivered, need=need)))
+                else:
+                    skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                        item=action.item_name, reason="上交失败（状态变化）")))
+            else:  # skip
+                skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                    item=action.item_name, reason=action.reason)))
+
+        # 汇总回执（一次 tell，避免刷屏）
+        if not done_lines and not skip_lines:
+            server.tell(player_name, RTextList(RText(SHEET_SUBMIT_HEAD), RText(SHEET_SUBMIT_NO_ROWS)))
+            return
+        parts: list = [RText(SHEET_SUBMIT_HEAD), RText("\n")]
+        if done_lines:
+            parts.append(RText(SHEET_SUBMIT_DONE_HEAD.format(n=len(done_lines))))
+            for ln in done_lines:
+                parts.append(ln)
+                parts.append(RText("\n"))
+        if skip_lines:
+            parts.append(RText(SHEET_SUBMIT_SKIP_HEAD.format(n=len(skip_lines))))
+            for ln in skip_lines:
+                parts.append(ln)
+                parts.append(RText("\n"))
+        server.tell(player_name, RTextList(*parts))
+
+    _do()
+
+
+def _sheet_addhand(src, ctx):
+    """用手持物品的 registry_id 建行（item_name 由后端据 registry_id 翻译补中文）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    need = ctx["need"]
+    mode = 1 if ctx.get("mode") == "progress" else 0
+    sort = ctx.get("sort", 0)
+
+    @new_thread('htcmc_sheet_addhand')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        api = server.get_plugin_instance("minecraft_data_api")
+        if api is None:
+            server.tell(player_name, SHEET_NO_DATA_API)
+            return
+        held = scanner.read_held_item(api, player_name)
+        if held is None:
+            server.tell(player_name, SHEET_ADDHAND_NEED_HAND)
+            return
+        registry_id = held[0]
+        # item_name=None：后端按 registry_id 走翻译表补中文（A2）
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=None, need=need, mode=mode, sort=sort,
+            registry_id=registry_id,
+        )
+
+        def _show(data):
+            mode_label = "progress" if mode else "lock"
+            server.tell(player_name, SHEET_OK_ADDHAND.format(
+                item=data.get("item_name") or registry_id,
+                need=data.get("need_qty", need),
+                mode=mode_label,
+            ))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_setreg(src, ctx):
+    """改指定行的 registry_id（按行现有 item_name 定位，其余字段透传，仅 registry_id 是新值）。
+
+    registry_id 可选：缺省时读玩家手持物品的 registry_id（与 addhand 一致）。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    row_id = ctx["row_id"]
+    registry_id = ctx.get("registry_id")
+
+    @new_thread('htcmc_sheet_setreg')
+    def _do():
+        nonlocal registry_id
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        # registry_id 缺省 → 读手持物品（与 addhand 一致）
+        if not registry_id:
+            api = server.get_plugin_instance("minecraft_data_api")
+            if api is None:
+                server.tell(player_name, SHEET_NO_DATA_API)
+                return
+            held = scanner.read_held_item(api, player_name)
+            if held is None:
+                server.tell(player_name, SHEET_SETREG_NEED_HAND)
+                return
+            registry_id = held[0]
+        row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
+        if row is None:
+            return
+        item_name = row.get("item_name")
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=item_name,
+            need=int(row.get("need_qty", 0)),
+            mode=int(row.get("mode", 0)),
+            sort=int(row.get("sort_order", 0)),
+            registry_id=registry_id,
+        )
+
+        def _show(data):
+            server.tell(player_name, SHEET_OK_SETREG.format(
+                row_id=row_id,
+                registry_id=data.get("registry_id", registry_id),
+            ))
 
         _resolve(server, player_name, outcome, on_success=_show)
 

@@ -93,15 +93,24 @@ def _request(
 
 # === sheets 表级 ===
 
-def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False) -> SheetOutcome:
-    """GET /sheets[?owner=me] → list[SheetSummary]。"""
-    params = {"owner": "me"} if mine else None
-    return _request(cfg, "GET", "/sheets", player_uuid, params=params)
+def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False, status: str | None = None) -> SheetOutcome:
+    """GET /sheets[?owner=me][&status=...] → list[SheetSummary]。"""
+    params = {}
+    if mine:
+        params["owner"] = "me"
+    if status:
+        params["status"] = status
+    return _request(cfg, "GET", "/sheets", player_uuid, params=params or None)
 
 
 def view_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
     """GET /sheets/{sheet_id} → SheetDetail（含 rows）。"""
     return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid)
+
+
+def get_last_sheet(cfg: HtcmcAuthConfig, player_uuid: str) -> SheetOutcome:
+    """GET /me/last_sheet → {"sheet_id": int|null}。"""
+    return _request(cfg, "GET", "/me/last_sheet", player_uuid)
 
 
 def create_sheet(cfg: HtcmcAuthConfig, player_uuid: str, title: str) -> SheetOutcome:
@@ -143,23 +152,32 @@ def upsert_row(
     cfg: HtcmcAuthConfig,
     player_uuid: str,
     sheet_id: int,
-    item: str,
+    item: Optional[str],
     need: int,
     mode: int,
     sort: int,
+    registry_id: Optional[str] = None,
 ) -> SheetOutcome:
-    """PUT /sheets/{sheet_id}/rows {item_name,need_qty,mode,sort_order} → RowDetail。"""
+    """PUT /sheets/{sheet_id}/rows {need_qty,mode,sort_order[,item_name][,registry_id]} → RowDetail。
+
+    后端契约：item_name 与 registry_id 至少传一个；item_name 缺失时后端据 registry_id
+    走翻译表补中文 item_name（A2）。need_qty/mode/sort_order 恒传。
+    """
+    body: dict = {
+        "need_qty": need,
+        "mode": mode,
+        "sort_order": sort,
+    }
+    if item is not None:
+        body["item_name"] = item
+    if registry_id is not None:
+        body["registry_id"] = registry_id
     return _request(
         cfg,
         "PUT",
         f"/sheets/{sheet_id}/rows",
         player_uuid,
-        json_body={
-            "item_name": item,
-            "need_qty": need,
-            "mode": mode,
-            "sort_order": sort,
-        },
+        json_body=body,
     )
 
 

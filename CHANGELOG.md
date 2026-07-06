@@ -32,11 +32,13 @@
 
 #### Added
 
-- _（本期 MCDR Phase D 仅设计，无代码改动）_
+- **sheet view tellraw 像素级美化**：新增 `text_layout.py`（MC 1.20.4 默认字体像素宽度估算——ASCII/CJK/Box Drawing/§码/bold 宽度表，纯函数 `text_width_px`/`make_padding`/`right_align_suffix`/`center_leading`；§码整体 0 宽、`§l` 粗体每字符 +1px、颜色码重置粗体态、行超宽兜底双空格绝不返负数）；`format_section_separator`（`════ 物品列表 ════` 居中分节标题，用 `RColor.gold + RStyle.bold`（`§6§l`）走 `McdrPlugin/CLAUDE.md` §6 色板「重要/标题」槽，宽度按粗体感知估算确保渲染总宽 ≤ 320px 不换行）；`format_row_clickable` 行尾按钮组右对齐到聊天行右边界；`_center_button_row` 让 owner/公开底栏按钮组居中。`84801e0`
+- **sheet view 快捷按钮**：公开底栏 `[一键提交]`（`!!PCH sheet submit`，所有查看者可见，扫背包按 `registry_id` 精确匹配行批量上交）+ owner 行按钮 `[改ID]`（`!!PCH sheet setreg`，改行 `registry_id`，缺省读手持物品）。`e3c973e`
+- **测试补强**：`tests/_stubs.py` 补 `RText/RTextList.to_plain_text()`（MCDR 标准 API，宽度计算用）；新增 `tests/test_text_layout.py`（ASCII/CJK/§码/粗体宽度 + 填充/对齐全分支）；`test_messages.py` 加 `FormatSectionSeparatorTest`（粗体渲染宽 ≤ 320px + 两侧 ═ 居中）+ `SubmitFooterTest`；`test_sheet_commands_render.py` 加 `ViewSubmitButtonTest`。`e3c973e` · `84801e0`
 
-#### 待办
+#### Changed
 
-- 指令组对齐「项目」语义：主节点 `!!PCH project`（别名 proj）、删 project 占位、文案表格→项目、迁移期双注册。详见 mcdr-plugin.md §3.7.1。
+- `format_section_separator` 配色从 off-palette `§3`（dark_aqua）回归 §6 色板「重要/标题」语义槽（`§6§l` gold+bold），宽度计算同步改粗体感知（title/空格/═ 宽度均按 `§l` 前缀 +1px/char 估算），消除新代码用 § 字符串字面量违反 §6「新代码优先用 RText 枚举」的规范偏差。`未提交`
 
 ### Frontend
 

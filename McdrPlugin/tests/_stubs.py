@@ -69,6 +69,10 @@ def install_stubs() -> None:
         def __str__(self):
             return self.text
 
+        def to_plain_text(self):
+            # MCDR 标准 API：返回纯文本（忽略 click/hover），宽度计算用
+            return self.text
+
     class RTextList:
         def __init__(self, *parts):
             self.parts = list(parts)
@@ -78,6 +82,12 @@ def install_stubs() -> None:
 
         def __str__(self):
             return "".join(str(p) for p in self.parts)
+
+        def to_plain_text(self):
+            return "".join(
+                p.to_plain_text() if hasattr(p, "to_plain_text") else str(p)
+                for p in self.parts
+            )
 
     rtext.RText = RText
     rtext.RTextList = RTextList

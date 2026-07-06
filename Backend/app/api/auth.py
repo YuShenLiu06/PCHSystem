@@ -11,8 +11,9 @@ from app.core.jwt import create_access_token, create_refresh_token, decode_token
 from app.api.deps import get_current_player, require_service_token
 from app.models.user import Player
 from app.repositories.auth_token_repo import exchange as exchange_token, issue
-from app.repositories.player_repo import get_or_create
+from app.repositories.player_repo import get_or_create, get_last_sheet
 from app.schemas.auth import (
+    LastSheetResponse,
     MeResponse,
     PlayerBrief,
     RefreshRequest,
@@ -101,3 +102,12 @@ async def post_refresh(
 @top_router.get("/me", response_model=MeResponse)
 async def get_me(player: Player = Depends(get_current_player)) -> MeResponse:
     return MeResponse(uuid=player.uuid, name=player.current_name, role=player.role)
+
+
+@top_router.get("/me/last_sheet", response_model=LastSheetResponse)
+async def get_my_last_sheet(
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> LastSheetResponse:
+    sheet_id = await get_last_sheet(session, player.uuid)
+    return LastSheetResponse(sheet_id=sheet_id)

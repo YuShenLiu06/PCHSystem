@@ -9,9 +9,10 @@ from .config import HtcmcAuthConfig
 from .sheet_commands import (
     configure as sheet_configure,
     _sheet_root,
-    _sheet_list,
-    _sheet_list_mine,
+    _sheet_list_default,
+    _sheet_list_flags,
     _sheet_view,
+    _sheet_quick,
     _sheet_create,
     _sheet_rename,
     _sheet_delete,
@@ -27,6 +28,9 @@ from .sheet_commands import (
     _sheet_release,
     _sheet_reject,
     _sheet_notify_list,
+    _sheet_submit_oneclick,
+    _sheet_addhand,
+    _sheet_setreg,
 )
 
 CONFIG: HtcmcAuthConfig = HtcmcAuthConfig()
@@ -116,10 +120,11 @@ def _register_commands(server: PluginServerInterface):
             # 表级
             .then(
                 Literal("list")
-                .runs(_sheet_list)
-                .then(Literal("--mine").runs(_sheet_list_mine))
+                .runs(_sheet_list_default)                 # !!PCH sheet list → 进行中，参与优先
+                .then(Text("flags").runs(_sheet_list_flags))  # !!PCH sheet list <flags...>
             )
             .then(Literal("view").then(Integer("sheet_id").runs(_sheet_view)))
+            .then(Literal("last").runs(_sheet_quick))  # !!PCH sheet last → 快速重开上次
             .then(Literal("create").then(QuotableText("title").runs(_sheet_create)))
             .then(
                 Literal("rename")
@@ -183,6 +188,42 @@ def _register_commands(server: PluginServerInterface):
                 Literal("delrow")
                 .then(Integer("sheet_id").then(Integer("row_id").runs(_sheet_delrow)))
             )
+            # 一键提交：扫背包匹配行批量上报（纯申报，不清背包）
+            .then(
+                Literal("submit")
+                .then(Integer("sheet_id").runs(_sheet_submit_oneclick))
+            )
+            # 手持物品建行：registry_id 取自手持物，mode/sort 可选（沿用 add 节点模式）
+            .then(
+                Literal("addhand")
+                .then(
+                    Integer("sheet_id")
+                    .then(
+                        Integer("need").runs(_sheet_addhand)
+                        .then(
+                            Literal("lock").runs(_sheet_addhand)
+                            .then(Integer("sort").runs(_sheet_addhand))
+                        )
+                        .then(
+                            Literal("progress").runs(_sheet_addhand)
+                            .then(Integer("sort").runs(_sheet_addhand))
+                        )
+                    )
+                )
+            )
+            # 改行 registry_id：按行号定位，registry_id 可选（缺省读手持物品）；
+            # QuotableText 允许带空格（实际 registry_id 无空格，但保持一致）
+            .then(
+                Literal("setreg")
+                .then(
+                    Integer("sheet_id")
+                    .then(
+                        Integer("row_id")
+                        .runs(_sheet_setreg)
+                        .then(QuotableText("registry_id").runs(_sheet_setreg))
+                    )
+                )
+            )
             # 协作
             .then(
                 Literal("claim")
@@ -222,3 +263,13 @@ def _register_commands(server: PluginServerInterface):
     # sheet 是 !!PCH 的子命令（命令树内 Literal("sheet")），不在 !!help 单列；
     # 其子命令清单由 `!!PCH sheet` 根回调 _sheet_root 展示。文案只留系统名（issue 1/2）。
     server.register_help_message("!!PCH", "黄皮子积分系统")
+
+    # !!sheet 快捷别名根（第二根：无 !!PCH 前缀）
+    # S-1：多根注册是 MCDR 标准用法（已联网核实 basic.html）
+    sheet_alias = (
+        Literal("!!sheet")
+        .runs(_sheet_quick)                              # !!sheet → 重开上次
+        .then(Integer("sheet_id").runs(_sheet_view))    # !!sheet <id> → 直开
+    )
+    server.register_command(sheet_alias)
+    server.register_help_message("!!sheet", "快速打开上次查看的表格；!!sheet <id> 直达")

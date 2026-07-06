@@ -188,10 +188,10 @@ async def test_export_csv_single_sheet():
     csv_str = sheet_repo.export_csv(sheet.id, rows)
     lines = csv_str.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
-    assert lines[1] == f"{sheet.id},iron,64,0,open,,0,0"
-    assert lines[2] == f"{sheet.id},gold,128,1,open,,0,1"
+    assert lines[1] == f"{sheet.id},iron,,64,0,open,,0,0"
+    assert lines[2] == f"{sheet.id},gold,,128,1,open,,0,1"
 
 
 @pytest.mark.asyncio
@@ -210,11 +210,11 @@ async def test_export_all_csv_multiple_sheets():
     csv_str = sheet_repo.export_all_csv(bundled)
     lines = csv_str.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     )
     body = lines[1:]
-    assert f"{s1.id},a,1,0,open,,0,0" in body
-    assert f"{s2.id},b,2,1,open,,0,0" in body
+    assert f"{s1.id},a,,1,0,open,,0,0" in body
+    assert f"{s2.id},b,,2,1,open,,0,0" in body
     assert len(body) == 2
 
 
@@ -228,7 +228,7 @@ async def test_export_csv_empty_sheet_has_header_only():
     csv_str = sheet_repo.export_csv(sheet.id, [])
     lines = csv_str.strip().splitlines()
     assert lines == [
-        "sheet_id,item_name,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
     ]
 
 
@@ -666,6 +666,65 @@ async def test_list_contributors_missing_row_returns_no_entry():
         contribs = await sheet_repo.list_contributors(s, [rid, 999999])
         assert set(contribs.keys()) == {rid}
         assert contribs[rid]  # 已有贡献者
+
+
+# ---------- registry_id ----------
+@pytest.mark.asyncio
+async def test_upsert_row_sets_registry_id_on_create():
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:stone"
+        )
+        await s.commit()
+        assert row.registry_id == "minecraft:stone"
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_registry_id_defaults_none():
+    """不传 registry_id 建行 → None（兼容旧行 / 纯文本行）。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(s, sheet.id, "纯文本行", 1, 0, 0)
+        await s.commit()
+        assert row.registry_id is None
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_preserves_registry_id_when_omitted():
+    """更新行不传 registry_id（默认 None）→ 不覆盖已有值（避免误擦匹配键）。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:stone"
+        )
+        await s.commit()
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, sheet.id, "石头", 128, 0, 0)
+        await s.commit()
+        assert row.need_qty == 128
+        assert row.registry_id == "minecraft:stone"  # 保留
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_overwrites_registry_id_when_provided():
+    """更新行传新 registry_id → 覆盖旧值。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:stone"
+        )
+        await s.commit()
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(
+            s, sheet.id, "石头", 64, 0, 0, registry_id="minecraft:cobblestone"
+        )
+        await s.commit()
+        assert row.registry_id == "minecraft:cobblestone"
 
 
 # ---------- 项目阶段生命周期（迁移 0009）----------
@@ -1106,3 +1165,59 @@ async def test_aggregate_contributor_totals_merges_lock_and_progress_same_player
         totals = await sheet_repo.aggregate_contributor_totals(s, sid)
     # Assert：alice=35（lock 10 + progress 25 合并）
     assert totals == [(alice, "alice", 35)]
+
+
+@pytest.mark.asyncio
+async def test_list_sheets_involved_first_ordering():
+    """参与优先排序：玩家参与的表（owner/claimant/contributor）排在前面，组内按 id 升序。"""
+    # Arrange：创建多个玩家和表
+    alice = await _seed_player("alice")
+    bob = await _seed_player("bob")
+    carol = await _seed_player("carol")
+
+    async with async_session_factory() as s:
+        # 创建 5 张表：1(alice所有), 2(alice所有), 3(bob所有), 4(bob所有), 5(carol所有)
+        s1 = await sheet_repo.create_sheet(s, alice, "Alice表1")
+        s2 = await sheet_repo.create_sheet(s, alice, "Alice表2")
+        s3 = await sheet_repo.create_sheet(s, bob, "Bob表1")
+        s4 = await sheet_repo.create_sheet(s, bob, "Bob表2")
+        s5 = await sheet_repo.create_sheet(s, carol, "Carol表1")
+        await s.commit()
+
+    # 让 alice 参与 s3（作为 claimant）
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, s3.id, "stone", 64, sheet_repo.MODE_LOCK, 0)
+        await sheet_repo.claim_row(s, s3.id, row.id, alice)
+        await s.commit()
+
+    # 让 alice 参与 s4（作为 contributor）
+    async with async_session_factory() as s:
+        row = await sheet_repo.upsert_row(s, s4.id, "dirt", 64, sheet_repo.MODE_PROGRESS, 0)
+        await sheet_repo.contribute_row(s, s4.id, row.id, alice, 10)
+        await s.commit()
+
+    # Act：查询 alice 的列表（player_uuid=alice）
+    async with async_session_factory() as s:
+        sheets = await sheet_repo.list_sheets(s, player_uuid=alice)
+
+    # Assert：alice 参与的表（s1, s2, s3, s4）应在前面，未参与的（s5）在后面
+    # 组内按 id 升序
+    sheet_ids = [sh.id for sh, _ in sheets]
+    # 参与的：1, 2, 3, 4 → 应在前
+    # 未参与的：5 → 应在后
+    involved = {s1.id, s2.id, s3.id, s4.id}
+    not_involved = {s5.id}
+
+    # 前 4 个应该是参与的表
+    assert set(sheet_ids[:4]) == involved
+    # 最后一个应该是未参与的表
+    assert sheet_ids[4] in not_involved
+    # 参与的表内部按 id 升序
+    involved_ids = [sid for sid in sheet_ids if sid in involved]
+    assert involved_ids == sorted(involved_ids)
+
+    # 验证不传 player_uuid 时按 id 升序（向后兼容）
+    async with async_session_factory() as s:
+        sheets_no_uuid = await sheet_repo.list_sheets(s)
+    sheet_ids_no_uuid = [sh.id for sh, _ in sheets_no_uuid]
+    assert sheet_ids_no_uuid == sorted(sheet_ids_no_uuid)  # 全按 id 升序

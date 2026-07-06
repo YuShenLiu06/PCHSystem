@@ -43,9 +43,10 @@ const sheet = ref<SheetDetail | null>(null)
 const loading = ref(false)
 const errorMsg = ref('')
 
-// 新增行表单（mode 默认 lock=0）
+// 新增行表单（mode 默认 lock=0）；registry_id 可空——填了才支持游戏内一键提交匹配
 const newRow = ref({
   item_name: '',
+  registry_id: '',
   need_qty: 0,
   mode: MODE_LOCK,
   sort_order: 0,
@@ -58,7 +59,7 @@ const titleDraft = ref('')
 // 行内编辑缓冲（仅 owner 可编辑）：key=row.id
 // 含 mode —— 拥有者可下拉切换 lock/progress
 const rowDrafts = ref<
-  Record<number, { item_name: string; need_qty: number; mode: number; sort_order: number }>
+  Record<number, { item_name: string; registry_id: string; need_qty: number; mode: number; sort_order: number }>
 >({})
 
 const sheetId = computed(() => Number(route.params.id))
@@ -203,6 +204,7 @@ async function load(): Promise<void> {
     for (const r of data.rows) {
       rowDrafts.value[r.id] = {
         item_name: r.item_name,
+        registry_id: r.registry_id ?? '',
         need_qty: r.need_qty,
         mode: r.mode,
         sort_order: r.sort_order,
@@ -228,6 +230,7 @@ async function silentRefresh(): Promise<void> {
     if (!rowDrafts.value[r.id]) {
       rowDrafts.value[r.id] = {
         item_name: r.item_name,
+        registry_id: r.registry_id ?? '',
         need_qty: r.need_qty,
         mode: r.mode,
         sort_order: r.sort_order,
@@ -259,20 +262,29 @@ async function onAddRow(): Promise<void> {
     ElMessage.warning('请输入物品名')
     return
   }
+  const regId = newRow.value.registry_id.trim()
   try {
-    const created = await upsertRow(sheetId.value, { ...newRow.value, item_name: itemName })
+    // registry_id 留空则不传（后端落 null，不参与一键匹配）；非空才透传
+    const created = await upsertRow(sheetId.value, {
+      item_name: itemName,
+      need_qty: newRow.value.need_qty,
+      mode: newRow.value.mode,
+      sort_order: newRow.value.sort_order,
+      ...(regId ? { registry_id: regId } : {}),
+    })
     if (sheet.value) {
       // upsert：按 item_name 已存在则更新，否则新增；简单起见重新拉取一次保证一致
       const refreshed = await fetchSheet(sheetId.value)
       sheet.value = refreshed
       rowDrafts.value[created.id] = {
         item_name: created.item_name,
+        registry_id: created.registry_id ?? '',
         need_qty: created.need_qty,
         mode: created.mode,
         sort_order: created.sort_order,
       }
     }
-    newRow.value = { item_name: '', need_qty: 0, mode: MODE_LOCK, sort_order: 0 }
+    newRow.value = { item_name: '', registry_id: '', need_qty: 0, mode: MODE_LOCK, sort_order: 0 }
     ElMessage.success('已添加/更新')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -287,12 +299,15 @@ async function onSaveRow(row: RowDetail): Promise<void> {
     ElMessage.warning('物品名不能为空')
     return
   }
+  const regId = draft.registry_id.trim()
   try {
+    // registry_id 留空则不传（后端 None=不覆盖已有值，避免误擦匹配键）
     await upsertRow(sheetId.value, {
       item_name: itemName,
       need_qty: draft.need_qty,
       mode: draft.mode,
       sort_order: draft.sort_order,
+      ...(regId ? { registry_id: regId } : {}),
     })
     const refreshed = await fetchSheet(sheetId.value)
     sheet.value = refreshed
@@ -482,6 +497,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
       <!-- 新增行（仅拥有者可见 + 非 archived 只读态） -->
       <div v-if="canEdit && !isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <el-input v-model="newRow.item_name" placeholder="物品名" style="width: 200px;" maxlength="128" />
+        <el-input v-model="newRow.registry_id" placeholder="注册名（可空，如 minecraft:stone）" style="width: 240px;" maxlength="128" />
         <el-input-number v-model="newRow.need_qty" :min="0" controls-position="right" style="width: 130px;" />
         <el-select v-model="newRow.mode" style="width: 120px;">
           <el-option :value="0" label="锁定" />
@@ -500,6 +516,19 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
               maxlength="128"
             />
             <span v-else>{{ row.item_name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="注册名" min-width="200">
+          <template #default="{ row }">
+            <el-input
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+              v-model="rowDrafts[row.id].registry_id"
+              placeholder="minecraft:stone"
+              maxlength="128"
+              size="small"
+            />
+            <span v-else-if="row.registry_id" style="color: #999; font-size: 12px;">{{ row.registry_id }}</span>
+            <span v-else style="color: #ccc;">—</span>
           </template>
         </el-table-column>
         <el-table-column label="需要数量" width="120">

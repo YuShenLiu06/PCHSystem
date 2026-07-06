@@ -30,6 +30,7 @@ class Player(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )
+    last_sheet_id: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class AuthToken(Base):

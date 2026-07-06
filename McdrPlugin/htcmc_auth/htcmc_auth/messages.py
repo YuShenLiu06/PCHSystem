@@ -3,6 +3,13 @@ from typing import Any
 
 from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
+from .text_layout import (
+    CHAT_LINE_PX,
+    center_leading,
+    right_align_suffix,
+    text_width_px,
+)
+
 # === § 码风格（旧代码兼容）===
 MSG_PREFIX_GRAY = "§7"
 MSG_SUCCESS = "§a"
@@ -54,8 +61,17 @@ SHEET_BAD_REQUEST = "§c参数有误: {detail}"
 SHEET_UUID_FAIL = "§c获取 UUID 失败: {err}"
 SHEET_HEAD = "§6§l[PCH 表格]§r"
 SHEET_LIST_EMPTY = "§7（无表格）"
-SHEET_LIST_ITEM = "§a#{id} §7[{owner}] §f{title}"
+SHEET_LIST_ITEM = "§a#{id} §7[{owner}]§r {status} §f{title}§r"
+SHEET_LAST_EMPTY = "§7暂无最近打开的表格，§7用 !!PCH sheet list 查看列表§r"
 SHEET_LIST_MINE = "§7（仅看自己）"
+# list 旗标助记与未知旗标回显。
+# 简写 -m/-c/-t/-a/-l 可组合（如 -ma = mine + archived）；完整 --mine 等仍支持。
+# collecting 与 constructing 首字母同为 c，故 constructing 取 t（construcT）。
+SHEET_LIST_FLAG_HINT = (
+    "§7旗标: §b-m§7 我的 §b-c§7 收集 §b-t§7 施工 §b-a§7 归档 §b-l§7 全部"
+    "§7（可组合如 §b-ma§7）；或完整 §f--mine/--collecting/--constructing/--archived/--all§r"
+)
+SHEET_LIST_FLAG_UNKNOWN = "§c未知旗标: {token}§r\n" + SHEET_LIST_FLAG_HINT
 SHEET_DETAIL_TITLE = "§6§l#{id} {title}§r §7[owner: {owner}]"
 SHEET_DETAIL_EMPTY = "§7（无行）"
 # mode 0=lock 1=progress；status open/claimed/done
@@ -74,6 +90,21 @@ SHEET_OK_REJECTED = "§a已打回/取消备齐 [{item}]（delivered 归零）"
 SHEET_OK_PROGRESS_SET = "§a已调整进度 [{item}] {delivered}/{need}（拥有者，绝对值）"
 SHEET_DELIVER_HINT = "§7提示：deliver 的数量是绝对值，先 !!PCH sheet view 看当前 delivered 再决定"
 SHEET_NOTIFY_EMPTY = "§7暂无未读通知"
+# 一键提交 / 手持建行 / 改 registry_id
+SHEET_NO_DATA_API = "§c未安装 minecraft_data_api 插件，无法扫描背包"
+SHEET_ADDHAND_NEED_HAND = "§c请先手持物品再使用 addhand"
+SHEET_SETREG_NEED_HAND = "§c请先手持物品或提供 registry_id 参数"
+SHEET_OK_ADDHAND = "§a已用手持物品新建/更新行：{item} ×{need}（{mode}）"
+SHEET_OK_SETREG = "§a已更新行 #{row_id} 的物品 id 为 {registry_id}"
+# submit 汇总回执段
+SHEET_SUBMIT_HEAD = "§6§l[PCH 一键提交]§r"
+SHEET_SUBMIT_NO_API = "§c未安装 minecraft_data_api 插件，无法扫描背包"
+SHEET_SUBMIT_NO_ROWS = "§7表中无可匹配的行（需行已配 registry_id 且背包满足条件）"
+SHEET_SUBMIT_DONE_LINE = "§a  {item} ×{qty} §7→ §a完成"
+SHEET_SUBMIT_PROGRESS_LINE = "§a  {item} §7累计 §b{delivered}/{need}"
+SHEET_SUBMIT_SKIP_LINE = "§e  {item}：{reason}"
+SHEET_SUBMIT_DONE_HEAD = "§a已标记 {n} 行：\n"
+SHEET_SUBMIT_SKIP_HEAD = "§e跳过 {n} 行：\n"
 
 # === 项目三阶段生命周期（collecting → constructing → archived）===
 # 阶段标签：collecting 收集中(§b) / constructing 施工中(§e) / archived 已归档(§a)
@@ -153,6 +184,24 @@ def rtext_button(label: str, command: str, *, color=RColor.aqua, hover: str = ""
     if hover:
         rt.h(RText(hover, color=RColor.gray))
     return rt
+
+
+def format_section_separator(title: str = "物品列表") -> RText:
+    """主分隔符：════ title ════（gold + bold 双线，title 居中）。返回不带 ``\\n``。
+
+    用 ``RColor.gold + RStyle.bold``（McdrPlugin/CLAUDE.md §6 色板「重要/标题」语义）。
+    两侧 ═ 数量按目标行宽与 title 像素宽求出（向下取整确保不超宽）；
+    **粗体每字符 advance +1px**，故 title / 空格 / ═ 的宽度均按粗体态（``§l`` 前缀）估算。
+    ═（U+2550 Box Drawing）advance 按 ``CJK_ADVANCE_PX`` 估算（经验值，真机校准）。
+    """
+    # 粗体态宽度：§l 前缀让 text_width_px 自动对每字符 +1px（见 text_layout.bold 规则）
+    title_px = text_width_px(f"§l{title}")
+    space_px = text_width_px("§l ")
+    bar_px = text_width_px("§l═")
+    n_each = max(0, (CHAT_LINE_PX - title_px - 2 * space_px) // 2 // bar_px)
+    bar = "═" * n_each
+    return RText(f"{bar} {title} {bar}", color=RColor.gold).set_styles(RStyle.bold)
+
 
 
 def format_row_clickable(
@@ -244,17 +293,78 @@ def format_row_clickable(
         ))
     if is_owner:
         buttons.append(rtext_button(
+            "[改ID]", f"!!PCH sheet setreg {sheet_id} {rid} ",
+            color=RColor.yellow,
+            hover="改行 registry_id（直接回车=手持物品；或空格后输入新 registry_id）",
+        ))
+        buttons.append(rtext_button(
             "[删行]", f"!!PCH sheet delrow {sheet_id} {rid}",
             color=RColor.red, hover="删除此行（拥有者）",
         ))
 
-    seg = [RText(format_row_line(row)), RText("  ")]
+    line_text = format_row_line(row)
+    if not buttons:
+        # 无操作按钮（如非认领人看他人 claimed 行）：直接行文本 + 换行，不填充
+        return RTextList(RText(line_text), RText("\n"))
+    # 按钮组右对齐到聊天行右边界：行文本 + 计算填充 + 按钮组（按钮间单空格）。
+    # 行已超宽时 right_align_suffix 兜底返双空格（与旧行为一致），绝不返回负数空格。
+    suffix_text = " ".join(b.to_plain_text() for b in buttons)
+    pad = right_align_suffix(line_text, suffix_text)
+    seg = [RText(line_text), RText(pad)]
     for i, b in enumerate(buttons):
         if i > 0:
             seg.append(RText(" "))
         seg.append(b)
     seg.append(RText("\n"))
     return RTextList(*seg)
+
+
+def _center_button_row(buttons, *, pad_color=RColor.gray) -> RTextList:
+    """把一组按钮在聊天行内居中：前置填充空格（按按钮组整体宽度算），按钮间单空格，末尾换行。
+
+    兼容任意数量按钮（1 个或多个），便于未来向 owner 栏追加按钮时自动居中。
+    超宽（按钮组宽 ≥ 行宽）时 ``center_leading`` 返空串，按钮自然左对齐不崩。
+    """
+    if not buttons:
+        return RTextList(RText("\n", color=pad_color))
+    group_text = " ".join(b.to_plain_text() for b in buttons)
+    leading = center_leading(group_text)
+    parts = [RText(leading, color=pad_color)]
+    for i, b in enumerate(buttons):
+        if i > 0:
+            parts.append(RText(" ", color=pad_color))
+        parts.append(b)
+    parts.append(RText("\n", color=pad_color))
+    return RTextList(*parts)
+
+
+def format_centered_text(text: str, *, pad_color=RColor.gray) -> RTextList:
+    """把一段纯文本在聊天行内居中：前置填充（按像素宽）+ 文本 + 末尾换行。
+
+    复用 ``center_leading``（``text_width_px`` 自动剥 § 码 0 宽，故 ``text`` 可含色彩码，
+    如 ``SHEET_DETAIL_EMPTY`` 的 ``§7（无行）``）。超宽时 ``center_leading`` 返空串，
+    文本自然左对齐不崩。用于空表提示等无按钮的居中文案。
+    """
+    leading = center_leading(text)
+    return RTextList(
+        RText(leading, color=pad_color),
+        RText(text),
+        RText("\n", color=pad_color),
+    )
+
+
+def format_submit_footer(sheet_id) -> RTextList:
+    """公开快捷栏（所有查看者可见）：一键提交——扫背包按 registry_id 匹配行批量上交（纯申报，不清背包）。
+
+    按钮居中（走 ``_center_button_row``）。
+    """
+    return _center_button_row([
+        rtext_button(
+            "[一键提交]", f"!!PCH sheet submit {sheet_id}",
+            color=RColor.aqua,
+            hover="扫背包按 registry_id 匹配行批量上交（纯申报，不清背包；lock 行需已认领）",
+        ),
+    ])
 
 
 def format_owner_footer(sheet_id, status: str = "collecting") -> RTextList:
@@ -265,54 +375,48 @@ def format_owner_footer(sheet_id, status: str = "collecting") -> RTextList:
       constructing → [标记施工完成并归档]（advance archived）
       archived    → 只读终态：不渲染任何流转/增删改按钮（后端对写操作返 409 SheetArchived）
 
-    非归档态额外保留原有 [新增物品]/[改标题]/[删表] 管理按钮。
+    非归档态额外保留原有 [新增物品]/[改标题]/[删表] 管理按钮；**新增物品按钮走 addhand**（决策点2）。
     未知 status 兜底按 collecting 处理（保守显示，避免误锁管理操作）。
     """
     status = str(status) if status is not None else "collecting"
-    segs: list = []
+    buttons: list = []
 
     # 1) 阶段流转按钮（按状态机）
     if status == "collecting":
-        segs.append(rtext_button(
+        buttons.append(rtext_button(
             "[进入施工]", f"!!PCH sheet advance {sheet_id} constructing",
             color=RColor.green, hover="进入施工阶段（collecting → constructing）",
         ))
-        segs.append(RText(" ", color=RColor.gray))
-        segs.append(rtext_button(
+        buttons.append(rtext_button(
             "[直接归档]", f"!!PCH sheet advance {sheet_id} archived",
             color=RColor.yellow,
             hover="跳过施工直接归档（生成只读文档，不可逆）",
         ))
-        segs.append(RText(" ", color=RColor.gray))
     elif status == "constructing":
-        segs.append(rtext_button(
+        buttons.append(rtext_button(
             "[标记施工完成并归档]", f"!!PCH sheet advance {sheet_id} archived",
             color=RColor.yellow,
             hover="施工完成，生成只读归档文档（不可逆）",
         ))
-        segs.append(RText(" ", color=RColor.gray))
     # archived：只读，无流转按钮
 
     # 2) 增删改管理按钮（archived 态隐藏——后端只读，操作会 409）
     if status != "archived":
-        segs.append(rtext_button(
-            "[新增物品]", f"!!PCH sheet add {sheet_id} ",
+        buttons.append(rtext_button(
+            "[新增物品]", f"!!PCH sheet addhand {sheet_id} ",
             color=RColor.aqua,
-            hover="新增行（默认 lock；续输：物品 数量 [progress] [排序]）",
+            hover="用手持物品建行（续输：数量 [lock|progress] [排序]）",
         ))
-        segs.append(RText(" ", color=RColor.gray))
-        segs.append(rtext_button(
+        buttons.append(rtext_button(
             "[改标题]", f"!!PCH sheet rename {sheet_id} ",
             color=RColor.aqua, hover="修改表标题（续输新标题）",
         ))
-        segs.append(RText(" ", color=RColor.gray))
-        segs.append(rtext_button(
+        buttons.append(rtext_button(
             "[删表]", f"!!PCH sheet delete {sheet_id}",
             color=RColor.red, hover="删除整表（级联删行，谨慎）",
         ))
 
-    segs.append(RText("\n", color=RColor.gray))
-    return RTextList(*segs)
+    return _center_button_row(buttons)
 
 
 # === notifications 文案（按 category 映射）===

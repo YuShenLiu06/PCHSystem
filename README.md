@@ -153,6 +153,8 @@ curl http://localhost:8000/healthz
 - **投影解析生成表格**：`.litematic` 上传 → litemapy 解析 + 中文翻译 → 一键生成 Sheet
 - **统一通知抽象层**：业务事件 → DB 记库 → MCDR 轮询投递 + 离线补推
 - **MCDR `!!PCH sheet` 命令树**（14 子命令）+ 通知轮询
+- **sheet 快速重开**（2026-07-06）：`!!sheet`（重开上次）/ `!!sheet <id>`（直开）/ `!!PCH sheet last`；后端 `GET /me/last_sheet`（双通道鉴权）+ `GET /sheets/{id}` best-effort 记录 `last_sheet_id`（迁移 0011）
+- **sheet list 增强**（2026-07-06）：默认进行中（active）+ 自己参与的优先（owner/claimant/contributor 三源排序）+ 每行阶段标签；list 旗标支持单字母简写 `-m/-c/-t/-a/-l`（可组合如 `-ma`）
 
 变更记录见 [`CHANGELOG.md`](./CHANGELOG.md)，后续规划见 [`Docs/Plans/`](./Docs/Plans/)。
 
@@ -168,4 +170,4 @@ curl http://localhost:8000/healthz
 
 ---
 
-*最后更新：2026-07-03*
+*最后更新：2026-07-06*

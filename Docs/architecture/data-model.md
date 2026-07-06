@@ -12,7 +12,7 @@
 - **时间戳**：`TIMESTAMPTZ`，统一存 UTC。
 - **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单（**规划中**，未落地）。
 - **schema 划分与实现状态**：
-  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations`，迁移 0001-0003，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors`，迁移 0004/0005/0007/0008/0009，§10）、`notifications`（`notifications`，迁移 0006，§11）
+  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations`，迁移 0001-0003 + 0011，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors`，迁移 0004/0005/0007/0008/0009/0010，§10）、`notifications`（`notifications`，迁移 0006，§11）
   - 🚧 **规划中（未落地）**：`projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 schema 中的 5 个，§3-§7 为设计预案）；`web_accounts` / `bind_tokens`（§2.4/§2.5，`!!bind` 流程）
 
 ## 1. 全局 ER 图
@@ -38,7 +38,7 @@ erDiagram
 
 ## 2. `users` schema —— 身份核心
 
-### 2.1 `players`（玩家）✅ 已实现（迁移 `0001_users_players`）
+### 2.1 `players`（玩家）✅ 已实现（迁移 `0001_users_players` + `0011_players_last_sheet_id`）
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `uuid` | uuid | PK | MC OfflinePlayer UUID（身份锚 R-5） |
@@ -47,6 +47,7 @@ erDiagram
 | `whitelist_state` | varchar(16) | not null default 'active' | active / under_review / removed |
 | `first_seen_at` | timestamptz | not null default now() | 首次入服 |
 | `last_seen_at` | timestamptz | not null default now() | 最近在线 |
+| `last_sheet_id` | integer | null（迁移 0011） | 玩家最后查看的 sheet id（best-effort：`GET /sheets/{id}` JSON 详情路径写入；csv 导出与 404 不记）。**故意无 FK**——表被删后自然失效（下次查看任意表覆盖），对齐 `sheet_rows.registry_id` 先例；**无索引**（只按 PK `uuid` 单行查/写，`last_sheet_id` 无独立查询用途） |
 
 > 规划列（**未实现**，依赖对应 schema 落地后补）：`web_account_id`（FK→web_accounts.id，§2.4）、`total_score`（冗余累计积分，由 score_ledger 重建，§4）、`current_title_id`（FK→titles.id，§5）、`credit_score`（负责人信用分）。
 
@@ -290,7 +291,8 @@ erDiagram
 |---|---|---|---|
 | `id` | bigserial | PK | |
 | `sheet_id` | bigint | FK→sheets.id `ON DELETE CASCADE`, not null | 删表级联删行 |
-| `item_name` | text | not null | 自由文本（红线 R-6 不覆盖 sheets） |
+| `item_name` | text | not null | 显示名/自由文本（红线 R-6 不覆盖 sheets）；新建时若缺失，后端据 `registry_id` 用翻译表自动补中文名 |
+| `registry_id` | text | null | MC 物品注册名 `namespace:path`（隐式可空，迁移 0010）；**一键提交按此精确匹配表行**；block id ≠ item id 时存原值（不归一化，见 mcdr-plugin §6） |
 | `need_qty` | integer | not null default 0 | 原始整数，永不存换算结果 |
 | `mode` | smallint | not null default 0 | 0=lock（二元备齐，单人锁定）/ 1=progress（进度，多人贡献者列表） |
 | `status` | text | not null default 'open' | open / claimed / done（见下不变量） |
@@ -299,7 +301,7 @@ erDiagram
 | `sort_order` | integer | not null default 0 | |
 | `updated_at` | timestamptz | not null default now() | |
 
-约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。
+约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。`registry_id` 为 nullable、无唯一约束，仅作「一键提交」匹配键（迁移 0010）。
 
 **双模式不变量**（迁移 0005 协作改进 + 0007 progress 多人贡献者，推翻原 spec D-4）：
 - **lock（mode=0）**：单认领人状态机 `open → claimed → done`（claim / delivery / release / reject）；`open ⇒ claimant IS NULL ∧ delivered=0`，`claimed ⇒ claimant NOT NULL`，`done ⇒ claimant NOT NULL ∧ delivered≥need`。

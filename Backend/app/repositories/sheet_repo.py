@@ -35,6 +35,7 @@ STATUS_OPEN, STATUS_CLAIMED, STATUS_DONE = "open", "claimed", "done"
 _CSV_HEADER = [
     "sheet_id",
     "item_name",
+    "registry_id",
     "need_qty",
     "mode",
     "status",
@@ -150,6 +151,7 @@ async def list_sheets(
     session: AsyncSession,
     owner_uuid: uuid.UUID | None = None,
     status_filter: str | None = None,
+    player_uuid: uuid.UUID | None = None,
 ) -> list[tuple[Sheet, str]]:
     """列所有表：inner join players 取 owner 游戏名。返回 [(Sheet, owner_name)]。
 
@@ -157,12 +159,14 @@ async def list_sheets(
     - None → 不过滤；
     - "active" → status ∈ (collecting, constructing)；
     - 单值（collecting/constructing/archived）→ status == 该值。
-    按 sheet id 升序（与历史行为一致）。
+
+    player_uuid（参与优先排序）：
+    - 非空时，该玩家参与过的表（owner/claimant/contributor）排在前面，组内按 id 升序；
+    - None 时，按 sheet id 升序（与历史行为一致）。
     """
     stmt = (
         select(Sheet, Player.current_name)
         .join(Player, Player.uuid == Sheet.owner_uuid)
-        .order_by(Sheet.id)
     )
     if owner_uuid is not None:
         stmt = stmt.where(Sheet.owner_uuid == owner_uuid)
@@ -170,6 +174,22 @@ async def list_sheets(
         stmt = stmt.where(Sheet.status.in_(SHEET_PHASE_ACTIVE_SET))
     elif status_filter is not None:
         stmt = stmt.where(Sheet.status == status_filter)
+
+    if player_uuid is not None:
+        # 构造「该玩家参与过的 sheet_id 集」复合 SELECT（三源 UNION）。
+        # 直接以 CompoundSelect 传入 in_()——勿加 .subquery()，否则 SQLAlchemy 会
+        # 触发「Coercing Subquery into select() for IN()」告警（2.x 行为）。
+        involved_ids = (
+            select(SheetRow.sheet_id).where(SheetRow.claimant_uuid == player_uuid)
+        ).union(
+            select(SheetRow.sheet_id)
+            .join(SheetRowContributor, SheetRowContributor.row_id == SheetRow.id)
+            .where(SheetRowContributor.player_uuid == player_uuid),
+            select(Sheet.id).where(Sheet.owner_uuid == player_uuid),
+        )
+        stmt = stmt.order_by(Sheet.id.in_(involved_ids).desc(), Sheet.id.asc())
+    else:
+        stmt = stmt.order_by(Sheet.id.asc())
     return [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
 
 
@@ -218,14 +238,16 @@ async def upsert_row(
     need_qty: int,
     mode: int,
     sort_order: int,
+    registry_id: str | None = None,
 ) -> SheetRow:
-    """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort）。在则改，不在则 insert。
+    """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort/registry_id）。在则改，不在则 insert。
 
     新建行：status=open / claimant=None / delivered=0。
-    更新行 mode 不变：仅改 need_qty/sort_order，保留 status/claimant/delivered；
+    更新行 mode 不变：仅改 need_qty/sort_order（+ registry_id 仅当传入非 None），保留 status/claimant/delivered；
     按 spec §5.3 封顶 delivered 并按新 need 重算 status。
     更新行 mode 变化：重置协作（status=open/claimant=None/delivered=0/清贡献者），
     避免违反 progress 不变量（claimant 恒 null）。
+    registry_id=None 时不覆盖已有值（避免 upsert 其它字段时误擦匹配键）。
     并发同名 insert 会触发 IntegrityError，上抛交 api 层翻译为 409。
     """
     await _assert_writable(session, sheet_id)
@@ -240,6 +262,9 @@ async def upsert_row(
         row.need_qty = need_qty
         row.mode = mode
         row.sort_order = sort_order
+        if registry_id is not None:
+            # None 不覆盖：避免 upsert 其它字段时误擦已有 registry_id（匹配键）
+            row.registry_id = registry_id
         if mode_changed:
             # 换模式 = 重新开始：清协作状态，避免违反 progress 不变量（claimant 恒 null）
             row.status = STATUS_OPEN
@@ -266,6 +291,7 @@ async def upsert_row(
         need_qty=need_qty,
         mode=mode,
         sort_order=sort_order,
+        registry_id=registry_id,
     )
     session.add(row)
     await session.flush()
@@ -544,6 +570,7 @@ def _row_to_csv_record(sheet_id: int, row: SheetRow) -> list[str | int]:
     return [
         sheet_id,
         row.item_name,
+        row.registry_id or "",
         row.need_qty,
         row.mode,
         row.status,
