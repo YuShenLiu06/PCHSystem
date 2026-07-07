@@ -17,6 +17,7 @@ dependencies = [
   "pydantic-settings>=2.1",
   "httpx>=0.27",
   "litemapy>=0.11.0b0",  # PyPI 仅有 pre-release（a/b）；显式标注 b0 让 pip 接受
+  "nbtlib>=2.0.4",  # litemapy 已传递依赖；.nbt(structure) 解析直接使用（已实测解析 Create 蓝图）
   "python-multipart>=0.0.9",
   "matplotlib>=3.8",  # 归档贡献占比饼图（Agg 后端，免系统 GUI 包）
 ]

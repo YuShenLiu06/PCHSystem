@@ -7,9 +7,12 @@
 
 ## 1. 概述
 
-上传 Minecraft 投影文件（`.litematic`）→ 后端解析材料清单 → 翻译成中文 → 返回分组预览（**不落库、不持久化文件**）。前端预览确认后，按材料清单调 [`POST /sheets/from-items`](./sheets.md#51-表级) 生成在线表格（`mode` 默认 `lock`），随后即可走现成 sheets 协作流（认领·交付·解除·打回）。
+上传 Minecraft 投影文件（`.litematic` 或 Create 模组 `.nbt` 蓝图）→ 后端解析材料清单 → 翻译成中文 → 返回分组预览（**不落库、不持久化文件**）。前端预览确认后，按材料清单调 [`POST /sheets/from-items`](./sheets.md#51-表级) 生成在线表格（`mode` 默认 `lock`），随后即可走现成 sheets 协作流（认领·交付·解除·打回）。
 
 **仅 Web 端**（MCDR 不参与上传）。解析无状态、零迁移、复用 `sheets` schema。
+
+- `.litematic`：Litematica 投影格式（Schematic to Litematica 模组）。
+- `.nbt`：Create 模组蓝图/structure 格式（标准 Minecraft structure NBT，兼容原版 `/structure save`）。
 
 ---
 
@@ -17,12 +20,18 @@
 
 | 方法 | 路径 | 鉴权 | body | 成功 | 说明 |
 |---|---|---|---|---|---|
-| POST | `/parsing/litematic` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.litematic`） | 200 `ParsedMaterialPreview` | 解析 + 翻译，返回方块组 + 容器组预览；不落库 |
+| POST | `/parsing/litematic` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.litematic`） | 200 `ParsedMaterialPreview` | 解析 Litematica 投影 + 翻译，返回方块组 + 容器组预览；不落库 |
+| POST | `/parsing/nbt` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.nbt`） | 200 `ParsedMaterialPreview` | 解析 Create 蓝图/structure .nbt + 翻译，返回方块组 + 容器组预览；不落库 |
 | POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。见 [`sheets.md`](./sheets.md) |
 
-- 上限：文件 ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。
+- 上限：`.litematic` ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`.nbt` ≤ `NBT_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。
 - 解析为 CPU 密集，跑在 `asyncio.to_thread`（RS-7，不阻塞事件循环）。
-- 错误码：401（未鉴权）、400（扩展名非 `.litematic` / 空文件）、413（超限）、422（litemapy 解析失败，如损坏或非 litematic NBT）。
+- 错误码：
+  - 401：未鉴权
+  - 400：扩展名非法（`.litematic`/`.nbt` 之外）/ 空文件
+  - 413：文件超限
+  - 422（`.litematic`）：litemapy 解析失败（损坏或非 litematic NBT）
+  - 422（`.nbt`）：nbtlib 解析失败（损坏或非 structure NBT）
 
 ---
 
@@ -56,7 +65,8 @@ class ParsedMaterialPreview(BaseModel):
 ```
 上传 bytes
    │  MaterialParser(ABC)              app/services/parsing/parsers/
-   ▼   └─ LitematicParser（litemapy）      base.py / litematic.py
+   ▼   ├─ LitematicParser（litemapy）      base.py / litematic.py
+   │   └─ NbtParser（nbtlib）               base.py / nbt.py
 ParsedMaterialList(blocks, container_items, meta)   # 纯 registry id + count
    │  ItemTranslator(ABC)             app/services/parsing/translators/
    ▼   └─ LangJsonTranslator（内置 lang JSON）   base.py / lang_json.py
@@ -67,14 +77,16 @@ POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id
 ```
 
 - `MaterialParser`（`parsers/base.py`）：文件字节 → 分组清单（**不翻译**）。换格式（`.schem` / `.nbt`）新增子类。
+- `LitematicParser`（`parsers/litematic.py`）：基于 `litemapy` 解析 `.litematic`，遍历 region 体素计数 + 读 tile entity `Items`。
+- `NbtParser`（`parsers/nbt.py`）：基于 `nbtlib`（litemapy 同款 NBT 库，提升为直接依赖）解析 `.nbt`。NBT 二进制/gzip/tag 解码由 nbtlib 负责，本类只做 palette 查表 + 计数。
 - `ItemTranslator`（`translators/base.py`）：registry id → 中文。换数据源（远端 lang / 手维护映射 / Crowdin）新增子类。
 - `preview.build_preview`（`preview.py`）：编排 parser + translator → 预览条目 + 未翻译列表。
-- 归一化：`normalize.py` 维护 `SKIP_BLOCKS`（air/水/岩浆/结构空）。R-6（剥离 BlockState properties）由 litemapy 的 `BlockState.id` 天然满足。
+- 归一化：`normalize.py` 维护 `SKIP_BLOCKS`（air/水/岩浆/结构空）。R-6（剥离 BlockState properties）由 litemapy 的 `BlockState.id` 与 `.nbt` palette `Name` 天然满足。
 
 ### 4.1 解析规则
 
-- 方块：`region[x, y, z].id` 逐体素计数（公开 API，O(volume)）。
-- 容器：仅读 tile entity 的 vanilla `Items` 键（`{id, Count, Slot}`，兼容经典 `Count` 与小写 `count`）。
+- **`.litematic`**：`region[x, y, z].id` 逐体素计数（公开 API，O(volume)）。容器读 tile entity 的 vanilla `Items` 键（`{id, Count, Slot}`，兼容经典 `Count` 与小写 `count`）。
+- **`.nbt`**（Create 蓝图/structure）：遍历 `blocks` 数组，按 `state` 索引 `palette` 取 `Name`（registry id，形如 `minecraft:stone`）。容器读 block entity 的 vanilla `Items` 键。跳过 `SKIP_BLOCKS`。
 
 ---
 
@@ -96,7 +108,7 @@ POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id
 
 | 项 | 说明 | 扩展点 |
 |---|---|---|
-| **Create 自有存储** | `create:item_vault` 等 Create 仓储方块的内容**不走 vanilla `Items`**（走 Create 全局存储），其内容暂不可提取。普通箱子/木桶/漏斗的 `Items` 正常读取 | 在 `LitematicParser` 内按 tile entity `id` 分派专用读取器（新增子模块） |
+| **Create 自有存储** | `create:item_vault` 等 Create 仓储方块的内容**不走 vanilla `Items`**（走 Create 全局存储），其内容暂不可提取。普通箱子/木桶/漏斗的 `Items` 正常读取。**该限制对 `.litematic` 与 `.nbt` 均适用。** | 在 parser 内按 tile entity/block entity `id` 分派专用读取器（新增子模块） |
 | **多部分方块计数** | 门/床/双层台阶两面共享 `.id`，被计为多块（如一扇门计 2） | `normalize.py` 的 `MERGE_RULES`（预留，形如 `{"minecraft:.*_door": 2}` ÷2 取整） |
 | **MC 1.20.5+ 物品格式** | 组件化物品格式与经典 `{id, Count}` 不同 | 容器读取层按版本分派（当前覆盖经典格式） |
 | **大文件性能** | 逐体素扫描百万级方块较慢 | 已跑在线程池；必要时切 palette + `numpy.bincount`（私有 `_blocks`，版本脆弱） |
@@ -114,7 +126,8 @@ Backend/app/services/parsing/
 ├── preview.py                # build_preview 编排 + get_default_translator
 ├── parsers/
 │   ├── base.py               # MaterialParser ABC
-│   └── litematic.py          # LitematicParser + LitematicParseError
+│   ├── litematic.py          # LitematicParser + LitematicParseError（litemapy）
+│   └── nbt.py                # NbtParser + NbtParseError（nbtlib）
 └── translators/
     ├── base.py               # ItemTranslator ABC
     ├── lang_json.py          # LangJsonTranslator + load_bundled_table + lang_key_candidates
@@ -123,9 +136,10 @@ Backend/app/services/parsing/
         └── create.zh_cn.json      # Create 6.0.8（1.20.1）
 ```
 
-- 路由：`app/api/parsing.py`；schema：`app/schemas/parsing.py`；配置：`app/core/config.py`（`litematic_max_upload_bytes`）。
+- 路由：`app/api/parsing.py`；schema：`app/schemas/parsing.py`；配置：`app/core/config.py`（`litematic_max_upload_bytes` / `nbt_max_upload_bytes`）。
 - 测试：`tests/test_parsing_unit.py`（parser + translator）、`tests/test_parsing_api.py`（端点 + 鉴权 + 错误码）、`tests/test_sheets_from_items.py`（批量建表）。
+- 测试件：`tests/fixtures/create_blueprint_sample.nbt`（Create 蓝图样例，132 非空方块，15 种，container 为空）。
 
 ---
 
-*最后更新：2026-07-03（`POST /sheets/from-items` 现透传 `registry_id` = `PreviewItem.item_id`，写入 `sheet_rows.registry_id`，迁移 0010；`PreviewItem` 本身不变）*
+*最后更新：2026-07-07（新增 POST /parsing/nbt：基于 nbtlib 解析 Create 蓝图/structure .nbt，复用 ParsedMaterialPreview + LangJsonTranslator；新增 NbtParser/NbtParseError 与 nbt_max_upload_bytes 配置；schemas/translator/preview 零改动）*
