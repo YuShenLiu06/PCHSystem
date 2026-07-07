@@ -32,3 +32,6 @@ McdrPlugin/htcmc_auth/config.json
 
 # Docker Compose 本地 override（含机器特定绝对路径，勿提交）
 docker-compose.override.yml
+
+# Claude worktrees（本地 git worktree 检出，含机器绝对路径与大量文件，勿入库）
+.claude/worktrees/
