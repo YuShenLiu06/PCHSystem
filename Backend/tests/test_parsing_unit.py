@@ -6,9 +6,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import nbtlib
 import pytest
 
-from app.services.parsing.parsers.litematic import LitematicParseError, LitematicParser
+from app.services.parsing.parsers.litematic import (
+    LitematicParseError,
+    LitematicParser,
+    _ensure_optional_region_keys,
+)
 from app.services.parsing.parsers.nbt import NbtParseError, NbtParser
 from app.services.parsing.translators.lang_json import (
     LangJsonTranslator,
@@ -17,6 +22,9 @@ from app.services.parsing.translators.lang_json import (
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "机械动力仓库_1.litematic"
 _NBT_FIXTURE = Path(__file__).parent / "fixtures" / "create_blueprint_sample.nbt"
+# issue #8 复现样本：Create 蓝图 .nbt 经投影转出的 .litematic，region 缺
+# PendingBlockTicks/PendingFluidTicks，曾触发 litemapy KeyError 导致整解析 422。
+_BLUEPRINT_FIXTURE = Path(__file__).parent / "fixtures" / "1103.litematic"
 
 
 # ---------- lang_key_candidates ----------
@@ -55,6 +63,7 @@ def test_translator_miss_returns_original_id():
 
 
 # ---------- LitematicParser ----------
+# 同时回归 issue #8 fix 不破坏全键齐全样本（机械动力仓库_1 有全部 4 个可选键，补键路径为 no-op）。
 def test_litematic_parser_parses_sample_structure():
     data = _FIXTURE.read_bytes()
     parsed = LitematicParser().parse(data, "机械动力仓库_1.litematic")
@@ -90,6 +99,58 @@ def test_litematic_parser_skips_air_and_fluids():
 def test_litematic_parser_rejects_garbage_bytes():
     with pytest.raises(LitematicParseError):
         LitematicParser().parse(b"definitely not an NBT file", "bad.litematic")
+
+
+# ---------- issue #8：Create 蓝图转出的 .litematic（缺可选 NBT 键）----------
+def test_litematic_parser_handles_converted_create_blueprint():
+    # 复现 issue #8：原 litemapy 对缺失的 PendingBlockTicks 直接下标 KeyError → 整解析 422。
+    # 补键后应正常解析、Create 方块存活（不被整份丢弃）。
+    parsed = LitematicParser().parse(_BLUEPRINT_FIXTURE.read_bytes(), "1103.litematic")
+
+    assert parsed.meta.region_count == 1
+    assert parsed.meta.total_blocks == 121
+    ids = {e.item_id for e in parsed.blocks}
+    assert "create:belt" in ids
+    assert "create:mechanical_crafter" in ids
+
+
+# ---------- _ensure_optional_region_keys（漂移哨兵 + 全键覆盖，不依赖 fixture/DB/litemapy）----------
+def _minimal_region_nbt(**keep) -> nbtlib.Compound:
+    """最小合法 region：默认缺全部 4 个可选列表键，仅保留调用方指定的键。"""
+    base = {
+        "Position": nbtlib.Compound({"x": 0, "y": 0, "z": 0}),
+        "Size": nbtlib.Compound({"x": 1, "y": 1, "z": 1}),
+        "BlockStatePalette": nbtlib.List[nbtlib.Compound](),
+        "BlockStates": nbtlib.List[nbtlib.Long](),
+    }
+    base.update(keep)
+    return nbtlib.Compound(base)
+
+
+def test_ensure_optional_region_keys_fills_all_four_missing():
+    nbt = nbtlib.Compound({"Regions": nbtlib.Compound({"r": _minimal_region_nbt()})})
+    _ensure_optional_region_keys(nbt)
+    region = nbt["Regions"]["r"]
+    for key in ("Entities", "TileEntities", "PendingBlockTicks", "PendingFluidTicks"):
+        assert key in region
+        assert len(region[key]) == 0
+
+
+def test_ensure_optional_region_keys_is_noop_when_all_present():
+    present = {
+        key: nbtlib.List[nbtlib.Compound]()
+        for key in ("Entities", "TileEntities", "PendingBlockTicks", "PendingFluidTicks")
+    }
+    nbt = nbtlib.Compound({"Regions": nbtlib.Compound({"r": _minimal_region_nbt(**present)})})
+    _ensure_optional_region_keys(nbt)  # 幂等：不抛、不覆盖既有键
+    for key, val in present.items():
+        assert nbt["Regions"]["r"][key] is val
+
+
+def test_ensure_optional_region_keys_safe_when_regions_missing_or_not_dict():
+    _ensure_optional_region_keys(nbtlib.Compound())  # 无 Regions
+    _ensure_optional_region_keys(nbtlib.Compound({"Regions": "x"}))  # Regions 非 dict
+    # 不抛即通过
 
 
 # ---------- NbtParser ----------

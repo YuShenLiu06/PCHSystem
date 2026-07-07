@@ -1,4 +1,4 @@
-"""POST /parsing/litematic 端点测试（multipart 上传 → 翻译预览）。
+"""POST /parsing/litematic + /parsing/nbt 端点测试（multipart 上传 → 翻译预览）。
 
 复用 test_sheets_api.py 的 _svc_token / _make_player / _auth 模式。
 """
@@ -17,6 +17,8 @@ from app.models.user import Player
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "机械动力仓库_1.litematic"
 _NBT_FIXTURE = Path(__file__).parent / "fixtures" / "create_blueprint_sample.nbt"
+# issue #8 复现样本（Create 蓝图 .nbt 经投影转出的 .litematic，缺可选 NBT 键）。
+_BLUEPRINT_FIXTURE = Path(__file__).parent / "fixtures" / "1103.litematic"
 
 
 @pytest.fixture(autouse=True)
@@ -93,6 +95,40 @@ async def test_parse_litematic_rejects_garbage(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_parse_litematic_garbage_returns_friendly_message(client):
+    # 需求 #1：硬解析失败时返回玩家可读中文文案，不泄露内部异常串（如 'PendingBlockTicks'）。
+    _, bearer = await _make_player("p4")
+    resp = await client.post(
+        "/parsing/litematic",
+        files={"file": ("bad.litematic", b"not nbt at all")},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "无法解析该投影文件" in detail
+    assert "PendingBlockTicks" not in detail  # 不泄露内部键名
+
+
+@pytest.mark.asyncio
+async def test_parse_litematic_handles_create_blueprint(client):
+    # issue #8 端到端：Create 蓝图转出的 .litematic（缺可选 NBT 键）应正常解析、Create 方块存活。
+    _, bearer = await _make_player("p5")
+    data = _BLUEPRINT_FIXTURE.read_bytes()
+    resp = await client.post(
+        "/parsing/litematic",
+        files={"file": ("1103.litematic", data, "application/octet-stream")},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["meta"]["region_count"] == 1
+    assert body["meta"]["total_blocks"] == 121
+    ids = {b["item_id"] for b in body["blocks"]}
+    assert "create:belt" in ids
+    assert "create:mechanical_crafter" in ids
+
+
 # ---------- POST /parsing/nbt ----------
 @pytest.mark.asyncio
 async def test_parse_nbt_returns_translated_preview(client):
@@ -144,7 +180,7 @@ async def test_parse_nbt_rejects_wrong_extension(client):
 
 @pytest.mark.asyncio
 async def test_parse_nbt_rejects_garbage(client):
-    """上传垃圾字节 → 422（NbtParseError → api 翻译）。"""
+    """上传垃圾字节 → 422（NbtParseError → api 翻译为友好文案）。"""
     _, bearer = await _make_player("p_nbt_garbage")
     resp = await client.post(
         "/parsing/nbt",
@@ -152,3 +188,4 @@ async def test_parse_nbt_rejects_garbage(client):
         headers=_auth(bearer),
     )
     assert resp.status_code == 422
+    assert "无法解析该蓝图文件" in resp.json()["detail"]
