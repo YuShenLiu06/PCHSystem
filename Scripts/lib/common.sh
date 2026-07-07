@@ -24,17 +24,18 @@ PCH_DEFAULT_BRANCH="main"
 # GitHub 镜像候选：<rewrite-prefix>|<insteadOf>
 # pick_github_mirror 用 git insteadOf 重写，返回命中的 entry（或空串=直连）
 PCH_GH_MIRRORS=(
-    "https://ghproxy.com/https://github.com|https://github.com"
-    "https://gh-proxy.com/https://github.com|https://github.com"
-    "https://kkgithub.com|https://github.com"
-    "https://gitclone.com/github.com|https://github.com"
+    "https://ghfast.top/https://github.com|https://github.com"       # ghfast 
+    "https://ghproxy.com/https://github.com|https://github.com"      # ghproxy
+    "https://kkgithub.com|https://github.com"                        # kkgithub 
+    "https://gitclone.com/github.com|https://github.com"             # gitclone
+    "https://gh.zwy.one/https://github.com|https://github.com"       # gh.zwy.one
 )
 
-# Docker registry 镜像加速候选（2025-2026 仍在运营的少数公共镜像，可能随时失效）
 PCH_DOCKER_MIRRORS=(
-    "https://docker.m.daocloud.io"
-    "https://dockerproxy.com"
-    "https://docker.nju.edu.cn"
+    "https://docker.nju.edu.cn"        # 南京大学
+    "https://docker.1ms.run"           # 毫秒镜像
+    "https://docker.m.daocloud.io"     # DaoCloud
+    "https://mirror.baidubce.com"      # 百度云
 )
 # shellcheck disable=SC2034  # 跨文件常量，install.sh/update.sh 引用
 PIP_INDEX_URL_TUNA="https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -470,9 +471,11 @@ run_step() {
     fi
     local name=$1; shift
     log_step "$name"
+    # 注意：不在子 shell 里执行——子 shell 会丢失步骤内对全局变量的赋值
+    # （如 ensure_docker 设置 COMPOSE）。改用 set +e/+e 在当前 shell 捕获退出码。
     local rc=0
     set +e
-    ( "$@" )
+    "$@"
     rc=$?
     set -e
     if [[ $rc -eq 0 ]]; then return 0; fi

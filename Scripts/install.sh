@@ -26,6 +26,7 @@ cd "$PCH_REPO_DIR"
 STRATEGY="tag"          # tag | edge
 NO_FRONTEND=0
 NO_MCDR=0
+NO_SYNC=0
 OVERWRITE_MCDR_CONFIG=0
 MCDR_ROOT_OVERRIDE=""
 MCDR_API_URL_OVERRIDE=""
@@ -44,6 +45,7 @@ PCHSystem install.sh —— 一键首次安装
   --mcdr-overwrite-config  强制覆盖玩家已有的 htcmc_auth config.json
   --no-frontend          跳过前端构建
   --no-mcdr              跳过 MCDR 插件拷贝
+  --no-sync              跳过版本同步（用当前工作树，开发/测试用）
   -h, --help             显示本帮助
 
 环境变量: PCH_YES / PCH_MCDR_ROOT / PCH_MCDR_API_URL / WEB_BASE_URL
@@ -60,6 +62,7 @@ parse_args() {
             --mcdr-overwrite-config) OVERWRITE_MCDR_CONFIG=1; shift ;;
             --no-frontend) NO_FRONTEND=1; shift ;;
             --no-mcdr) NO_MCDR=1; shift ;;
+            --no-sync) NO_SYNC=1; shift ;;
             -h|--help) usage; exit 0 ;;
             *) die "未知参数: $1（用 --help 查看用法）" ;;
         esac
@@ -95,6 +98,10 @@ setup_mirrors() {
 }
 
 sync_repo() {
+    if [[ $NO_SYNC -eq 1 ]]; then
+        log_info "跳过版本同步（--no-sync），使用当前工作树 ($(current_ref))"
+        return 0
+    fi
     log_step "同步仓库到目标版本（strategy=$STRATEGY）"
     # dirty 保护（跟踪文件被改）
     if ! git diff --quiet HEAD -- 2>/dev/null || [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
