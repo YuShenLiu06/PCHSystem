@@ -6,8 +6,13 @@ FROM python:3.11-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openjdk-17-jre-headless \
         curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir 'mcdreforged>=2.14,<3' requests
+    && rm -rf /var/lib/apt/lists/*
+
+# MCDR + 插件 Python 依赖：
+#   - mcdreforged / requests：MCDR 本体 + htcmc_auth HTTP 客户端
+#   - hjson / parse：MinecraftDataAPI 的 requirements（之前漏装 → minecraft_data_api 加载失败
+#     → htcmc_auth 因缺依赖被卸载）。单独成层，改 pip 依赖时 apt 层缓存仍命中。
+RUN pip install --no-cache-dir 'mcdreforged>=2.14,<3' requests hjson parse
 
 WORKDIR /mcdr
 
@@ -15,6 +20,8 @@ WORKDIR /mcdr
 # MCDR 需要可写 config.yml（load 时会 atomic rename 补字段），不能用 :ro volume 挂载
 COPY TestServer/config/mcdr_config.yml /mcdr/config.yml
 COPY TestServer/plugins/uuid_api_remake.mcdr /mcdr/plugins/uuid_api_remake.mcdr
+# htcmc_auth 运行时依赖的 MCDR 插件（之前漏 COPY，靠 docker cp 进可写层维持，recreate 即丢）
+COPY TestServer/plugins/MinecraftDataAPI-v1.6.1.mcdr /mcdr/plugins/MinecraftDataAPI-v1.6.1.mcdr
 COPY McdrPlugin/htcmc_auth /mcdr/plugins/htcmc_auth
 # htcmc_auth 配置：load_config_simple("config.json") 默认从 <MCDR>/config/<plugin_id>/config.json 加载
 COPY TestServer/config/htcmc_auth_config.json /mcdr/config/htcmc_auth/config.json
