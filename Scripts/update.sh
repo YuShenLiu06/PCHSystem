@@ -314,9 +314,19 @@ EOF
     log_info "======================================================================================"
 }
 
+check_compose() {
+    # update.sh 假设 install.sh 已装好 Docker；此处只检测、不安装。
+    # 必须在任何 dcc 调用前设置 $COMPOSE，否则 dcc() 会 die（且 pg_dump 那行的
+    # 2>/dev/null 会吞掉 die 的错误信息，表现为"迁移前快照后静默 exit 1"）。
+    detect_compose
+    [[ -n "$COMPOSE" ]] \
+        || die "docker compose 不可用（既无 v2 plugin 也无 v1 docker-compose）——请先运行 bash Scripts/install.sh（或安装 Docker + compose 插件）"
+}
+
 # ---------- main ----------
 main() {
     parse_args "$@"
+    check_compose
     check_managed
     fetch_and_compare
     guard_dirty
