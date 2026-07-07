@@ -101,6 +101,10 @@ fetch_and_compare() {
         if [[ -z "$OLD_SHA" ]]; then
             log_warn "部署配置无 PCH_DEPLOY_COMMIT，--no-sync 无法计算 diff，视为无变更"
             OLD_SHA=$NEW_SHA; OLD_REF=$NEW_REF
+        else
+            # 部署记录存的是短 hash（install 时 git rev-parse --short），规范化为完整 hash 再比较，
+            # 否则短/长 hash 字符串永不相等 → 即便 OLD/NEW 是同一 commit 也误报"本地变更"。
+            OLD_SHA=$(git rev-parse "$OLD_SHA^{commit}" 2>/dev/null || echo "$OLD_SHA")
         fi
         if [[ "$OLD_SHA" == "$NEW_SHA" ]]; then
             log_info "当前工作树与部署记录一致（$OLD_REF），--no-sync 仍执行更新流程（迁移/插件/健康）"
