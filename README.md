@@ -24,18 +24,9 @@
 
 ## 架构总览
 
-三端完全分离，后端为唯一数据拥有者，MCDR 仅作游戏内客户端，wiki.js 经独立 wiki 内容 git 仓双向同步（默认关闭）。
+三端完全分离，后端为唯一数据拥有者，MCDR 仅作游戏内客户端，wiki.js 经 git 仓双向同步（默认关闭）。
 
-```
-┌───────────────宿主机───────────────┐    ┌──────────Docker Compose──────────┐
-│  MC 服务端 (Fabric)  ←─→  MCDR 插件 │    │  backend (FastAPI :8000)          │
-│                          (RCON)     │ ──→│    ↓                              │
-└────────────────────────────────────-┘    │  postgres:16 (内部)               │
-                                            │    ↓                              │
-┌────────浏览器 / 管理员─────────────┐    │  wiki.js (:3000)〔规划中，未入 compose〕│
-│  Vue3 + Element Plus 后台  ────────│──→ │                                   │
-└────────────────────────────────────-┘    └───────────────────────────────────┘
-```
+![architecture](Image/architecture.png)
 
 完整架构图与 ADR 见 [`Docs/architecture.md`](./Docs/architecture.md)。
 
@@ -95,7 +86,7 @@ PCHSystem/
 - Docker + Docker Compose
 - Python 3.11+（MCDR 插件开发 / 后端本地调试）
 - Node.js 18+（前端开发）
-- Minecraft Fabric 服务端（Fabric + Create + Carpet，离线模式）
+- Minecraft 服务端（由于 MCDR 良好的兼容性，我们几乎可以在所有我的世界服务端上运行）
 
 ### 启动后端 + 数据库
 
