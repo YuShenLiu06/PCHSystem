@@ -188,6 +188,13 @@ PCHSystem/
 - [x] sheet list 增强：后端 `list_sheets` 加可选 `player_uuid`——参与优先排序（owner / lock 行 claimant / progress 行 contributor 三源 UNION 置顶，组内按 id 升序，`order_by id.in_(involved).desc(), id.asc()`），`GET /sheets` 透传 `player.uuid`，`player_uuid=None` 时按 id 升序向后兼容；`status` 过滤参数后端默认仍 None（由 MCDR 端默认传 `active`）；MCDR `sheet list` 默认进行中（active=collecting+constructing，排除归档）+ 自己参与的优先 + 每行阶段标签（`format_phase_label`）
 - [x] MCDR list 简写旗标：`-m`(mine)/`-c`(collecting)/`-t`(constructing)/`-a`(archived)/`-l`(all)，可组合如 `-ma`；完整 `--mine` 等向后兼容；未知旗标回显助记提示（`_parse_list_flag_tokens` 纯函数化单测）
 
+**已完成（2026-07-07，部署脚本）**：
+- [x] 一键首次安装 `Scripts/install.sh`（12 步幂等）：检测/装 Docker（`get.docker.com --mirror Aliyun` + 发行版包回退）→ GitHub 连通性探测选镜像 → 同步最新发版 tag（或 `--edge` main）→ 生成 `.env`（`openssl rand` 三密钥，已存在绝不覆盖）+ 生产 override（去 `--reload` + 加 healthcheck，保留源码挂载）→ `docker compose up -d` 等 `/healthz` 200 → `alembic upgrade head`（前 `pg_dump`）→ 前端 `npm run build` → 拷 `htcmc_auth` 到 MCDR `plugins/` 并填同值 token → 持久化 `.pchsystem.deploy.env`
+- [x] 一键更新 `Scripts/update.sh`：基于 `git diff` 路径的**智能重建矩阵**（仅 `Backend/Dockerfile` / `pyproject.toml` 变更才 rebuild；`app/**` / `alembic/**` 仅 `--force-recreate` 秒级；无 backend / compose 变更跳过容器操作）+ 迁移前快照不自动 downgrade + dirty 保护（拒跑本地跟踪文件改动）+ `--force` 接管非脚本部署 + `--edge` 临时拉 main
+- [x] 国内网络四类镜像自适应（GitHub clone / Docker Hub / PyPI / npm）：探测 → 候选 → best-effort，单一镜像不可用绝不阻断，全失败回退直连
+- [x] token 双写校验：`.env` `MCDR_SERVICE_TOKEN` 与插件 `config.json` `service_token` 必须同值——install 复用同一密钥双写、update 每次校验仅 warn 不擅改；密钥轮换流程见 [`Scripts/README.md`](./Scripts/README.md) §8
+- [x] 共享函数库 `Scripts/lib/common.sh`（镜像探测 / Docker 安装 / 部署状态读写 / dirty 检查等被两脚本 source）；完整用法与边界见 [`Scripts/README.md`](./Scripts/README.md)
+
 **待处理**：
 - [ ] **既有 bug（v0.3.0 起）**：`!!PCH sheet add/set/addhand ... progress` 的 `Literal` 字面量未写入 `ctx`（MCDR 仅 ArgumentNode 入 context，见 mcdr-api-cheatsheet §4），`ctx.get("mode")` 恒 None → 实际建 lock 行；addhand 镜像继承。待统一修（建议字面量节点回调显式传 mode，或改读 command path）
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
@@ -196,6 +203,6 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-07-06（sheet 快速重开 + list 增强：迁移 `0011_players_last_sheet_id`（`users.players.last_sheet_id` 无 FK/索引）+ `GET /me/last_sheet`（双通道鉴权）+ `GET /sheets/{id}` best-effort 记录 + MCDR `!!sheet`/`!!PCH sheet last` 快捷；`list_sheets` 加 `player_uuid` 参与优先排序三源 UNION + MCDR list 默认 active + 阶段标签 + 简写旗标 `-m/-c/-t/-a/-l`）*
+*最后更新：2026-07-07（新增部署脚本：`Scripts/install.sh` + `update.sh` + `lib/common.sh`——一键安装/更新，国内四类镜像自适应 + 智能重建矩阵 + token 双写校验 + dirty 保护）*
 
 *增量（2026-07-05）：sheet view tellraw 像素级美化——新增 `text_layout.py` 像素宽度估算模块 + `format_section_separator` 分节标题（`════ 物品列表 ════`）+ 行尾按钮右对齐 / 底栏按钮居中；`format_section_separator` 配色回归 §6 色板「重要/标题」`§6§l`（gold+bold）；MCDR 测试 113 绿。发现并记入待处理：worktree 工作树 `Frontend/vite.config.ts` 端口改 8002 属 worktree 本地污染，勿提交。*

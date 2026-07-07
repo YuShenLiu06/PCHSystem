@@ -26,6 +26,10 @@
 
 - `/parsing/litematic` 页支持上传 `.nbt`（Create 蓝图 / 原版结构）文件：按扩展名自动选择 `POST /parsing/nbt` 端点，预览 / 行内编辑 / 生成表格流程完全复用（对接后端 #5）。导航文案改为「解析投影/蓝图」。
 
+### Added（scripts）
+
+- 新增一键安装/更新脚本（`Scripts/install.sh` + `update.sh` + `lib/common.sh`）：首次安装自动检测/安装 Docker、国内网络四类镜像自适应（GitHub / Docker Hub / PyPI / npm）、同步最新发版 tag、生成 `.env` 与生产 override、起容器 + `alembic` 迁移、构建前端、拷 `htcmc_auth` 插件并填同值 token；一键更新基于 `git diff` 智能重建矩阵 + 迁移前 `pg_dump` + token 双写校验 + dirty 保护 + `--force` 接管。详见 [`Scripts/README.md`](./Scripts/README.md)。
+
 ---
 
 ## [backend-v0.4.1] - 2026-07-07
