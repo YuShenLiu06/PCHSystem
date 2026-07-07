@@ -195,14 +195,9 @@ decide_rebuild() {
 
 run_migrations() {
     log_step "Alembic 迁移（upgrade head，幂等）"
-    mkdir -p backups
-    ensure_gitignored backups/
-    local pg_user pg_db bak
+    local pg_user pg_db
     pg_user=$(env_get POSTGRES_USER); pg_db=$(env_get POSTGRES_DB)
-    bak="backups/pre-update-$(date +%Y%m%d-%H%M%S).sql"
-    log_info "迁移前快照: $bak"
-    dcc exec -T postgres pg_dump -U "$pg_user" "$pg_db" > "$bak" 2>/dev/null \
-        || log_warn "pg_dump 失败（忽略，继续迁移）"
+    dump_pre_migration pre-update "$pg_user" "$pg_db"
 
     if ! dcc exec -T backend alembic upgrade head; then
         log_error "alembic upgrade head 失败"
@@ -210,7 +205,7 @@ run_migrations() {
         cat >&2 <<EOF
 迁移失败处理（绝不自动 downgrade，score_ledger append-only）：
   1. 排查迁移:   ls Backend/alembic/versions/
-  2. 手动恢复:   dcc exec -T postgres psql -U $pg_user -d $pg_db < $bak
+  2. 手动恢复:   dcc exec -T postgres psql -U $pg_user -d $pg_db < $MIGRATION_BAK
   3. 回滚代码:   git checkout ${OLD_REF#tag:}  然后 dcc up -d --build backend
 EOF
         die "alembic 迁移失败"

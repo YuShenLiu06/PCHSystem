@@ -179,14 +179,9 @@ start_stack() {
 
 run_migrations() {
     log_step "Alembic 迁移（upgrade head）"
-    mkdir -p backups
-    ensure_gitignored backups/
-    local pg_user pg_db bak
+    local pg_user pg_db
     pg_user=$(env_get POSTGRES_USER); pg_db=$(env_get POSTGRES_DB)
-    bak="backups/pre-install-$(date +%Y%m%d-%H%M%S).sql"
-    log_info "迁移前快照: $bak"
-    dcc exec -T postgres pg_dump -U "$pg_user" "$pg_db" > "$bak" 2>/dev/null \
-        || log_warn "pg_dump 失败（首次安装库可能为空，忽略）"
+    dump_pre_migration pre-install "$pg_user" "$pg_db"
     if ! dcc exec -T backend alembic upgrade head; then
         log_error "alembic upgrade head 失败"
         dcc exec -T backend alembic current 2>/dev/null || true
@@ -194,7 +189,7 @@ run_migrations() {
 迁移失败处理（绝不自动 downgrade，score_ledger append-only）：
   1. 查看迁移文件: ls Backend/alembic/versions/
   2. 排查后重试:   bash Scripts/install.sh
-  3. 如需回滚库:  psql 恢复 $bak
+  3. 如需回滚库:  psql 恢复 $MIGRATION_BAK
 EOF
         die "alembic 迁移失败"
     fi

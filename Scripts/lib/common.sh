@@ -376,6 +376,45 @@ wait_http_ok() {
 }
 
 # ============================================================
+# 迁移前快照（pg_dump 安全网）
+# ============================================================
+# MIGRATION_BAK：最近一次迁移前快照路径（dump_pre_migration 写入；run_migrations 的
+# alembic 失败提示用它给恢复命令）。跨步骤全局，对齐 OLD_SHA/NEW_SHA/GH_MIRROR_ENTRY 模式。
+MIGRATION_BAK=""
+
+# dump_pre_migration <prefix> <pg_user> <pg_db>
+# 迁移前 pg_dump —— R-2（score_ledger append-only）的唯一恢复路径，故失败必须【可见】：
+# - 不再 2>/dev/null 吞 stderr：捕获到临时文件，失败时打出原因
+# - 校验快照非空：pg_dump 返回 0 但 0 字节 = 被中断/信号杀掉（rc 未必非零），大声告警
+# best-effort：任何失败都不阻断迁移（保持原「忽略继续」语义），只让"安全网失效"被看见。
+# 快照路径写入全局 MIGRATION_BAK。
+dump_pre_migration() {
+    local prefix=$1 pg_user=$2 pg_db=$3
+    mkdir -p backups
+    ensure_gitignored backups/
+    MIGRATION_BAK="backups/${prefix}-$(date +%Y%m%d-%H%M%S).sql"
+    local err_tmp
+    err_tmp=$(mktemp) || die "mktemp 失败（无法创建临时文件）"
+    log_info "迁移前快照: $MIGRATION_BAK"
+    if dcc exec -T postgres pg_dump -U "$pg_user" "$pg_db" > "$MIGRATION_BAK" 2>"$err_tmp"; then
+        # rc=0 但 0 字节：> 先建空文件、pg_dump 没来得及写就被中断/杀掉
+        if [[ ! -s "$MIGRATION_BAK" ]]; then
+            log_error "迁移前快照为 0 字节（$MIGRATION_BAK）——安全网失效！"
+            log_error "  pg_dump 返回 0 但无输出（可能被中断/信号杀掉）。本次迁移无可恢复备份，请确认另有库备份。"
+            [[ -s "$err_tmp" ]] && { log_warn "  pg_dump stderr:"; sed 's/^/    /' "$err_tmp" >&2; }
+        fi
+    else
+        log_warn "pg_dump 失败（忽略，继续迁移）："
+        if [[ -s "$err_tmp" ]]; then
+            sed 's/^/    /' "$err_tmp" >&2
+        else
+            log_warn "  （无 stderr 输出）"
+        fi
+    fi
+    rm -f "$err_tmp"
+}
+
+# ============================================================
 # 交互封装
 # ============================================================
 # read_interactive <var> <prompt> <default>：PCH_YES=1 时采用 default，否则 read -p
