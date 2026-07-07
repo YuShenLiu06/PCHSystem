@@ -16,9 +16,13 @@
 > 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
 > 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
+---
+
+## [backend-v0.4.1] - 2026-07-07
+
 ### Fixed
 
-- **后端**：修复 Create（机械动力）蓝图 `.nbt` 经投影 mod 转出的 `.litematic` 上传解析报 422、整份材料清单被丢弃的问题（#8）。根因是 `litemapy` 对 `PendingBlockTicks` / `PendingFluidTicks` 等 litematic 规范「可选」的 region 键用直接下标访问，缺键即 `KeyError`；现先补全缺失键再解析，且硬失败时返回玩家可读的中文报错（不再泄露内部异常）。
+- 修复上传 Create（机械动力）蓝图经投影 mod 转出的 `.litematic` 时解析失败、整份材料清单被丢弃的问题；解析失败时会提示可读的中文原因（#8）。
 
 ---
 
