@@ -16,19 +16,22 @@
 > 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
 > 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
-### Added（backend）
+---
 
-- 新增 `POST /parsing/nbt`：解析 Create（机械动力）模组蓝图 `.nbt`（标准 structure NBT）→ 材料清单 + 中文翻译预览，复用现有 `ParsedMaterialPreview` + `LangJsonTranslator` + `/sheets/from-items` 链路（schemas / translator / preview / sheets 零改动）。基于 `nbtlib`（litemapy 同款 NBT 库，提升为直接依赖；实测 `nbt-structure-utils` / `nucleation` 均无法解析 Create 蓝图）。（#5）
-- 新增 `NbtParser` / `NbtParseError`（`app/services/parsing/parsers/nbt.py`），解析失败返玩家可读中文文案（与 `/parsing/litematic` 一致）。
-- 新增配置 `NBT_MAX_UPLOAD_BYTES`（默认 50MB）。
+## [backend-v0.5.0] - 2026-07-07
 
-### Added（frontend）
+### Added
 
-- `/parsing/litematic` 页支持上传 `.nbt`（Create 蓝图 / 原版结构）文件：按扩展名自动选择 `POST /parsing/nbt` 端点，预览 / 行内编辑 / 生成表格流程完全复用（对接后端 #5）。导航文案改为「解析投影/蓝图」。
+- **解析 Create 蓝图**：上传 `.nbt` 蓝图文件（机械动力模组 / 原版结构），系统自动解析材料清单并翻译成中文名，预览与生成项目流程同投影文件。
+- （运维）**一键安装 / 更新脚本**：首次部署一条命令完成（检测安装 Docker、国内网络自动选镜像、生成配置、起服务 + 跑数据库迁移、构建前端、装好游戏端插件并填好令牌）；后续更新按代码改动智能决定重建哪些容器、迁移前自动备份数据库、校验游戏端令牌一致性、拒绝在未提交改动上运行。
 
-### Added（scripts）
+---
 
-- 新增一键安装/更新脚本（`Scripts/install.sh` + `update.sh` + `lib/common.sh`）：首次安装自动检测/安装 Docker、国内网络四类镜像自适应（GitHub / Docker Hub / PyPI / npm）、同步最新发版 tag、生成 `.env` 与生产 override、起容器 + `alembic` 迁移、构建前端、拷 `htcmc_auth` 插件并填同值 token；一键更新基于 `git diff` 智能重建矩阵 + 迁移前 `pg_dump` + token 双写校验 + dirty 保护 + `--force` 接管。详见 [`Scripts/README.md`](./Scripts/README.md)。
+## [frontend-v0.5.0] - 2026-07-07
+
+### Added
+
+- **解析 Create 蓝图**：投影 / 蓝图上传页新增 `.nbt` 文件支持，按扩展名自动选择解析方式，预览与生成项目流程不变。
 
 ---
 
