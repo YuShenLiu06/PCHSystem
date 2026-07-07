@@ -32,3 +32,7 @@ McdrPlugin/htcmc_auth/config.json
 
 # Docker Compose 本地 override（含机器特定绝对路径，勿提交）
 docker-compose.override.yml
+
+# PCHSystem 部署脚本产物（由 Scripts/install.sh + update.sh 生成）
+.pchsystem.deploy.env
+backups/
