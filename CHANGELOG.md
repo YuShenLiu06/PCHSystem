@@ -22,6 +22,10 @@
 - 新增 `NbtParser` / `NbtParseError`（`app/services/parsing/parsers/nbt.py`），解析失败返玩家可读中文文案（与 `/parsing/litematic` 一致）。
 - 新增配置 `NBT_MAX_UPLOAD_BYTES`（默认 50MB）。
 
+### Added（frontend）
+
+- `/parsing/litematic` 页支持上传 `.nbt`（Create 蓝图 / 原版结构）文件：按扩展名自动选择 `POST /parsing/nbt` 端点，预览 / 行内编辑 / 生成表格流程完全复用（对接后端 #5）。导航文案改为「解析投影/蓝图」。
+
 ---
 
 ## [backend-v0.4.1] - 2026-07-07

@@ -30,3 +30,13 @@ export async function previewLitematic(file: File): Promise<ParsedMaterialPrevie
   })
   return data
 }
+
+/** POST /parsing/nbt —— multipart 上传 .nbt（Create 蓝图 / 原版结构），返回解析+翻译后的材料预览（不落库）。响应结构与 /parsing/litematic 完全一致。 */
+export async function previewNbt(file: File): Promise<ParsedMaterialPreview> {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await http.post<ParsedMaterialPreview>('/parsing/nbt', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
