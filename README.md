@@ -127,7 +127,7 @@ curl http://localhost:8000/healthz
 |---|---|
 | [MCDR 插件](./Docs/architecture/services/mcdr-plugin.md) | 命令、箱子扫描、UUID 推导、称号下发、HTTP 上报 |
 | [user-service](./Docs/architecture/services/user-service.md) | MC 绑定 / Token / wiki 账号映射 / 权限 |
-| [project-service](./Docs/architecture/services/project-service.md) | 项目生命周期 + `.litematic` 解析 + 材料清单 |
+| [project-service](./Docs/architecture/services/project-service.md) | 项目生命周期 + `.litematic` / `.nbt` 解析 + 材料清单 |
 | [scoring-service](./Docs/architecture/services/scoring-service.md) | 提交入库 + 放置贡献 + 黄皮子积分引擎 |
 | [title-service](./Docs/architecture/services/title-service.md) | 指数称号体系 + scoreboard 前缀下发 |
 | [wiki-service](./Docs/architecture/services/wiki-service.md) | GraphQL 同步归档 + 用户组 + Page Rules 授权 |
