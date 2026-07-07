@@ -26,6 +26,7 @@ cd "$PCH_REPO_DIR"
 FORCE=0
 FORCE_FRONTEND=0
 NO_MCDR=0
+NO_SYNC=0
 MCDR_ROOT_OVERRIDE=""
 STRATEGY_OVERRIDE=""
 
@@ -41,6 +42,7 @@ PCHSystem update.sh —— 一键更新
   --force                接管非脚本安装的部署 / 跳过本地改动保护
   --frontend             强制重建前端（即使无 Frontend/ 变更）
   --no-mcdr              跳过 MCDR 插件增量更新
+  --no-sync              跳过远端拉取（用当前工作树，不 fetch / 不 checkout；开发/测试用）
   --mcdr-root DIR        覆盖部署配置里的 MCDR 根目录
   -h, --help             显示本帮助
 EOF
@@ -54,6 +56,7 @@ parse_args() {
             --force) FORCE=1; shift ;;
             --frontend) FORCE_FRONTEND=1; shift ;;
             --no-mcdr) NO_MCDR=1; shift ;;
+            --no-sync) NO_SYNC=1; shift ;;
             --mcdr-root) MCDR_ROOT_OVERRIDE=$2; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) die "未知参数: $1（用 --help 查看用法）" ;;
@@ -88,6 +91,25 @@ resolve_strategy() {
 
 # fetch + 计算 OLD/NEW；返回 OLD_SHA NEW_SHA（全局）；一致则 exit 0
 fetch_and_compare() {
+    # --no-sync：不 fetch 远端、不 checkout，用当前工作树。OLD=部署记录，NEW=当前 HEAD。
+    if [[ $NO_SYNC -eq 1 ]]; then
+        log_step "跳过远端拉取（--no-sync），用当前工作树"
+        OLD_SHA=$(cfg_get PCH_DEPLOY_COMMIT)
+        OLD_REF=$(cfg_get PCH_DEPLOY_VERSION)
+        NEW_SHA=$(git rev-parse HEAD)
+        NEW_REF=$(current_ref)
+        if [[ -z "$OLD_SHA" ]]; then
+            log_warn "部署配置无 PCH_DEPLOY_COMMIT，--no-sync 无法计算 diff，视为无变更"
+            OLD_SHA=$NEW_SHA; OLD_REF=$NEW_REF
+        fi
+        if [[ "$OLD_SHA" == "$NEW_SHA" ]]; then
+            log_info "当前工作树与部署记录一致（$OLD_REF），--no-sync 仍执行更新流程（迁移/插件/健康）"
+        else
+            log_info "本地变更: $OLD_REF → $NEW_REF（--no-sync，未 fetch 远端）"
+        fi
+        return 0
+    fi
+
     local strategy; strategy=$(resolve_strategy)
     [[ -n "$strategy" ]] || strategy="tag"
     GH_MIRROR_ENTRY=$(pick_github_mirror)
@@ -128,6 +150,7 @@ guard_dirty() {
 }
 
 do_checkout() {
+    [[ $NO_SYNC -eq 1 ]] && { log_info "跳过 checkout（--no-sync）"; return 0; }
     if [[ "$NEW_REF" == "edge" ]]; then
         git checkout "$PCH_DEFAULT_BRANCH"
         gh_git "$GH_MIRROR_ENTRY" pull --ff-only origin "$PCH_DEFAULT_BRANCH"
