@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 
@@ -18,6 +19,7 @@ from app.services.parsing.parsers.litematic import LitematicParseError, Litemati
 
 router = APIRouter(prefix="/parsing", tags=["parsing"])
 _settings = get_settings()
+logger = logging.getLogger(__name__)
 
 _LITEMATIC_EXT = ".litematic"
 
@@ -49,9 +51,21 @@ async def parse_litematic(
     try:
         parsed = await asyncio.to_thread(parser.parse, data, filename)
     except LitematicParseError as exc:
+        # 玩家可读的固定文案；原始异常仅服务端日志（不外泄内部细节）。
+        # 若 __cause__ 是 KeyError，多为 litemapy 对某个 NBT 键直接下标失败——
+        # 提示 dev 评估是否要把该键加入 _OPTIONAL_REGION_LIST_KEYS（见 parsers/litematic.py）。
+        if isinstance(exc.__cause__, KeyError):
+            logger.warning(
+                "litematic parse failed for %r: litemapy KeyError on NBT key %s — "
+                "若属规范可选键，把它加入 _OPTIONAL_REGION_LIST_KEYS 即可恢复解析",
+                filename,
+                exc.__cause__,
+            )
+        else:
+            logger.warning("litematic parse failed for %r: %s", filename, exc)
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"failed to parse litematic: {exc}",
+            "无法解析该投影文件，请确认上传的是由投影 mod 导出的有效 .litematic 文件",
         ) from exc
 
     blocks, containers, untranslated = preview_service.build_preview(parsed, translator)
