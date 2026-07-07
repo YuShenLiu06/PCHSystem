@@ -14,6 +14,7 @@ import os
 import tempfile
 from collections import Counter
 
+import nbtlib
 from litemapy import Schematic
 
 from app.services.parsing.models import MaterialEntry, ParseMeta, ParsedMaterialList
@@ -26,6 +27,37 @@ class LitematicParseError(Exception):
     """.litematic 解析失败（文件损坏 / 非 litematic NBT / litemapy 抛错）。api 层翻译为 422。"""
 
 
+# litemapy Region.from_nbt 用直接下标访问、但 litematic 规范视为「可选」的 region 列表键。
+# 这些键 litemapy 都是「迭代」用法（for x in nbt[key]）——补空 List 无副作用、安全。
+# 【未来新缺失键的处理策略】litemapy 若升级新增下标访问的键，解析会抛 KeyError → 422 +
+# 友好文案（api 层）+ 日志提示键名（api 层），届时把新键加入此元组即可恢复解析。
+_OPTIONAL_REGION_LIST_KEYS: tuple[str, ...] = (
+    "Entities",
+    "TileEntities",
+    "PendingBlockTicks",
+    "PendingFluidTicks",
+)
+
+
+def _ensure_optional_region_keys(nbt: nbtlib.Compound) -> None:
+    """给每个 region 补全 litemapy 假定存在、规范却可选的列表键（缺则置空列表）。
+
+    ⚠ 就地修改 ``nbt``：偏离 ``~/.claude/rules/common/coding-style.md`` 的
+    NEVER-mutate 规则。**豁免正当性**：``nbt`` 是调用方 ``parse()`` 内从用户字节
+    ``nbtlib.File.load`` 出来的本地对象，函数返回后无任何共享/持久化引用者，且与同文件
+    ``parse()`` 内就地累加 ``Counter`` 同范式。深拷贝重建整棵 nbt 树代价大、易错且无收益。
+    """
+    regions = nbt.get("Regions")
+    if not isinstance(regions, dict):
+        return
+    for region in regions.values():
+        if not isinstance(region, dict):
+            continue
+        for key in _OPTIONAL_REGION_LIST_KEYS:
+            if key not in region:
+                region[key] = nbtlib.List[nbtlib.Compound]()
+
+
 class LitematicParser(MaterialParser):
     """解析 ``.litematic`` 字节流 → ``ParsedMaterialList``。"""
 
@@ -36,8 +68,14 @@ class LitematicParser(MaterialParser):
             with os.fdopen(tmp_fd, "wb") as tmp:
                 tmp.write(data)
             try:
-                schem = Schematic.load(tmp_path)
-            except Exception as exc:  # litemapy 对损坏/非 litematic 抛多种异常
+                # 自行 File.load 读出 NBT，补全 litemapy 假定存在的可选列表键（缺则置空），
+                # 再交给 Schematic.from_nbt。Schematic.load 本就是 File.load + from_nbt 两步，
+                # 此处仅在中间插一个兼容 hook（issue #8：Create 蓝图 .nbt 转出的 .litematic
+                # 常缺 PendingBlockTicks/PendingFluidTicks，litemapy 直接下标会 KeyError）。
+                nbt = nbtlib.File.load(tmp_path, True)
+                _ensure_optional_region_keys(nbt)
+                schem = Schematic.from_nbt(nbt)
+            except Exception as exc:  # litemapy/nbtlib 对损坏/非 litematic 抛多种异常
                 raise LitematicParseError(str(exc)) from exc
         finally:
             try:
