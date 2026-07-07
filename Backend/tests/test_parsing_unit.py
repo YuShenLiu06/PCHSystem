@@ -14,12 +14,14 @@ from app.services.parsing.parsers.litematic import (
     LitematicParser,
     _ensure_optional_region_keys,
 )
+from app.services.parsing.parsers.nbt import NbtParseError, NbtParser
 from app.services.parsing.translators.lang_json import (
     LangJsonTranslator,
     lang_key_candidates,
 )
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "机械动力仓库_1.litematic"
+_NBT_FIXTURE = Path(__file__).parent / "fixtures" / "create_blueprint_sample.nbt"
 # issue #8 复现样本：Create 蓝图 .nbt 经投影转出的 .litematic，region 缺
 # PendingBlockTicks/PendingFluidTicks，曾触发 litemapy KeyError 导致整解析 422。
 _BLUEPRINT_FIXTURE = Path(__file__).parent / "fixtures" / "1103.litematic"
@@ -149,3 +151,50 @@ def test_ensure_optional_region_keys_safe_when_regions_missing_or_not_dict():
     _ensure_optional_region_keys(nbtlib.Compound())  # 无 Regions
     _ensure_optional_region_keys(nbtlib.Compound({"Regions": "x"}))  # Regions 非 dict
     # 不抛即通过
+
+
+# ---------- NbtParser ----------
+def test_nbt_parser_parses_sample_structure():
+    """NbtParser 解析 Create 蓝图：断言总数、首位方块、特定方块存在、容器为空、meta 字段。"""
+    data = _NBT_FIXTURE.read_bytes()
+    parsed = NbtParser().parse(data, "create_blueprint_sample.nbt")
+
+    # meta 断言
+    assert parsed.meta.filename == "create_blueprint_sample.nbt"
+    assert parsed.meta.schematic_name == "create_blueprint_sample"
+    assert parsed.meta.author == ""
+    assert parsed.meta.total_blocks == 132
+    assert parsed.meta.region_count == 1
+    assert parsed.meta.total_volume == 490  # 14×7×5
+
+    # blocks 断言（降序）
+    assert len(parsed.blocks) == 15
+    assert parsed.blocks[0].item_id == "create:andesite_casing"
+    assert parsed.blocks[0].count == 38
+
+    ids = {e.item_id for e in parsed.blocks}
+    assert "create:belt" in ids
+    assert "create:smart_chute" in ids
+
+    belt = next(e for e in parsed.blocks if e.item_id == "create:belt")
+    assert belt.count == 13
+    chute = next(e for e in parsed.blocks if e.item_id == "create:smart_chute")
+    assert chute.count == 12
+
+    # Create 走自家存储，vanilla Items 为空
+    assert parsed.container_items == ()
+
+
+def test_nbt_parser_skips_air_and_fluids():
+    """NbtParser 跳过空气与流体方块（minecraft:air / water / lava）。"""
+    parsed = NbtParser().parse(_NBT_FIXTURE.read_bytes(), "x.nbt")
+    ids = {e.item_id for e in parsed.blocks}
+    assert "minecraft:air" not in ids
+    assert "minecraft:water" not in ids
+    assert "minecraft:lava" not in ids
+
+
+def test_nbt_parser_rejects_garbage_bytes():
+    """NbtParser 拒绝非 NBT 字节（抛 NbtParseError）。"""
+    with pytest.raises(NbtParseError):
+        NbtParser().parse(b"definitely not an NBT file", "bad.nbt")

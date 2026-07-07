@@ -2,15 +2,19 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import type { UploadFile } from 'element-plus'
-import { previewLitematic, type ParsedMaterialPreview, type PreviewItem } from '../../api/parsing'
+import type { UploadFile, UploadInstance } from 'element-plus'
+import { previewLitematic, previewNbt, type ParsedMaterialPreview, type PreviewItem } from '../../api/parsing'
 import { createSheetFromItems } from '../../api/sheets'
 import { formatQty } from '../../utils/qty'
+import { detectParseKind } from '../../utils/parseKind'
 
 // mode=0 即 lock（锁定/二元备齐），与 SheetEditor 新增行默认一致
 const MODE_LOCK = 0
 
 const router = useRouter()
+
+// el-upload 实例引用：拒绝非法文件时同步清空其内部 fileList，避免占满 :limit=1
+const uploadRef = ref<UploadInstance>()
 
 const title = ref('')
 const file = ref<File | null>(null)
@@ -59,16 +63,28 @@ function errorMessage(e: unknown): string {
 }
 
 function onFileChange(uploadFile: UploadFile): void {
-  file.value = uploadFile.raw ?? null
+  const raw = uploadFile.raw ?? null
+  // 选文件时即按扩展名过滤（.litematic / .nbt），不符直接拒并清空（UX 早失败；后端仍二次校验为最终权威 RS-2）。
+  // 拖拽绕过 accept 时被拒文件仍留在 el-upload 内部 fileList，会占满 :limit=1 致后续静默丢弃，故同步 clearFiles。
+  if (raw && detectParseKind(raw) === null) {
+    ElMessage.warning('仅支持 .litematic / .nbt 文件')
+    file.value = null
+    uploadRef.value?.clearFiles()
+    return
+  }
+  file.value = raw
 }
 
 function onParse(): void {
   if (!file.value) {
-    ElMessage.warning('请先选择 .litematic 文件')
+    ElMessage.warning('请先选择 .litematic / .nbt 文件')
     return
   }
+  // onFileChange 已校验扩展名；按类型选端点（.nbt → /parsing/nbt，其余 → /parsing/litematic）
+  const kind = detectParseKind(file.value)
+  const request = kind === 'nbt' ? previewNbt(file.value) : previewLitematic(file.value)
   loading.value = true
-  previewLitematic(file.value)
+  request
     .then((data) => {
       preview.value = data
       // 深拷贝到可编辑副本（不污染原始预览）
@@ -76,7 +92,9 @@ function onParse(): void {
       container_items.value = data.container_items.map((c) => ({ ...c }))
       includeBlocks.value = data.blocks.length > 0
       includeContainers.value = data.container_items.length > 0
-      ElMessage.success(`解析成功：${data.meta.region_count} 区域 / ${data.meta.total_blocks} 方块`)
+      // region_count 仅 litematic 多区域时 >1；nbt 单结构恒为 1，>1 才补显区域数避免噪音
+      const regionPrefix = data.meta.region_count > 1 ? `${data.meta.region_count} 区域 / ` : ''
+      ElMessage.success(`解析成功：${regionPrefix}共 ${data.meta.total_blocks} 方块`)
     })
     .catch((e: unknown) => {
       ElMessage.error(errorMessage(e))
@@ -138,7 +156,7 @@ function onGenerate(): Promise<void> {
 </script>
 
 <template>
-  <el-card v-loading="loading" header="解析投影（.litematic）">
+  <el-card v-loading="loading" header="解析投影 / 蓝图（.litematic / .nbt）">
     <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px;">
       <el-input
         v-model="title"
@@ -147,16 +165,17 @@ function onGenerate(): Promise<void> {
         maxlength="128"
       />
       <el-upload
+        ref="uploadRef"
         drag
         :auto-upload="false"
         :limit="1"
-        accept=".litematic"
+        accept=".litematic,.nbt"
         :on-change="onFileChange"
         :show-file-list="true"
         style="width: 320px;"
       >
         <div style="padding: 8px;">
-          <div style="font-size: 13px;">拖拽 .litematic 到此，或点击选择</div>
+          <div style="font-size: 13px;">拖拽 .litematic / .nbt 到此，或点击选择</div>
         </div>
       </el-upload>
       <el-button type="primary" :disabled="!file" @click="onParse">解析</el-button>

@@ -131,7 +131,7 @@ PCHSystem/
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | sheets API | [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) | sheets HTTP 端点 / 鉴权 / 行状态机（认领·交付·解除·打回·贡献·进度）/ 权限矩阵 / 错误码 / CSV 列 |
-| parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
+| parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + `POST /parsing/nbt` Create 蓝图解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
 
 ---
 

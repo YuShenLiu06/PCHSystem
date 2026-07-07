@@ -20,7 +20,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | 全部业务数据读写（PostgreSQL 独占） | 游戏内命令交互（MCDR 管） |
 | RBAC 权限判定（真实权限源） | 前端展示逻辑（前端只控可见性，R-9） |
 | JWT 签发与校验、一次性 token 软失效 | wiki.js 内容存储（只单向同步，R-8） |
-| Alembic 数据库迁移 · 投影解析（litemapy）+ 中文翻译 | .litematic 文件存档（仅即时解析、不持久化） |
+| Alembic 数据库迁移 · 投影/蓝图解析（litemapy / nbtlib）+ 中文翻译 | .litematic / .nbt 文件存档（仅即时解析、不持久化） |
 
 ---
 
@@ -65,6 +65,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | `POST /notifications/ack` | 批量标**该 player_uuid 名下**通知投递（service-token，body `{player_uuid, ids:[…]}`，C-1 防越权） |
 | `POST /notifications/{id}/read` | 标已读（service-token，query `player_uuid` 归属校验，跨玩家 404；L-2 同步幂等置 delivered_at） |
 | `POST /parsing/litematic` | Web 上传 `.litematic` → litemapy 解析 + 中文翻译 → 分组预览（不落库）。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
+| `POST /parsing/nbt` | Web 上传 `.nbt`（Create 蓝图 / 原版 structure）→ nbtlib 解析 + 中文翻译 → 分组预览（不落库）。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
 | `POST /sheets/from-items` | 一次性建表 + 批量行（`mode` 默认 lock），用于「投影解析→生成表格」 |
 | `POST /sheets/{id}/advance?to=` | 项目阶段流转（owner/admin，缺省按状态机推进；`to=archived` 走归档服务写盘+通知）。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §5.2 |
 | `GET /sheets/{id}/archive` | 读归档 markdown（`text/markdown`；未归档/文件缺失 → 404） |
@@ -138,3 +139,5 @@ curl -sS http://localhost:8000/me                   # 应返回 401（未带 JWT
 ---
 
 *最后更新：2026-07-03（归档升级：贡献者聚合含 lock + 去材料清单 + 每项目独立文件夹 `projects/{id}/` + matplotlib 贡献占比饼图（Noto Sans CJK SC）+ asset 端点 + wiki git publisher 默认 off/best-effort + R-8 重写为 git 双向；RS-10 更新）*
+
+*增量（2026-07-07）：§4 端点表补 `POST /parsing/nbt`（Create 蓝图解析，commit f16a00a 遗漏，借前端 .nbt 支持 #5 一并补齐）；§2 职责泛化 litemapy / nbtlib。*

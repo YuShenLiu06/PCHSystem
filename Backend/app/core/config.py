@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     # 投影解析：上传字节上限（默认 50MB）
     litematic_max_upload_bytes: int = 50 * 1024 * 1024
+    # .nbt(Create 蓝图 / structure) 解析：上传字节上限（默认 50MB）
+    nbt_max_upload_bytes: int = 50 * 1024 * 1024
 
     # 归档根目录绝对路径（迁移 0009 sheet 三阶段生命周期的 archived 产物落盘位置）。
     # 空串 = 未配置：归档端点返 503，不启动 fail-fast 避免阻塞其他端点（计划 §归档服务 config）。

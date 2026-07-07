@@ -25,6 +25,7 @@ def test_paths_present():
         "/notifications/ack",
         "/notifications/{notification_id}/read",
         "/parsing/litematic",
+        "/parsing/nbt",
         "/sheets/from-items",
         "/sheets/{sheet_id}/advance",
         "/sheets/{sheet_id}/archive",

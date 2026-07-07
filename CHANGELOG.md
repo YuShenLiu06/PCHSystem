@@ -16,6 +16,16 @@
 > 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
 > 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
+### Added（backend）
+
+- 新增 `POST /parsing/nbt`：解析 Create（机械动力）模组蓝图 `.nbt`（标准 structure NBT）→ 材料清单 + 中文翻译预览，复用现有 `ParsedMaterialPreview` + `LangJsonTranslator` + `/sheets/from-items` 链路（schemas / translator / preview / sheets 零改动）。基于 `nbtlib`（litemapy 同款 NBT 库，提升为直接依赖；实测 `nbt-structure-utils` / `nucleation` 均无法解析 Create 蓝图）。（#5）
+- 新增 `NbtParser` / `NbtParseError`（`app/services/parsing/parsers/nbt.py`），解析失败返玩家可读中文文案（与 `/parsing/litematic` 一致）。
+- 新增配置 `NBT_MAX_UPLOAD_BYTES`（默认 50MB）。
+
+### Added（frontend）
+
+- `/parsing/litematic` 页支持上传 `.nbt`（Create 蓝图 / 原版结构）文件：按扩展名自动选择 `POST /parsing/nbt` 端点，预览 / 行内编辑 / 生成表格流程完全复用（对接后端 #5）。导航文案改为「解析投影/蓝图」。
+
 ---
 
 ## [backend-v0.4.1] - 2026-07-07
