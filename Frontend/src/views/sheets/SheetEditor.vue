@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, ElTable } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getSheet,
   patchSheet,
@@ -136,7 +136,7 @@ async function onAdvance(to: 'constructing' | 'archived'): Promise<void> {
   }
   try {
     const updated = await advanceSheet(sheetId.value, to)
-    sheet.value = updated // 整体替换，含新 status / archived_path / archived_at
+    applyRefreshedSheet(updated) // 整体替换，含新 status / archived_path / archived_at
     ElMessage.success(isArchive ? '已归档' : '已进入施工阶段')
   } catch (e: unknown) {
     // 409 已归档 / 非法转移：给出友好提示
@@ -250,16 +250,14 @@ async function load(): Promise<void> {
   }
 }
 
-// 静默刷新（轮询专用）：只换 sheet.value 展示数据（状态/认领人/交付进度），
-// 不动 rowDrafts / titleDraft / loading / errorMsg —— 避免覆盖拥有者正在编辑的草稿。
-// 失败直接抛出，交由 usePolling 走 onError + 退避。
-async function silentRefresh(): Promise<void> {
-  if (!sheet.value) return // 首载尚未完成则不抢跑
-  const data = await fetchSheet(sheetId.value)
-  // 轮询可能拉到新增行（如 MCDR 游戏内 !!PCH sheet add 创建），需补初始化其草稿，
-  // 否则模板 rowDrafts[row.id] 为 undefined → 整行回退纯文本、不可编辑。
-  // 已有草稿保留不动（拥有者正在编辑的内容不被覆盖）。
-  for (const r of data.rows) {
+// 身份保留合并：把刷新后的 SheetDetail 并入当前 sheet.value。
+// 1) 复用「未变行」的原对象引用（rowEqual 短路）—— el-table row-key=id keyed diff 命中同引用
+//    → 跳过该行重渲染，避免整表每秒 tear down（176 行 × ~2000 组件卡顿）。
+// 2) 为新增行补初始化草稿（rowDrafts / newSubRow），不覆盖用户正在编辑的已有草稿。
+// 3) 清理已消失行（他端删除 / 本端级联）的残留草稿与子物品表单。
+// 写操作 handler 与轮询统一走本函数，避免 fetchSheet 全量替换绕过身份保留。
+function applyRefreshedSheet(refreshed: SheetDetail): void {
+  for (const r of refreshed.rows) {
     if (!rowDrafts.value[r.id]) {
       rowDrafts.value[r.id] = {
         item_name: r.item_name,
@@ -271,7 +269,6 @@ async function silentRefresh(): Promise<void> {
         qty_per_unit: r.qty_per_unit,
       }
     }
-    // 顶层行预初始化「添加子物品」表单（同 load，防 popover 预渲染抛错）；已有则保留用户输入
     if (r.parent_row_id === null && !newSubRow.value[r.id]) {
       newSubRow.value[r.id] = {
         item_name: '',
@@ -282,17 +279,46 @@ async function silentRefresh(): Promise<void> {
       }
     }
   }
-  // 身份保留式合并：轮询拿到的 data 是全新对象，直接赋值会让 el-table 判定数据全变 →
-  // 整表 tear down 重建（176 行 × ~2000 组件）造成每秒卡顿。改为复用「未变化行」的原对象引用，
-  // el-table keyed diff 命中同引用 → 跳过该行重渲染。仅真正变化的行（状态/认领/交付进度等）才换新。
-  const prevById = new Map(sheet.value.rows.map((r) => [r.id, r]))
+  const refreshedIds = new Set(refreshed.rows.map((r) => r.id))
+  for (const id of Object.keys(rowDrafts.value).map(Number)) {
+    if (!refreshedIds.has(id)) {
+      delete rowDrafts.value[id]
+      delete newSubRow.value[id]
+    }
+  }
+  const prevById = new Map(sheet.value ? sheet.value.rows.map((r) => [r.id, r]) : [])
   sheet.value = {
-    ...data,
-    rows: data.rows.map((r) => {
+    ...refreshed,
+    rows: refreshed.rows.map((r) => {
       const prev = prevById.get(r.id)
       return prev && rowEqual(prev, r) ? prev : r
     }),
   }
+}
+
+// 同步结构字段到草稿（父行保存后级联子行 mode 等后端变更，避免草稿过期）
+function syncStructuralDrafts(rows: RowDetail[], ids: number[]): void {
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  for (const id of ids) {
+    const r = byId.get(id)
+    const d = rowDrafts.value[id]
+    if (r && d) {
+      d.mode = r.mode
+      d.need_qty = r.need_qty
+      d.qty_per_unit = r.qty_per_unit
+      d.parent_row_id = r.parent_row_id
+      // 保留 item_name / registry_id / sort_order（用户文本草稿）
+    }
+  }
+}
+
+// 静默刷新（轮询专用）：只换 sheet.value 展示数据（状态/认领人/交付进度），
+// 不动 rowDrafts / titleDraft / loading / errorMsg —— 避免覆盖拥有者正在编辑的草稿。
+// 失败直接抛出，交由 usePolling 走 onError + 退避。
+async function silentRefresh(): Promise<void> {
+  if (!sheet.value) return // 首载尚未完成则不抢跑
+  const data = await fetchSheet(sheetId.value)
+  applyRefreshedSheet(data)
 }
 
 async function onSaveTitle(): Promise<void> {
@@ -303,7 +329,7 @@ async function onSaveTitle(): Promise<void> {
   }
   try {
     const updated = await patchSheet(sheetId.value, title)
-    sheet.value = updated
+    applyRefreshedSheet(updated)
     titleEditing.value = false
     ElMessage.success('标题已更新')
   } catch (e: unknown) {
@@ -330,7 +356,8 @@ async function onAddRow(): Promise<void> {
     if (sheet.value) {
       // 新建行（issue #20：同名已存在 → 后端 409，不再覆盖）；重新拉取一次保证一致
       const refreshed = await fetchSheet(sheetId.value)
-      sheet.value = refreshed
+      applyRefreshedSheet(refreshed)
+      // applyRefreshedSheet 已为新增行补草稿，此处用 created 显式覆盖确保字段精确
       rowDrafts.value[created.id] = {
         item_name: created.item_name,
         registry_id: created.registry_id ?? '',
@@ -369,7 +396,9 @@ async function onSaveRow(row: RowDetail): Promise<void> {
       ...(regId ? { registry_id: regId } : {}),
     })
     const refreshed = await fetchSheet(sheetId.value)
-    sheet.value = refreshed
+    applyRefreshedSheet(refreshed)
+    const childIds = refreshed.rows.filter((r) => r.parent_row_id === row.id).map((r) => r.id)
+    syncStructuralDrafts(refreshed.rows, [row.id, ...childIds])
     ElMessage.success('已保存')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -380,11 +409,23 @@ async function onDeleteRow(row: RowDetail): Promise<void> {
   try {
     await deleteRow(sheetId.value, row.id)
     if (sheet.value) {
-      sheet.value = {
-        ...sheet.value,
-        rows: sheet.value.rows.filter((r) => r.id !== row.id),
+      // 乐观更新：后端 FK ON DELETE CASCADE 已删子行，本地同步滤掉本行 + 其直接子行
+      // （单层模型下子行无更深子行），避免轮询窗口内残留子行对象。
+      const removedIds = new Set<number>([row.id])
+      const remaining = sheet.value.rows.filter((r) => {
+        if (r.id === row.id) return false
+        if (r.parent_row_id === row.id) {
+          removedIds.add(r.id)
+          return false
+        }
+        return true
+      })
+      sheet.value = { ...sheet.value, rows: remaining }
+      // 清理已删行的草稿 / 「添加子物品」表单（含子行条目）
+      for (const id of removedIds) {
+        delete rowDrafts.value[id]
+        delete newSubRow.value[id]
       }
-      delete rowDrafts.value[row.id]
     }
     ElMessage.success('已删除')
   } catch (e: unknown) {
@@ -426,8 +467,8 @@ async function onAddSubRow(parentRow: RowDetail): Promise<void> {
 
     if (sheet.value) {
       const refreshed = await fetchSheet(sheetId.value)
-      sheet.value = refreshed
-      // 初始化新子行草稿
+      applyRefreshedSheet(refreshed)
+      // 初始化新子行草稿（applyRefreshedSheet 已补，此处用 created 显式覆盖确保字段精确）
       rowDrafts.value[created.id] = {
         item_name: created.item_name,
         registry_id: created.registry_id ?? '',
@@ -480,7 +521,8 @@ async function onSaveSubRow(subRow: RowDetail): Promise<void> {
       ...(regId ? { registry_id: regId } : {}),
     })
     const refreshed = await fetchSheet(sheetId.value)
-    sheet.value = refreshed
+    applyRefreshedSheet(refreshed)
+    syncStructuralDrafts(refreshed.rows, [subRow.id])
     ElMessage.success('已保存子物品')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -498,7 +540,7 @@ async function onDeleteSubRow(subRow: RowDetail): Promise<void> {
 async function onClaim(row: RowDetail): Promise<void> {
   try {
     await claimRow(sheetId.value, row.id)
-    sheet.value = await fetchSheet(sheetId.value)
+    applyRefreshedSheet(await fetchSheet(sheetId.value))
     ElMessage.success('已认领')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -510,7 +552,7 @@ async function onClaim(row: RowDetail): Promise<void> {
 async function onSetDelivery(row: RowDetail): Promise<void> {
   try {
     await setRowDelivery(sheetId.value, row.id, row.need_qty)
-    sheet.value = await fetchSheet(sheetId.value)
+    applyRefreshedSheet(await fetchSheet(sheetId.value))
     ElMessage.success('已标记备齐')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -532,7 +574,7 @@ async function onContribute(row: RowDetail): Promise<void> {
     })
     const qty = Number(value)
     await contributeRow(sheetId.value, row.id, qty)
-    sheet.value = await fetchSheet(sheetId.value)
+    applyRefreshedSheet(await fetchSheet(sheetId.value))
     ElMessage.success('已上交材料')
   } catch (e: unknown) {
     // 用户取消 prompt 抛出 'cancel'/'close' 字符串，不算错误
@@ -557,7 +599,7 @@ async function onAdjustProgress(row: RowDetail): Promise<void> {
     })
     const deliveredQty = Number(value)
     await setRowProgress(sheetId.value, row.id, deliveredQty)
-    sheet.value = await fetchSheet(sheetId.value)
+    applyRefreshedSheet(await fetchSheet(sheetId.value))
     ElMessage.success('进度已调整')
   } catch (e: unknown) {
     if (e === 'cancel' || e === 'close') return
@@ -569,7 +611,7 @@ async function onAdjustProgress(row: RowDetail): Promise<void> {
 async function onRelease(row: RowDetail): Promise<void> {
   try {
     await releaseRow(sheetId.value, row.id)
-    sheet.value = await fetchSheet(sheetId.value)
+    applyRefreshedSheet(await fetchSheet(sheetId.value))
     ElMessage.success('已解除锁定')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -581,7 +623,7 @@ async function onRelease(row: RowDetail): Promise<void> {
 async function onReject(row: RowDetail): Promise<void> {
   try {
     await rejectRow(sheetId.value, row.id)
-    sheet.value = await fetchSheet(sheetId.value)
+    applyRefreshedSheet(await fetchSheet(sheetId.value))
     ElMessage.success('已打回')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -618,6 +660,26 @@ function isSubRow(row: RowDetail): boolean {
   return row.parent_row_id !== null
 }
 
+// 获取父行模式（子行专用）
+function parentMode(row: RowDetail): number | undefined {
+  if (row.parent_row_id == null) return undefined
+  return sheet.value?.rows.find((r) => r.id === row.parent_row_id)?.mode
+}
+
+// 子行认领条件：仅当父行=progress 时可单独认领
+function canClaimRow(row: RowDetail): boolean {
+  if (row.mode !== MODE_LOCK || row.status !== 'open' || !auth.player) return false
+  if (isSubRow(row)) return parentMode(row) === MODE_PROGRESS
+  return true
+}
+
+// 子行解除条件：仅当父行=progress 时可单独解除
+function canReleaseRow(row: RowDetail): boolean {
+  if (row.mode !== MODE_LOCK) return false
+  if (isSubRow(row)) return parentMode(row) === MODE_PROGRESS
+  return true
+}
+
 // 轮询身份保留用：比较两行是否完全一致（全字段，含 contributors 嵌套数组）。
 // 未变行复用原对象引用 → el-table keyed diff 跳过重渲染。
 // JSON.stringify 安全：两端均出自同一 Pydantic 序列化路径，键序一致、均为 JSON 原生类型（无函数/Date 对象）。
@@ -625,19 +687,16 @@ function rowEqual(a: RowDetail, b: RowDetail): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-// 朴素 treeRows = top.map(r => ({...r, children})) 每秒轮询都产全新包装对象 → el-table 判定
-// :data 全变 → 反复 re-normalize 树 → 展开态丢失 / 图标过渡动画被打断 / 缩进抖动。
-// 解法：缓存包装节点，仅当某顶层行引用或其子行集合（按元素引用）变化时才重建该节点；
-//       全部未变时复用上一轮外层数组引用。silentRefresh 已对未变行复用 sheet.value.rows
-//       元素引用，故多数轮询周期 :data 引用完全不变 → el-table 跳过 re-normalize → 稳定。
-//       注：行字段真变化（他人协作）时 silentRefresh 换新对象 → 命中重建，标量自然刷新，无陈旧。
+// treeRows：按 parent_row_id 分组构建树。纯函数 computed —— 无模块级/组件级可变缓存，
+// 不在 computed 内 mutate 外部状态。抖动控制交给上游：silentRefresh / applyRefreshedSheet
+// 对未变行复用 sheet.value.rows 元素引用（rowEqual 短路），el-table row-key=id 的 keyed
+// diff 命中同一行对象 → 跳过行级重渲染；包装节点每轮新建是浅对象（spread + children 数组），
+// 成本极低。展开态由 el-table store 基于 row-key 持久化，不受 :data 引用变化影响。
 type TreeNode = RowDetail & { children: RowDetail[] }
-const nodeCache = new Map<number, { node: TreeNode; src: RowDetail; children: RowDetail[] }>()
-let cachedTree: TreeNode[] = []
 
 const treeRows = computed<TreeNode[]>(() => {
   if (!sheet.value) return []
-  // 按父分组（每轮重建，仅供本次决策，不长期持有）
+  // 按父分组（每轮局部变量，纯函数无副作用）
   const byParent = new Map<number | null, RowDetail[]>()
   for (const r of sheet.value.rows) {
     const list = byParent.get(r.parent_row_id)
@@ -645,32 +704,7 @@ const treeRows = computed<TreeNode[]>(() => {
     else byParent.set(r.parent_row_id, [r])
   }
   const tops = byParent.get(null) ?? []
-
-  let anyChanged = tops.length !== cachedTree.length
-  const next: TreeNode[] = []
-  for (let i = 0; i < tops.length; i++) {
-    const row = tops[i]
-    const newChildren = byParent.get(row.id) ?? []
-    const cached = nodeCache.get(row.id)
-    // 子行集合按元素引用比较（newChildren 每轮是新数组，不能比数组引用）
-    const reuse =
-      !!cached &&
-      cached.src === row &&
-      cached.children.length === newChildren.length &&
-      cached.children.every((c, idx) => c === newChildren[idx])
-    if (reuse) {
-      next.push(cached!.node)
-    } else {
-      const node: TreeNode = { ...row, children: newChildren }
-      nodeCache.set(row.id, { node, src: row, children: newChildren })
-      next.push(node)
-      anyChanged = true
-    }
-  }
-  // 全部未变 → 复用上一轮外层数组引用
-  if (!anyChanged) return cachedTree
-  cachedTree = next
-  return next
+  return tops.map((row) => ({ ...row, children: byParent.get(row.id) ?? [] }))
 })
 
 // Popover 打开时展开父行
@@ -754,7 +788,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         :indent="24"
         :tree-props="{ children: 'children' }"
       >
-        <el-table-column label="物品名" min-width="180">
+        <el-table-column label="物品名" min-width="180" class-name="tree-name-col">
           <template #default="{ row }">
             <el-input
               v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
@@ -799,8 +833,8 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
               <el-input-number
                 v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
                 v-model="rowDrafts[row.id].qty_per_unit"
-                :min="0"
-                :step="0.1"
+                :min="0.01"
+                :step="0.5"
                 :precision="2"
                 controls-position="right"
                 size="small"
@@ -817,11 +851,11 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
           </template>
         </el-table-column>
 
-        <!-- 模式列：顶层行可切换；子行继承父行模式 -->
+        <!-- 模式列：顶层行可切换；子行仅父=progress时可切换 -->
         <el-table-column label="模式" width="80">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && !isReadOnly && rowDrafts[row.id] && !isSubRow(row)"
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id] && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -934,8 +968,8 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
                       <span style="font-size: 12px; color: #666;">倍数：</span>
                       <el-input-number
                         v-model="newSubRow[row.id].qty_per_unit"
-                        :min="0"
-                        :step="0.1"
+                        :min="0.01"
+                        :step="0.5"
                         :precision="2"
                         controls-position="right"
                         size="small"
@@ -943,7 +977,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
                       />
                       <span style="font-size: 12px; color: #888;">× {{ row.need_qty }} = {{ Math.ceil(row.need_qty * (newSubRow[row.id]?.qty_per_unit || 0)) }}</span>
                     </div>
-                    <el-select v-model="newSubRow[row.id].mode" size="small">
+                    <el-select v-model="newSubRow[row.id].mode" size="small" :teleported="false">
                       <el-option :value="0" label="锁定" />
                       <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
                     </el-select>
@@ -963,11 +997,11 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
               </template>
 
               <!-- 玩家协作按钮 -->
-              <el-button v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" size="small" type="primary" @click="onClaim(row)">认领</el-button>
+              <el-button v-if="canClaimRow(row)" size="small" type="primary" @click="onClaim(row)">认领</el-button>
               <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
               <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit" size="small" @click="onRelease(row)">放弃</el-button>
-              <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" size="small" @click="onRelease(row)">解除锁定</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit && canReleaseRow(row)" size="small" @click="onRelease(row)">放弃</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
               <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
               <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
             </template>
@@ -989,3 +1023,24 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+/*
+ * 树状列（物品名）缩进修复：
+ * el-table 把 el-table__indent（缩进）/ 展开图标 / el-table__placeholder（占位）注入该列的 .cell，
+ * 紧贴 slot 内容之前。owner 编辑态的 el-input 默认 width:100%，与前面的缩进挤不下同一行 →
+ * 输入框换行到 .cell 最左，视觉上"吃掉"了缩进（父子输入框都贴左边，看不出层级）。
+ * 非 owner 态是 <span> 文本，内联顺排有缩进 —— 故仅 owner 视角无缩进。
+ * 修法：该列 .cell 改 flex 横排，输入框 flex:1 + min-width:0 吃剩余宽度，
+ * 缩进/图标/占位各守其位不再被挤掉。仅作用 tree-name-col 列，其它列不受影响。
+ */
+:deep(.tree-name-col .cell) {
+  display: flex;
+  align-items: center;
+}
+
+:deep(.tree-name-col .cell .el-input) {
+  flex: 1;
+  min-width: 0;
+}
+</style>
