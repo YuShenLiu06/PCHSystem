@@ -300,8 +300,24 @@ erDiagram
 | `delivered_qty` | integer | not null default 0 | lock 认领人维护；progress 任何人 `contribute` 累加 |
 | `sort_order` | integer | not null default 0 | |
 | `updated_at` | timestamptz | not null default now() | |
+| `parent_row_id` | bigint | FK→sheet_rows.id `ON DELETE CASCADE`, null（迁移 0012）| **子物品嵌套**：子行的父行 id；null = 顶层行。删父行级联删子行（ON DELETE CASCADE） |
+| `qty_per_unit` | integer | null（迁移 0012）| **子物品单位用量**：子行每个父行物品所需的子物品数量。仅子行非空且≥1；need_qty = qty_per_unit × 父行 need_qty（派生存储，父行 need 变动时级联重算） |
 
-约束：`UNIQUE(sheet_id, item_name)`（兼作 upsert 锁点）。索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。`registry_id` 为 nullable、无唯一约束，仅作「一键提交」匹配键（迁移 0010）。
+约束（迁移 0012）：
+- **单层限制**：子行只能挂顶层行下（`parent_row_id IS NULL OR parent.parent_row_id IS NULL`，由 repo 层校验）
+- **部分唯一索引**（替换原 `UNIQUE(sheet_id, item_name)`）：
+  - `uq_sheet_rows_top_name`：`UNIQUE(sheet_id, item_name) WHERE parent_row_id IS NULL`（顶层行按 sheet_id+item_name 唯一）
+  - `uq_sheet_rows_sub_registry`：`UNIQUE(parent_row_id, registry_id) WHERE parent_row_id IS NOT NULL`（子行按父行+registry_id 唯一）
+- **CHECK** `ck_sheet_rows_sub_invariants`：`parent_row_id IS NULL OR (registry_id IS NOT NULL AND qty_per_unit IS NOT NULL AND qty_per_unit >= 1)`（子物品必须有 registry_id 且 qty_per_unit≥1）
+- 索引：`ix_sheet_rows_parent (parent_row_id) WHERE parent_row_id IS NOT NULL`（子行查询）
+- 索引：`idx(sheet_id)`、`idx(sheet_id, status)`（迁移 0005）。`registry_id` 为 nullable、无唯一约束，仅作「一键提交」匹配键（迁移 0010）。
+
+**子物品不变量**（迁移 0012，issue #19）：
+- **单层**：子物品只能挂顶层行下，禁止多层嵌套（repo 层 `parent.parent_row_id IS NULL` 校验）
+- **模式继承**：父行 lock→子行只能 lock；父行 progress→子行可 lock/progress，默认继承父行模式
+- **单位用量级联**：子行 `need_qty = qty_per_unit × 父行 need_qty`（派生存储，非用户输入；父行 need/mode 变动时级联重算子行）
+- **级联删除**：删父行自动删所有子行（ON DELETE CASCADE）
+- **状态机复用**：子行复用整条 `sheet_rows` 状态机（lock/progress、claim/deliver/contribute），传子 `row_id` 即可
 
 **双模式不变量**（迁移 0005 协作改进 + 0007 progress 多人贡献者，推翻原 spec D-4）：
 - **lock（mode=0）**：单认领人状态机 `open → claimed → done`（claim / delivery / release / reject）；`open ⇒ claimant IS NULL ∧ delivered=0`，`claimed ⇒ claimant NOT NULL`，`done ⇒ claimant NOT NULL ∧ delivered≥need`。

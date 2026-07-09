@@ -201,8 +201,12 @@ PCHSystem/
 - [ ] wiki.js 纳入部署 + wiki 内容 git 仓 host 选型（GitHub/Gitea/GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）
 - [ ] 拍板待确认参数（积分 `k / α / β / r`、赛季周期等，见 arch §9）
 
+**已完成（2026-07-09，子物品 issue #19 + sheets.py 包化重构）**：
+- [x] **Phase 1 重构**：`Backend/app/api/sheets.py`（1215 行）包化拆分 → `sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）；新增公共翻译 `app/services/translation.py`（`get_translator`/`resolve_item_name`）修正 sheets→parsing 反向依赖；通知 helper（`_row_payload`/`notify_owner_row_event`/`notify_uuids`/`_row_response`）；测试保持绿（行为不变）。
+- [x] **Phase 2 子物品（issue #19）**：迁移 0012（`sheet_rows` 加 `parent_row_id`/`qty_per_unit`；部分唯一索引 + CHECK；单层/模式继承/级联重算）；`RowUpsertRequest`/`RowDetail`/CSV 加两字段；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑。详见 [`Docs/architecture/data-model.md`](./Docs/architecture/data-model.md) §10.2 与 [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) §14。
+
 ---
 
-*最后更新：2026-07-07（新增部署脚本：`Scripts/install.sh` + `update.sh` + `lib/common.sh`——一键安装/更新，国内四类镜像自适应 + 智能重建矩阵 + token 双写校验 + dirty 保护）*
+*最后更新：2026-07-09（子物品 issue #19 + sheets.py 包化重构：迁移 0012 + sheets/ 包结构 + translation.py + 子物品嵌套行 + MCDR addsub/delsub/setsub + 前端树状渲染）*
 
 *增量（2026-07-05）：sheet view tellraw 像素级美化——新增 `text_layout.py` 像素宽度估算模块 + `format_section_separator` 分节标题（`════ 物品列表 ════`）+ 行尾按钮右对齐 / 底栏按钮居中；`format_section_separator` 配色回归 §6 色板「重要/标题」`§6§l`（gold+bold）；MCDR 测试 113 绿。发现并记入待处理：worktree 工作树 `Frontend/vite.config.ts` 端口改 8002 属 worktree 本地污染，勿提交。*

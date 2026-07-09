@@ -20,16 +20,20 @@
 
 - **Added**：`GET /sheets/{id}` 详情行按查看玩家做**五档优先级排序**：我认领的 lock ＞ 我参与的 progress ＞ 我未参与的 progress ＞ 非我认领的 lock ＞ 已完成；同档内按还需数量（`need - delivered`）降序，末位 tiebreak `sort_order, id`。CSV 导出仍用自然序（与导出者身份无关）。排序逻辑抽到 `services/sheet_row_order.py` 纯函数（免 DB、可单测、不改入参）。
 - **Added**：`GET /sheets/{id}?q=<关键词>` 新增**行搜索**：按 `item_name` / `registry_id` 大小写不敏感子串过滤（`registry_id` 可空 → NULL 不匹配，天然 null-safe），对 JSON 与 CSV 均生效。
+- **Added**：**子物品嵌套行**（issue #19，迁移 0012）：`sheet_rows` 加 `parent_row_id`/`qty_per_unit`；部分唯一索引（顶层按 sheet_id+item_name、子行按 parent_row_id+registry_id）+ CHECK 约束（子行必须有 registry_id 且 qty_per_unit≥1）；**不变量**：单层（子只能挂顶层）、模式继承（父 lock→子只能 lock）、单位用量级联（子 need = qty_per_unit × 父 need，父 need 变时级联重算）。`RowUpsertRequest`/`RowDetail`/CSV 加 `parent_row_id`/`qty_per_unit`；子行复用既有 claim/deliver/contribute 命令（传子 row_id）。
+- **Added**：**sheets.py 包化重构**：`Backend/app/api/sheets.py` 拆分为 `sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）；新增公共翻译 `app/services/translation.py`（`get_translator`/`resolve_item_name`）修正 sheets→parsing 反向依赖；通知 helper（`_row_payload`/`notify_owner_row_event`/`notify_uuids`/`_row_response`）。
 - **Fixed**：sheet 行改名不再重复建行（issue #20）。`PUT /sheets/{id}/rows` 改为单端点按 `row_id` 分流——带 `row_id` 按主键更新（可改名，字段部分更新），不带 `row_id` 严格新建。`item_name` 从 upsert 锁点降级为普通数据字段，修改操作统一以 `id` 为定位主轴。
 - **Fixed**：新建同名行不再静默覆盖旧行（严格 INSERT，撞 `UNIQUE(sheet_id, item_name)` → 409 中文提示「物品名重复」）。
 - **Changed**：archived 终态写操作 409 文案改中文（「项目已归档，只读」）。
 
 ### Frontend
 
-- **Changed**：行编辑保存带 `row_id`（走按主键更新路径，改名生效且不再重复）；`RowUpsertRequest` 增可选 `row_id`。
+- **Added**：**子物品树状渲染**：`SheetEditor.vue` 按父行分组建树渲染（顶层 + 缩进子行）；子物品内联编辑（registry_id/qty_per_unit/mode[父 progress 时可选]/sort + 增删），保存走 `upsertRow`；子行复用现有 claim/deliver/contribute UI；按钮紧凑化（el-button icon + el-tooltip）；总量=子行 need_qty（后端派生），qty_per_unit 显示「每件 ×N」。
+- **Changed**：行编辑保存带 `row_id`（走按主键更新路径，改名生效且不再重复）；`RowUpsertRequest` 增可选 `row_id`/`parent_row_id`/`qty_per_unit`。
 
 ### htcmc_auth
 
+- **Added**：**子物品嵌套行**（issue #19）：新增 `addsub`/`delsub`/`setsub` 命令（`addsub <sheet_id> <parent_row_id> <registry_id> <qty_per_unit> [mode] [sort]`）；`messages.py` 缩进渲染子行（1–2 空格，`§8└ {item} §7×{qty_per_unit}(需{need_qty})`）+ 父行 `+N子件` 徽标；按钮紧凑化（单字 `[认][改][-][+]` + RText hover 悬停完整描述）；子行复用既有 claim/deliver/contribute 命令（传子 row_id）；`scanner.py` 不改（子行同列表自动匹配）。
 - **Added**：**sheet view 分页**（#17）：物品列表 30 行/页，避免超出 MC 聊天框截断阈值；底栏 `[上一页]/[下一页]` 可点击翻页（首/末页灰显无点击），支持 `!!PCH sheet view <id> -p <页码>`、`--page` 及裸页码便捷写法。
 - **Added**：**sheet view 关键词搜索**：`!!PCH sheet view <id> -s <关键词>`（`--search`）按物品名 / 注册名过滤；搜索态顶部显示当前关键词 + `[清除]`，翻页时跨页保持搜索条件。
 - **Added**：view 底栏常驻 `[搜索]` 按钮（与 `[一键提交]` 并列，所有查看者可见）；空表 / 搜索无匹配仅显示居中提示，不渲染快捷栏与分页栏。

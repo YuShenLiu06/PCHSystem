@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|
 | POST | `/parsing/litematic` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.litematic`） | 200 `ParsedMaterialPreview` | 解析 Litematica 投影 + 翻译，返回方块组 + 容器组预览；不落库 |
 | POST | `/parsing/nbt` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.nbt`） | 200 `ParsedMaterialPreview` | 解析 Create 蓝图/structure .nbt + 翻译，返回方块组 + 容器组预览；不落库 |
-| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。见 [`sheets.md`](./sheets.md) |
+| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。**迁移 0012 起**：`SheetItemIn` schema 现接受可选 `parent_row_id`/`qty_per_unit`（子物品嵌套字段，投影解析流程不发送，仅手动录入时使用）。见 [`sheets.md`](./sheets.md) |
 
 - 上限：`.litematic` ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`.nbt` ≤ `NBT_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。
 - 解析为 CPU 密集，跑在 `asyncio.to_thread`（RS-7，不阻塞事件循环）。
