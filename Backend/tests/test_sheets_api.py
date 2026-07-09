@@ -967,12 +967,12 @@ async def test_progress_detail_includes_contributors_field(client):
 
 def _patch_archive_root(monkeypatch, tmp_path):
     """注入 archive_root=tmp_path 给 api 层的 get_settings()。"""
-    import app.api.sheets as sheets_mod
+    import app.api.sheets.lifecycle as lifecycle_mod
     from app.core.config import Settings
 
     real = Settings()
     real.archive_root = str(tmp_path)
-    monkeypatch.setattr(sheets_mod, "get_settings", lambda: real)
+    monkeypatch.setattr(lifecycle_mod, "get_settings", lambda: real)
 
 
 @pytest.mark.asyncio
@@ -1305,11 +1305,11 @@ async def test_sheet_summary_has_status_fields(client):
 @pytest.mark.asyncio
 async def test_advance_sheet_archive_root_unconfigured_503(client, monkeypatch):
     # Arrange：archive_root 空（未配置）→ 归档端点 503
-    import app.api.sheets as sheets_mod
+    import app.api.sheets.lifecycle as lifecycle_mod
     from app.core.config import Settings
     real = Settings()
     real.archive_root = ""
-    monkeypatch.setattr(sheets_mod, "get_settings", lambda: real)
+    monkeypatch.setattr(lifecycle_mod, "get_settings", lambda: real)
     _, bearer = await _make_player("alice")
     sid = (await client.post("/sheets", json={"title": "无根"}, headers=_auth(bearer))).json()["id"]
     # Act

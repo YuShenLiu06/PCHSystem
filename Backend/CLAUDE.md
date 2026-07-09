@@ -49,6 +49,8 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 ### 入口与结构
 - 入口：`app/main.py`（FastAPI app + 路由挂载）
 - 路由：`app/api/*.py`（`auth` / `me` / `sheets` / `notifications` / `parsing`）
+  - **`app/api/sheets/` 包**（Phase 1 重构，2026-07-09）：`sheets.py`（1215 行）拆分为 `__init__.py`（parent router + include 子 router）+ `_shared.py`（共享函数 + 通知 helper）+ `sheets_crud.py`（表级 CRUD + export）+ `rows.py`（行 upsert/delete + 编辑通知）+ `collab.py`（协作状态机 6 端点：claim/delivery/release/reject/contribute/progress）+ `lifecycle.py`（阶段 advance + 归档读）。保持 `router` 为公开符号 → `main.py` import 路径不变。
+- **公共翻译**（Phase 1 重构，2026-07-09）：`app/services/translation.py`（`get_translator() -> ItemTranslator` 单例 `LangJsonTranslator.default()` / `resolve_item_name(item_name, registry_id) -> str`：item_name 优先；缺失则翻译 registry_id；两者皆空 raise `ValueError`）。修正 sheets→parsing 反向依赖。
 - 数据层：`app/models/`（SQLAlchemy 2.x）+ `app/repositories/`（repo 函数，不返回 ORM 对象给路由层）
 - 配置：`app/core/config.py`（pydantic-settings，`auth_token_ttl_seconds` 等）
 - 迁移：`alembic/versions/`
@@ -82,7 +84,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 
 ### 数据表（sheets schema）
 - `sheets`：表格主表（owner_uuid FK / title / `status` collecting\|constructing\|archived（迁移 0009）/ archived_path / archived_at / created_at / updated_at；双 CHECK `ck_sheets_status_*` + `ix_sheets_status`）
-- `sheet_rows`：行（sheet_id FK CASCADE / item_name / need_qty / `mode` 0=lock|1=progress / `status` open|claimed|done / claimant_uuid / delivered_qty / sort_order；`UNIQUE(sheet_id, item_name)`）
+- `sheet_rows`：行（sheet_id FK CASCADE / item_name / registry_id（迁移 0010）/ need_qty / `mode` 0=lock|1=progress / `status` open|claimed|done / claimant_uuid / delivered_qty / sort_order / **`parent_row_id`（迁移 0012，FK 自引用 ON DELETE CASCADE）/ `qty_per_unit`（迁移 0012，子物品单位用量）**；部分唯一索引：顶层 `uq_sheet_rows_top_name`(sheet_id+item_name WHERE parent_row_id IS NULL) / 子行 `uq_sheet_rows_sub_registry`(parent_row_id+registry_id WHERE parent_row_id NOT NULL) + CHECK `ck_sheet_rows_sub_invariants`（子行必须有 registry_id 且 qty_per_unit≥1）+ `ix_sheet_rows_parent`；**不变量**：单层（子只能挂顶层）、模式继承（父 lock→子只能 lock）、单位用量级联（子 need = qty_per_unit × 父 need））
 - `sheet_row_contributors`：progress 行贡献者聚合（row_id FK CASCADE / player_uuid FK / joined_at / contributed_qty；`UNIQUE(row_id, player_uuid)`；迁移 0007/0008）
 
 > 完整 DDL 见 [`Docs/architecture/data-model.md`](../Docs/architecture/data-model.md) §2（users）/ §10（sheets，含 §10.4 项目阶段状态机 + 归档产物结构）/ §11（notifications）。归档产物落盘 `ARCHIVE_ROOT/projects/{id}/`（`index.md` + `contributions.png`，每项目独立文件夹；config `archive_root` + `WIKI_GIT_*`），渲染见 [`services/markdown-service.md`](../Docs/architecture/services/markdown-service.md)，wiki 推送见 [`services/wiki-service.md`](../Docs/architecture/services/wiki-service.md)。
@@ -138,6 +140,6 @@ curl -sS http://localhost:8000/me                   # 应返回 401（未带 JWT
 
 ---
 
-*最后更新：2026-07-03（归档升级：贡献者聚合含 lock + 去材料清单 + 每项目独立文件夹 `projects/{id}/` + matplotlib 贡献占比饼图（Noto Sans CJK SC）+ asset 端点 + wiki git publisher 默认 off/best-effort + R-8 重写为 git 双向；RS-10 更新）*
+*最后更新：2026-07-09（子物品嵌套行 issue #19 + sheets.py 包化重构：`app/api/sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）+ `app/services/translation.py` 公共翻译（`get_translator`/`resolve_item_name`）；`sheet_rows` 加 `parent_row_id`/`qty_per_unit`（迁移 0012）+ 部分唯一索引 + CHECK 不变量（单层/模式继承/级联重算）；详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §14 增量日志）*
 
 *增量（2026-07-07）：§4 端点表补 `POST /parsing/nbt`（Create 蓝图解析，commit f16a00a 遗漏，借前端 .nbt 支持 #5 一并补齐）；§2 职责泛化 litemapy / nbtlib。*

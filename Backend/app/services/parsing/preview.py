@@ -21,9 +21,9 @@ class TranslatedEntry:
     count: int
 
 
-def get_default_translator() -> ItemTranslator:
-    """v1 默认翻译器：包内内置 lang JSON。"""
-    return LangJsonTranslator.default()
+# get_default_translator 迁移至 app.services.translation（公共方法，消除 sheets→parsing 反向依赖）
+# 此处 re-export 保持向后兼容
+from app.services.translation import get_translator as get_default_translator
 
 
 def _translate_entries(

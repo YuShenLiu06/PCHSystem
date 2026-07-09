@@ -1,0 +1,164 @@
+"""项目阶段 advance + 归档读（原 sheets.py 块5）。"""
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_player
+from app.api.sheets._shared import (
+    _can_edit,
+    _load_sheet_or_404,
+    _to_detail,
+)
+from app.core.config import get_settings
+from app.core.db import get_session
+from app.models.sheet import (
+    SHEET_PHASE_ARCHIVED,
+    SHEET_PHASE_COLLECTING,
+    SHEET_PHASE_CONSTRUCTING,
+)
+from app.models.user import Player
+from app.repositories import sheet_repo
+from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
+from app.services.archive import (
+    ArchiveNotConfigured,
+    SheetNotFoundError,
+    SheetStatusError,
+    archive_sheet,
+    read_archive_bytes,
+    read_archive_file,
+)
+
+router = APIRouter(prefix="")
+logger = logging.getLogger(__name__)
+
+# 阶段过滤合法值
+_VALID_STATUS_FILTERS = frozenset(
+    {SHEET_PHASE_COLLECTING, SHEET_PHASE_CONSTRUCTING, SHEET_PHASE_ARCHIVED, "active"}
+)
+# advance ?to= 合法目标
+_VALID_ADVANCE_TARGETS = frozenset({SHEET_PHASE_CONSTRUCTING, SHEET_PHASE_ARCHIVED})
+
+# 资产白名单
+_ARCHIVE_ASSET_WHITELIST = frozenset({"contributions.png"})
+
+
+def _infer_advance_target(current_status: str) -> str:
+    """缺省 ``to`` 时按状态机推进下一态。"""
+    if current_status == SHEET_PHASE_COLLECTING:
+        return SHEET_PHASE_CONSTRUCTING
+    return SHEET_PHASE_ARCHIVED
+
+
+async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int):
+    """重新构造 SheetDetail（advance 后取最新 sheet + rows + contributors）。"""
+    result = await sheet_repo.get_sheet(session, sheet_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet, owner_name = result
+    rows_with_names = await sheet_repo.list_rows(session, sheet_id)
+    contributors_map = await sheet_repo.list_contributors(
+        session, [r.id for r, _ in rows_with_names]
+    )
+    return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
+
+
+@router.post("/{sheet_id}/advance")
+async def advance_sheet_phase(
+    sheet_id: int,
+    to: str | None = Query(
+        default=None, description="目标阶段：constructing / archived；缺省按状态机推进"
+    ),
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+):
+    """项目阶段流转（owner/admin）。"""
+    if to is not None and to not in _VALID_ADVANCE_TARGETS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"invalid 'to' target: {to} (expected constructing|archived)",
+        )
+    sheet = await _load_sheet_or_404(session, sheet_id)
+    if not _can_edit(sheet, player):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+
+    target = to if to is not None else _infer_advance_target(sheet.status)
+
+    if target == SHEET_PHASE_ARCHIVED:
+        try:
+            await archive_sheet(
+                session,
+                sheet_id,
+                archive_root=get_settings().archive_root,
+                player=player,
+            )
+        except SheetNotFoundError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+        except SheetArchived:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "sheet is archived, read-only"
+            )
+        except SheetStatusError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "illegal phase transition")
+        except ArchiveNotConfigured:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "archive root not configured"
+            )
+    else:
+        try:
+            advanced = await sheet_repo.advance_sheet(
+                session, sheet_id, SHEET_PHASE_CONSTRUCTING
+            )
+        except SheetArchived:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "sheet is archived, read-only"
+            )
+        except SheetRowConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        if advanced is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+        await session.commit()
+        await session.refresh(advanced)
+    return await _sheet_detail_or_404(session, sheet_id)
+
+
+@router.get("/{sheet_id}/archive")
+async def get_sheet_archive(
+    sheet_id: int,
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+) -> Response:
+    """读归档 markdown（text/markdown）。未归档 / 文件缺失 → 404。"""
+    result = await sheet_repo.get_sheet(session, sheet_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet, _owner_name = result
+    if sheet.status != SHEET_PHASE_ARCHIVED or not sheet.archived_path:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet is not archived")
+    md = read_archive_file(get_settings().archive_root, sheet.archived_path)
+    if md is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "archive file missing")
+    return Response(content=md, media_type="text/markdown")
+
+
+@router.get("/{sheet_id}/archive/assets/{filename}")
+async def get_sheet_archive_asset(
+    sheet_id: int,
+    filename: str,
+    session: AsyncSession = Depends(get_session),
+    player: Player = Depends(get_current_player),
+) -> Response:
+    """读归档产物（如 contributions.png，image/png）。"""
+    if filename not in _ARCHIVE_ASSET_WHITELIST:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "invalid asset filename")
+    result = await sheet_repo.get_sheet(session, sheet_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    sheet, _owner_name = result
+    if sheet.status != SHEET_PHASE_ARCHIVED or not sheet.archived_path:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet is not archived")
+    parent = sheet.archived_path.rsplit("/", 1)[0]
+    data = read_archive_bytes(get_settings().archive_root, f"{parent}/{filename}")
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "asset not found")
+    return Response(content=data, media_type="image/png")

@@ -14,6 +14,7 @@ from app.api.deps import get_current_player
 from app.core.config import get_settings
 from app.models.user import Player
 from app.schemas.parsing import ParsedMaterialPreview, PreviewItem, PreviewMeta
+from app.services import translation
 from app.services.parsing import preview as preview_service
 from app.services.parsing.parsers.litematic import LitematicParseError, LitematicParser
 from app.services.parsing.parsers.nbt import NbtParseError, NbtParser
@@ -49,7 +50,7 @@ async def parse_litematic(
         )
 
     parser = LitematicParser()
-    translator = preview_service.get_default_translator()
+    translator = translation.get_translator()
     try:
         parsed = await asyncio.to_thread(parser.parse, data, filename)
     except LitematicParseError as exc:
@@ -115,7 +116,7 @@ async def parse_nbt(
         )
 
     parser = NbtParser()
-    translator = preview_service.get_default_translator()
+    translator = translation.get_translator()
     try:
         parsed = await asyncio.to_thread(parser.parse, data, filename)
     except NbtParseError as exc:
