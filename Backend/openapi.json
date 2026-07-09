@@ -1733,7 +1733,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SheetDetail"
+                }
               }
             }
           },
@@ -1821,8 +1823,10 @@
           "200": {
             "description": "Successful Response",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -1919,9 +1923,7 @@
           "200": {
             "description": "Successful Response",
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "image/png": {}
             }
           },
           "422": {
@@ -2972,7 +2974,7 @@
           "qty_per_unit": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -3101,8 +3103,8 @@
           "qty_per_unit": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 1.0
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -3113,7 +3115,7 @@
         },
         "type": "object",
         "title": "RowUpsertRequest",
-        "description": "行 upsert / 更新请求（``PUT /sheets/{sid}/rows``，单端点按 row_id 分流）。\n\n- **带 ``row_id``**：按主键 **更新**该行（\"修改\"以 id 为定位主轴）。此时\n  ``item_name``/``registry_id``/``need_qty``/``mode``/``sort_order`` 全可选\n  （部分更新，传哪个改哪个）；**改名 = 只传 ``row_id`` + ``item_name``**。\n  更新路径不校验 name/registry 至少一个（可只改 need/mode/sort）。\n- **不带 ``row_id``**：按 ``item_name`` **新建**（原 upsert 新建语义），\n  ``item_name`` 与 ``registry_id`` 至少提供一个（model_validator 校验）：\n  - Web / 投影解析路径：传中文 ``item_name`` + 可选 ``registry_id``。\n  - MCDR 手持新建行（addhand）：仅传 ``registry_id``，API 层用 LangJsonTranslator\n    翻译补默认 ``item_name``（未命中回退 registry_id 本身）。\n\nissue #20：旧实现无 row_id，改名走 by-``item_name`` upsert 查不到旧行 → 新建 → 重复。\n\n子物品嵌套行（0012）：\n- ``parent_row_id`` 非空时为子行：要求 ``registry_id`` 非空 + ``qty_per_unit`` ≥ 1。\n- 子行 ``need_qty`` 由 API 派生（= qty_per_unit × 父行.need_qty），请求传入时忽略。"
+        "description": "行 upsert / 更新请求（``PUT /sheets/{sid}/rows``，单端点按 row_id 分流）。\n\n- **带 ``row_id``**：按主键 **更新**该行（\"修改\"以 id 为定位主轴）。此时\n  ``item_name``/``registry_id``/``need_qty``/``mode``/``sort_order`` 全可选\n  （部分更新，传哪个改哪个）；**改名 = 只传 ``row_id`` + ``item_name``**。\n  更新路径不校验 name/registry 至少一个（可只改 need/mode/sort）。\n- **不带 ``row_id``**：按 ``item_name`` **新建**（原 upsert 新建语义），\n  ``item_name`` 与 ``registry_id`` 至少提供一个（model_validator 校验）：\n  - Web / 投影解析路径：传中文 ``item_name`` + 可选 ``registry_id``。\n  - MCDR 手持新建行（addhand）：仅传 ``registry_id``，API 层用 LangJsonTranslator\n    翻译补默认 ``item_name``（未命中回退 registry_id 本身）。\n\nissue #20：旧实现无 row_id，改名走 by-``item_name`` upsert 查不到旧行 → 新建 → 重复。\n\n子物品嵌套行（0012，0013 放宽倍数为小数）：\n- ``parent_row_id`` 非空时为子行：要求 ``registry_id`` 非空 + ``qty_per_unit`` > 0（支持 0.5 等小数）。\n- 子行 ``need_qty`` 由 API 派生（= ceil(qty_per_unit × 父行.need_qty)，向上取整成整数），请求传入时忽略。"
       },
       "SheetCreateRequest": {
         "properties": {
@@ -3321,8 +3323,8 @@
           "qty_per_unit": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 1.0
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"

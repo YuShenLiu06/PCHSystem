@@ -1465,23 +1465,24 @@ async def test_upsert_row_sub_item_qty_per_unit_must_be_positive(client):
 
 @pytest.mark.asyncio
 async def test_sub_item_can_be_claimed_lock_mode(client):
-    """子物品：子行可复用既有端点 claim（lock 模式）。"""
+    """子物品：lock 子行在父=progress 时可单独认领（父=lock 时随父行级联，不得单独认领）。"""
     owner, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
-    # 建父行（lock）
+    # 建父行（progress）—— lock 子行仅当父=progress 时可单独认领
     resp = await client.put(
         f"/sheets/{sid}/rows",
-        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        json={"item_name": "父", "need_qty": 10, "mode": 1, "sort_order": 0},
         headers=_auth(bearer),
     )
     parent_rid = resp.json()["id"]
-    # 建子行
+    # 建子行（显式 lock；父=progress 下允许 lock 子行）
     resp = await client.put(
         f"/sheets/{sid}/rows",
         json={
             "parent_row_id": parent_rid,
             "registry_id": "minecraft:stone",
             "qty_per_unit": 2,
+            "mode": 0,
         },
         headers=_auth(bearer),
     )
@@ -1665,3 +1666,31 @@ async def test_csv_export_includes_sub_item_columns(client):
     child_line = next(line for line in lines[1:] if f",{parent_rid}," in line)
     assert f",minecraft:stone," in child_line
     assert child_line.endswith(",2")  # qty_per_unit=2
+
+
+# ---------- archived 终态删除（R3：返 409 非 500）----------
+@pytest.mark.asyncio
+async def test_delete_row_on_archived_sheet_returns_409(client, tmp_path, monkeypatch):
+    """archived 终态只读：DELETE 行 → 409（repo _assert_writable 抛 SheetArchived，api 捕获）。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 1, 0))["id"]
+    adv = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    assert adv.status_code == 200
+    # Act：archived 后删行 → 409（非 500）
+    resp = await client.delete(f"/sheets/{sid}/rows/{rid}", headers=_auth(bearer))
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_delete_archived_sheet_returns_409(client, tmp_path, monkeypatch):
+    """archived 终态只读：DELETE 整张表 → 409（非 500）。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player("alice")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    await _upsert_row(client, bearer, sid, "iron", 1, 0)
+    await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    # Act：archived 后删表 → 409（非 500）
+    resp = await client.delete(f"/sheets/{sid}", headers=_auth(bearer))
+    assert resp.status_code == 409

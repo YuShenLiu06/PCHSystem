@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 from app.services.parsing.models import ParsedMaterialList
 from app.services.parsing.translators.base import ItemTranslator
-from app.services.parsing.translators.lang_json import LangJsonTranslator
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,7 @@ from app.core.db import get_session
 from app.models.user import Player
 from app.repositories import sheet_repo
 from app.repositories.player_repo import set_last_sheet
+from app.repositories.sheet_repo import SheetArchived
 from app.schemas.sheet import (
     SheetCreateRequest,
     SheetDetail,
@@ -32,7 +33,7 @@ router = APIRouter(prefix="")
 logger = logging.getLogger(__name__)
 
 
-@router.post("/", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
 async def create_sheet(
     body: SheetCreateRequest,
     session: AsyncSession = Depends(get_session),
@@ -81,7 +82,7 @@ async def create_sheet_from_items(
     return _to_detail(sheet_obj, rows_with_names, owner_name)
 
 
-@router.get("/", response_model=list[SheetSummary])
+@router.get("", response_model=list[SheetSummary])
 async def list_sheets(
     owner: str | None = Query(default=None, description="过滤：传 me 只看自己"),
     status_filter: str | None = Query(
@@ -215,6 +216,10 @@ async def delete_sheet(
                 row_id=old_row_id,
                 item_name=item_name,
             )
-    await sheet_repo.delete_sheet(session, sheet_id)
-    await session.commit()
+    try:
+        await sheet_repo.delete_sheet(session, sheet_id)
+        await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

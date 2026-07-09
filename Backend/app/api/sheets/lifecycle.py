@@ -2,6 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_player
@@ -20,6 +21,7 @@ from app.models.sheet import (
 from app.models.user import Player
 from app.repositories import sheet_repo
 from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
+from app.schemas.sheet import SheetDetail
 from app.services.archive import (
     ArchiveNotConfigured,
     SheetNotFoundError,
@@ -63,7 +65,7 @@ async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int):
     return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
 
 
-@router.post("/{sheet_id}/advance")
+@router.post("/{sheet_id}/advance", response_model=SheetDetail)
 async def advance_sheet_phase(
     sheet_id: int,
     to: str | None = Query(
@@ -71,7 +73,7 @@ async def advance_sheet_phase(
     ),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
-):
+) -> SheetDetail:
     """项目阶段流转（owner/admin）。"""
     if to is not None and to not in _VALID_ADVANCE_TARGETS:
         raise HTTPException(
@@ -122,7 +124,7 @@ async def advance_sheet_phase(
     return await _sheet_detail_or_404(session, sheet_id)
 
 
-@router.get("/{sheet_id}/archive")
+@router.get("/{sheet_id}/archive", response_class=PlainTextResponse)
 async def get_sheet_archive(
     sheet_id: int,
     session: AsyncSession = Depends(get_session),
@@ -141,7 +143,11 @@ async def get_sheet_archive(
     return Response(content=md, media_type="text/markdown")
 
 
-@router.get("/{sheet_id}/archive/assets/{filename}")
+@router.get(
+    "/{sheet_id}/archive/assets/{filename}",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
 async def get_sheet_archive_asset(
     sheet_id: int,
     filename: str,

@@ -249,7 +249,11 @@ async def delete_row(
                 row_id=row_id,
                 item_name=old_row.item_name,
             )
-    count = await sheet_repo.delete_row(session, sheet_id, row_id)
-    if count == 0:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
-    await session.commit()
+    try:
+        count = await sheet_repo.delete_row(session, sheet_id, row_id)
+        if count == 0:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+        await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
