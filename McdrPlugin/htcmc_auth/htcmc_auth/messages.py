@@ -3,6 +3,7 @@ from typing import Any
 
 from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
+from .qty import format_qty_safe
 from .text_layout import (
     CHAT_LINE_PX,
     center_leading,
@@ -170,8 +171,8 @@ def format_row_line(row: dict) -> str:
         row_id=row.get("id"),
         item=row.get("item_name"),
         mode=mode,
-        delivered=row.get("delivered_qty", 0),
-        need=row.get("need_qty", 0),
+        delivered=format_qty_safe(row.get("delivered_qty", 0)),
+        need=format_qty_safe(row.get("need_qty", 0)),
         claimant=claimant,
     )
 
@@ -520,10 +521,10 @@ def format_notification(n: dict) -> Any:
                 actor=payload.get("actor_name") or "某人",
                 item=payload.get("item_name") or "?",
                 sheet_title=payload.get("sheet_title") or "?",
-                delivered=payload.get("delivered", "?"),
-                need=payload.get("need", "?"),
-                old=payload.get("old", "?"),
-                new=payload.get("new", "?"),
+                delivered=format_qty_safe(payload.get("delivered", "?")),
+                need=format_qty_safe(payload.get("need", "?")),
+                old=format_qty_safe(payload.get("old", "?")),
+                new=format_qty_safe(payload.get("new", "?")),
             )
         except Exception:
             text = n.get("title") or _NOTIFY_DEFAULT.format(title="(通知)")

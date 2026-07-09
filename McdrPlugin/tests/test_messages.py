@@ -45,7 +45,7 @@ class FormatNotificationTest(unittest.TestCase):
             },
         }
         s = str(format_notification(n))
-        self.assertIn("32/64", s)
+        self.assertIn("32个/1组", s)  # delivered=32→32个, need=64→1组（issue #18 换算）
         self.assertIn("[202工程] 的 [铁锭]", s)
         self.assertTrue(s.startswith("§e"), s)
 
@@ -68,8 +68,8 @@ class FormatNotificationTest(unittest.TestCase):
             "payload": {"item_name": "铁锭", "sheet_title": "清单Q", "old": 64, "new": 32},
         }
         s = str(format_notification(n))
-        self.assertIn("32", s)
-        self.assertIn("64", s)
+        self.assertIn("32个", s)   # new=32 → 32个（issue #18 换算）
+        self.assertIn("1组", s)    # old=64 → 1组
         self.assertIn("[清单Q] 的 [铁锭]", s)
 
     def test_sheet_row_deleted(self):

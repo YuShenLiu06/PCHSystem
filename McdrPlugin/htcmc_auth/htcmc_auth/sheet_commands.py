@@ -21,6 +21,7 @@ from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 from . import sheet_client, scanner
 from .view_args import paginate_rows, parse_view_args
 from .config import HtcmcAuthConfig
+from .qty import format_qty_safe
 from .messages import (
     SHEET_SERVICE_DOWN,
     SHEET_RATE_LIMITED,
@@ -712,7 +713,7 @@ def _sheet_upsert(src, ctx):
             mode_label = "progress" if mode else "lock"
             server.tell(player_name, SHEET_OK_ROW_ADDED.format(
                 item=data.get("item_name", item),
-                need=data.get("need_qty", need),
+                need=format_qty_safe(data.get("need_qty", need)),
                 mode=mode_label,
             ))
 
@@ -752,7 +753,7 @@ def _sheet_set(src, ctx):
             mode_label = "progress" if data.get("mode") == 1 else "lock"
             server.tell(player_name, SHEET_OK_ROW_UPDATED.format(
                 item=data.get("item_name", "?"),
-                need=data.get("need_qty", need),
+                need=format_qty_safe(data.get("need_qty", need)),
                 mode=mode_label,
             ))
 
@@ -843,8 +844,8 @@ def _sheet_deliver(src, ctx):
         def _show(data):
             server.tell(player_name, SHEET_OK_DELIVERED.format(
                 item=data.get("item_name", ""),
-                delivered=data.get("delivered_qty", qty),
-                need=data.get("need_qty", "?"),
+                delivered=format_qty_safe(data.get("delivered_qty", qty)),
+                need=format_qty_safe(data.get("need_qty", "?")),
             ))
 
         _resolve(server, player_name, outcome, on_success=_show)
@@ -883,8 +884,8 @@ def _sheet_progress(src, ctx):
         def _show(data):
             server.tell(player_name, SHEET_OK_PROGRESS_SET.format(
                 item=data.get("item_name", ""),
-                delivered=data.get("delivered_qty", qty),
-                need=data.get("need_qty", "?"),
+                delivered=format_qty_safe(data.get("delivered_qty", qty)),
+                need=format_qty_safe(data.get("need_qty", "?")),
             ))
 
         _resolve(server, player_name, outcome, on_success=_show)
@@ -921,7 +922,7 @@ def _sheet_done(src, ctx):
             delta = max(need - delivered, 0)
             if delta == 0:
                 server.tell(player_name, SHEET_OK_DELIVERED.format(
-                    item=row.get("item_name", ""), delivered=delivered, need=need))
+                    item=row.get("item_name", ""), delivered=format_qty_safe(delivered), need=format_qty_safe(need)))
                 return
             outcome = sheet_client.contribute_row(CONFIG, player_uuid, sheet_id, row_id, delta)
         else:  # lock：绝对值设 need
@@ -930,8 +931,8 @@ def _sheet_done(src, ctx):
         def _show(data):
             server.tell(player_name, SHEET_OK_DELIVERED.format(
                 item=data.get("item_name", ""),
-                delivered=data.get("delivered_qty", need),
-                need=data.get("need_qty", need),
+                delivered=format_qty_safe(data.get("delivered_qty", need)),
+                need=format_qty_safe(data.get("need_qty", need)),
             ))
 
         _resolve(server, player_name, outcome, on_success=_show)
@@ -1062,7 +1063,7 @@ def _sheet_submit_oneclick(src, ctx):
                     CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
                 if isinstance(deliv_out, dict):
                     done_lines.append(RText(SHEET_SUBMIT_DONE_LINE.format(
-                        item=action.item_name, qty=action.qty)))
+                        item=action.item_name, qty=format_qty_safe(action.qty))))
                 else:
                     skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
                         item=action.item_name, reason="交付失败（状态变化）")))
@@ -1073,7 +1074,7 @@ def _sheet_submit_oneclick(src, ctx):
                     delivered = int(contrib_out.get("delivered_qty", 0))
                     need = int(contrib_out.get("need_qty", 0))
                     done_lines.append(RText(SHEET_SUBMIT_PROGRESS_LINE.format(
-                        item=action.item_name, delivered=delivered, need=need)))
+                        item=action.item_name, delivered=format_qty_safe(delivered), need=format_qty_safe(need))))
                 else:
                     skip_lines.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
                         item=action.item_name, reason="上交失败（状态变化）")))
@@ -1139,7 +1140,7 @@ def _sheet_addhand(src, ctx):
             mode_label = "progress" if mode else "lock"
             server.tell(player_name, SHEET_OK_ADDHAND.format(
                 item=data.get("item_name") or registry_id,
-                need=data.get("need_qty", need),
+                need=format_qty_safe(data.get("need_qty", need)),
                 mode=mode_label,
             ))
 
