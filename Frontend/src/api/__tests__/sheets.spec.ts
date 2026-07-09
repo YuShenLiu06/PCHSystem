@@ -189,6 +189,17 @@ describe('sheets API client', () => {
       })
       expect(result).toEqual(withReg)
     })
+
+    it('带 row_id → PUT /sheets/{id}/rows 走更新路径（issue #20 改名不重复）', async () => {
+      const renamed = { ...rowDetail, id: 10, item_name: '石英柱1' }
+      mocked.put.mockResolvedValue({ data: renamed })
+      const result = await upsertRow(1, { row_id: 10, item_name: '石英柱1' })
+      expect(mocked.put).toHaveBeenCalledWith('/sheets/1/rows', {
+        row_id: 10,
+        item_name: '石英柱1',
+      })
+      expect(result).toEqual(renamed)
+    })
   })
 
   describe('deleteRow', () => {

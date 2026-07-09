@@ -20,6 +20,7 @@ from .sheet_commands import (
     _sheet_advance_to_constructing,
     _sheet_advance_to_archived,
     _sheet_upsert,
+    _sheet_set,
     _sheet_delrow,
     _sheet_claim,
     _sheet_deliver,
@@ -169,17 +170,10 @@ def _register_commands(server: PluginServerInterface):
                 .then(
                     Integer("sheet_id")
                     .then(
-                        QuotableText("item")
+                        Integer("row_id")
                         .then(
-                            Integer("need").runs(_sheet_upsert)
-                            .then(
-                                Literal("lock").runs(_sheet_upsert)
-                                .then(Integer("sort").runs(_sheet_upsert))
-                            )
-                            .then(
-                                Literal("progress").runs(_sheet_upsert)
-                                .then(Integer("sort").runs(_sheet_upsert))
-                            )
+                            Integer("need").runs(_sheet_set)
+                            .then(Integer("sort").runs(_sheet_set))
                         )
                     )
                 )

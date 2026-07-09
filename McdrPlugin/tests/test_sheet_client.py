@@ -177,6 +177,44 @@ class SheetClientTest(unittest.TestCase):
         self.assertEqual(captured["json"], {"qty": 5})
         self.assertEqual(out["delivered_qty"], 5)
 
+    def test_upsert_row_create_body_no_row_id(self):
+        """无 row_id → 新建路径：body 含 item_name/need_qty/mode/sort_order，无 row_id。"""
+        captured = {}
+
+        def _capture(method, url, params=None, json=None, headers=None, timeout=None):
+            captured["json"] = json
+            return _resp(200, {"id": 7})
+
+        with mock.patch.object(sc.requests, "request", side_effect=_capture):
+            sc.upsert_row(_cfg(), self.UUID, 1, "铁锭", 64, 0, 2)
+        self.assertEqual(
+            captured["json"],
+            {"item_name": "铁锭", "need_qty": 64, "mode": 0, "sort_order": 2},
+        )
+        self.assertNotIn("row_id", captured["json"])
+
+    def test_upsert_row_update_body_with_row_id(self):
+        """带 row_id → 更新路径：body 含 row_id，未传字段不下发（部分更新；issue #20）。"""
+        captured = {}
+
+        def _capture(method, url, params=None, json=None, headers=None, timeout=None):
+            captured["json"] = json
+            return _resp(200, {"id": 7})
+
+        with mock.patch.object(sc.requests, "request", side_effect=_capture):
+            # setreg 场景：仅 registry_id + row_id
+            sc.upsert_row(_cfg(), self.UUID, 1, None, None, None, None,
+                          registry_id="minecraft:stone", row_id=7)
+        self.assertEqual(
+            captured["json"], {"row_id": 7, "registry_id": "minecraft:stone"}
+        )
+        # set 场景：need + sort + row_id
+        with mock.patch.object(sc.requests, "request", side_effect=_capture):
+            sc.upsert_row(_cfg(), self.UUID, 1, None, 99, None, 3, row_id=7)
+        self.assertEqual(
+            captured["json"], {"row_id": 7, "need_qty": 99, "sort_order": 3}
+        )
+
     def test_set_row_progress_patches_delivered_qty(self):
         captured = {}
 

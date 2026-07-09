@@ -16,6 +16,20 @@
 > 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
 > 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
+### Backend
+
+- **Fixed**：sheet 行改名不再重复建行（issue #20）。`PUT /sheets/{id}/rows` 改为单端点按 `row_id` 分流——带 `row_id` 按主键更新（可改名，字段部分更新），不带 `row_id` 严格新建。`item_name` 从 upsert 锁点降级为普通数据字段，修改操作统一以 `id` 为定位主轴。
+- **Fixed**：新建同名行不再静默覆盖旧行（严格 INSERT，撞 `UNIQUE(sheet_id, item_name)` → 409 中文提示「物品名重复」）。
+- **Changed**：archived 终态写操作 409 文案改中文（「项目已归档，只读」）。
+
+### Frontend
+
+- **Changed**：行编辑保存带 `row_id`（走按主键更新路径，改名生效且不再重复）；`RowUpsertRequest` 增可选 `row_id`。
+
+### McdrPlugin
+
+- **Changed**：`!!PCH sheet set` 改为按行号（`row_id`）更新 need/排序，与 `delrow`/`claim` 等命令一致（id 主轴），不再按物品名 upsert。`setreg` 同改按 `row_id` 更新；`add` 保持按物品名严格新建（同名→回执报错）。
+
 ---
 
 ## [backend-v0.5.0] - 2026-07-07

@@ -13,23 +13,32 @@ class SheetPatchRequest(BaseModel):
 
 
 class RowUpsertRequest(BaseModel):
-    """行 upsert 请求（``PUT /sheets/{sid}/rows``）。
+    """行 upsert / 更新请求（``PUT /sheets/{sid}/rows``，单端点按 row_id 分流）。
 
-    ``item_name`` 与 ``registry_id`` 至少提供一个（model_validator 校验）：
-    - Web / 投影解析路径：传中文 ``item_name`` + 可选 ``registry_id``。
-    - MCDR 手持新建行（addhand）：仅传 ``registry_id``，API 层用 LangJsonTranslator
-      翻译补默认 ``item_name``（未命中回退 registry_id 本身）。
+    - **带 ``row_id``**：按主键 **更新**该行（"修改"以 id 为定位主轴）。此时
+      ``item_name``/``registry_id``/``need_qty``/``mode``/``sort_order`` 全可选
+      （部分更新，传哪个改哪个）；**改名 = 只传 ``row_id`` + ``item_name``**。
+      更新路径不校验 name/registry 至少一个（可只改 need/mode/sort）。
+    - **不带 ``row_id``**：按 ``item_name`` **新建**（原 upsert 新建语义），
+      ``item_name`` 与 ``registry_id`` 至少提供一个（model_validator 校验）：
+      - Web / 投影解析路径：传中文 ``item_name`` + 可选 ``registry_id``。
+      - MCDR 手持新建行（addhand）：仅传 ``registry_id``，API 层用 LangJsonTranslator
+        翻译补默认 ``item_name``（未命中回退 registry_id 本身）。
+
+    issue #20：旧实现无 row_id，改名走 by-``item_name`` upsert 查不到旧行 → 新建 → 重复。
     """
 
+    row_id: int | None = Field(default=None, ge=1)
     item_name: str | None = Field(default=None, max_length=64)
     registry_id: str | None = Field(default=None, max_length=128)
-    need_qty: int = Field(default=0, ge=0)
-    mode: int = Field(default=0, ge=0, le=1)
-    sort_order: int = Field(default=0, ge=0)
+    need_qty: int | None = Field(default=None, ge=0)
+    mode: int | None = Field(default=None, ge=0, le=1)
+    sort_order: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def _require_name_or_registry(self) -> "RowUpsertRequest":
-        if not self.item_name and not self.registry_id:
+    def _require_name_or_registry_when_create(self) -> "RowUpsertRequest":
+        # 仅新建路径（无 row_id）要求 item_name/registry_id 至少一个；更新路径字段全可选
+        if self.row_id is None and not self.item_name and not self.registry_id:
             raise ValueError("item_name 与 registry_id 至少提供一个")
         return self
 
@@ -92,7 +101,17 @@ class SheetItemIn(RowUpsertRequest):
     """``/sheets/from-items`` 批量建行条目（继承 ``RowUpsertRequest`` 字段 + 校验，mode 默认 lock）。
 
     投影解析 ``PreviewItem`` 透传 ``registry_id``（= ``item_id``）+ 中文 ``item_name``。
+    每条均为**新建**（新表无既有行可定位）→ ``row_id`` 在此无意义，禁止携带：
+    否则会绕过父类「name/registry 至少一个」校验（该豁免仅服务更新路径），
+    使 ``item_name=None & registry_id=None`` 直抵 ``_resolve_item_name`` 的防御点 → 500。
     """
+
+    @model_validator(mode="after")
+    def _forbid_row_id_in_batch_create(self) -> "SheetItemIn":
+        # row_id 是更新路径的定位主轴；批量新建携带它既无意义又会绕过 name/registry 校验
+        if self.row_id is not None:
+            raise ValueError("from-items 批量建行不支持 row_id（每行均为新建）")
+        return self
 
 
 class SheetFromItemsRequest(BaseModel):

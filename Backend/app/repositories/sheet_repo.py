@@ -221,16 +221,6 @@ async def get_row(
     return row[0], row[1]
 
 
-async def get_row_by_item(
-    session: AsyncSession, sheet_id: int, item_name: str
-) -> SheetRow | None:
-    """按 (sheet_id, item_name) UNIQUE 锁点查行（upsert 前捕获旧状态用）。"""
-    stmt = select(SheetRow).where(
-        SheetRow.sheet_id == sheet_id, SheetRow.item_name == item_name
-    )
-    return (await session.execute(stmt)).scalar_one_or_none()
-
-
 async def upsert_row(
     session: AsyncSession,
     sheet_id: int,
@@ -241,6 +231,10 @@ async def upsert_row(
     registry_id: str | None = None,
 ) -> SheetRow:
     """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort/registry_id）。在则改，不在则 insert。
+
+    ⚠️ **仅供测试 seeding 用**——生产路径已弃用此 by-``item_name`` upsert（issue #20：
+    改名查不到旧行 → 新建 → 重复）。新代码请用 ``create_row``（严格新建）/ ``update_row``
+    （按 row_id 主键更新）。**勿在 app/ 内复用本函数**，否则会悄悄把 #20 引回来。
 
     新建行：status=open / claimant=None / delivered=0。
     更新行 mode 不变：仅改 need_qty/sort_order（+ registry_id 仅当传入非 None），保留 status/claimant/delivered；
@@ -265,24 +259,9 @@ async def upsert_row(
         if registry_id is not None:
             # None 不覆盖：避免 upsert 其它字段时误擦已有 registry_id（匹配键）
             row.registry_id = registry_id
-        if mode_changed:
-            # 换模式 = 重新开始：清协作状态，避免违反 progress 不变量（claimant 恒 null）
-            row.status = STATUS_OPEN
-            row.claimant_uuid = None
-            row.delivered_qty = 0
-            await clear_contributors(session, row.id)
-        else:
-            # mode 不变：保留进度，按新 need 封顶（need=0 = 无目标，不封顶）
-            if need_qty > 0 and row.delivered_qty > need_qty:
-                row.delivered_qty = need_qty
-            if (
-                row.status in (STATUS_CLAIMED, STATUS_DONE)
-                and need_qty > 0
-                and row.delivered_qty >= need_qty
-            ):
-                row.status = STATUS_DONE
-            elif row.status == STATUS_DONE and row.delivered_qty < need_qty:
-                row.status = STATUS_CLAIMED
+        await _recompute_after_edit(
+            session, row, mode_changed=mode_changed, new_need_qty=need_qty
+        )
         await session.flush()
         return row
     row = SheetRow(
@@ -294,6 +273,123 @@ async def upsert_row(
         registry_id=registry_id,
     )
     session.add(row)
+    await session.flush()
+    return row
+
+
+async def create_row(
+    session: AsyncSession,
+    sheet_id: int,
+    item_name: str,
+    *,
+    need_qty: int,
+    mode: int,
+    sort_order: int,
+    registry_id: str | None = None,
+) -> SheetRow:
+    """严格新建行（不做 upsert；issue #20 后 item_name 不再作 upsert 锁点）。
+
+    新建行：status=open / claimant=None / delivered=0。``item_name`` 是数据字段，
+    同名由 ``UNIQUE(sheet_id, item_name)`` 约束兜底 —— 并发同名 insert 触发
+    IntegrityError，上抛交 api 层翻译为 409（不再静默覆盖旧行）。
+    """
+    await _assert_writable(session, sheet_id)
+    row = SheetRow(
+        sheet_id=sheet_id,
+        item_name=item_name,
+        need_qty=need_qty,
+        mode=mode,
+        sort_order=sort_order,
+        registry_id=registry_id,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def _recompute_after_edit(
+    session: AsyncSession,
+    row: SheetRow,
+    *,
+    mode_changed: bool,
+    new_need_qty: int,
+) -> None:
+    """行编辑后的协作状态重算（upsert_row / update_row 共用，DRY）。
+
+    调用方应先把 need_qty/mode 写入 row，再传 mode_changed 与 new_need_qty：
+
+    - mode 变化：重置协作（status=open / claimant=None / delivered=0 / 清贡献者），
+      避免违反 progress 不变量（claimant 恒 null）。
+    - mode 不变：保留进度，按 new_need_qty 封顶 delivered（need=0 = 无目标，不封顶）
+      并重算 status（满足→done；done 但不足→claimed）。
+    """
+    if mode_changed:
+        row.status = STATUS_OPEN
+        row.claimant_uuid = None
+        row.delivered_qty = 0
+        await clear_contributors(session, row.id)
+        return
+    # mode 不变：保留进度，按新 need 封顶（need=0 = 无目标，不封顶）
+    if new_need_qty > 0 and row.delivered_qty > new_need_qty:
+        row.delivered_qty = new_need_qty
+    if (
+        row.status in (STATUS_CLAIMED, STATUS_DONE)
+        and new_need_qty > 0
+        and row.delivered_qty >= new_need_qty
+    ):
+        row.status = STATUS_DONE
+    elif row.status == STATUS_DONE and row.delivered_qty < new_need_qty:
+        row.status = STATUS_CLAIMED
+
+
+async def update_row(
+    session: AsyncSession,
+    sheet_id: int,
+    row_id: int,
+    *,
+    item_name: str | None = None,
+    registry_id: str | None = None,
+    need_qty: int | None = None,
+    mode: int | None = None,
+    sort_order: int | None = None,
+) -> SheetRow | None:
+    """按主键 row_id 部分更新行（"修改"操作以 id 为定位主轴，而非可变的 item_name）。
+
+    issue #20：旧 upsert by item_name 改名会用新名查不到旧行 → 新建 → 重复。
+    update_row 按 (sheet_id, id) 锁行后逐字段部分更新（None=不改动）：
+    item_name 改名 / registry_id 覆盖（None 不擦）/ need_qty·mode·sort_order 调整。
+
+    mode 仅在「传入且与原值不同」时重置协作；未传 mode 不重置。need_qty/mode 均未传
+    时（纯改名/改 sort/改 registry_id）不动协作状态。并发同名改名命中
+    UNIQUE(sheet_id, item_name) → IntegrityError 上抛交 api 层翻译为 409。
+
+    返回更新后的行；行不存在 → None（→ api 404）。
+    """
+    await _assert_writable(session, sheet_id)
+    stmt = (
+        select(SheetRow)
+        .where(SheetRow.sheet_id == sheet_id, SheetRow.id == row_id)
+        .with_for_update()
+    )
+    row = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        return None
+    if item_name is not None:
+        row.item_name = item_name
+    if registry_id is not None:
+        row.registry_id = registry_id
+    mode_changed = mode is not None and row.mode != mode
+    if need_qty is not None:
+        row.need_qty = need_qty
+    if mode is not None:
+        row.mode = mode
+    if sort_order is not None:
+        row.sort_order = sort_order
+    # mode/need 任一变化才重算；二者都未传 → 纯改名/改 sort，不动协作状态
+    if mode_changed or need_qty is not None:
+        await _recompute_after_edit(
+            session, row, mode_changed=mode_changed, new_need_qty=row.need_qty
+        )
     await session.flush()
     return row
 

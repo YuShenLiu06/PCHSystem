@@ -46,7 +46,8 @@ from .messages import (
     SHEET_OK_CREATED,
     SHEET_OK_RENAMED,
     SHEET_OK_DELETED,
-    SHEET_OK_ROW_SET,
+    SHEET_OK_ROW_ADDED,
+    SHEET_OK_ROW_UPDATED,
     SHEET_OK_ROW_DELETED,
     SHEET_OK_CLAIMED,
     SHEET_OK_DELIVERED,
@@ -178,8 +179,12 @@ def _sheet_root(src, ctx):
         RText("建表 / 改表（拥有者）：\n", color=RColor.aqua),
         _line("create", "新建表", "!!PCH sheet create ", "create <标题>  新建一张表"),
         _line(
-            "add/set", "增改行（拥有者）", "!!PCH sheet add ",
-            "add/set <表id> <物品> <数量> [lock|progress] [排序]",
+            "add", "新建行（拥有者）", "!!PCH sheet add ",
+            "add <表id> <物品名> <数量> [lock|progress] [排序]  同名已存在→报错",
+        ),
+        _line(
+            "set", "改行数量（拥有者）", "!!PCH sheet set ",
+            "set <表id> <行号> <数量> [排序]  按行号改 need/排序（id 主轴，不改名/模式）",
         ),
         _line("rename", "改表标题", "!!PCH sheet rename ", "rename <表id> <新标题>"),
         _line("delete", "删表", "!!PCH sheet delete ", "delete <表id>"),
@@ -637,7 +642,11 @@ def _sheet_advance_impl(src, ctx, *, to):
 # === 行级 ===
 
 def _sheet_upsert(src, ctx):
-    """add/set 共用：upsert 行。mode 可选（默认 lock；字面量 lock/progress），sort 可选（默认 0）。"""
+    """add：按 item_name **新建**行（严格 INSERT，撞名 → 409；issue #20 后不再覆盖同名）。
+
+    mode 可选（默认 lock；字面量 lock/progress），sort 可选（默认 0）。
+    注意：``set`` 改行数量走 ``_sheet_set``（按 row_id），不再复用本回调。
+    """
     player_name = _require_player(src)
     if not player_name:
         return
@@ -659,8 +668,48 @@ def _sheet_upsert(src, ctx):
 
         def _show(data):
             mode_label = "progress" if mode else "lock"
-            server.tell(player_name, SHEET_OK_ROW_SET.format(
+            server.tell(player_name, SHEET_OK_ROW_ADDED.format(
                 item=data.get("item_name", item),
+                need=data.get("need_qty", need),
+                mode=mode_label,
+            ))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_set(src, ctx):
+    """set：按 row_id 更新已有行的 need/sort（id 主轴，不改 item_name；issue #20）。
+
+    mode 字面量节点不存入 ctx（MCDR 已知限制），故本命令只改 need（+ 可选 sort），
+    mode 保持不变（改 mode 请用 Web 编辑器）。行不存在 → 后端 404 → 回执。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    row_id = ctx["row_id"]
+    need = ctx["need"]
+    sort = ctx.get("sort")  # Integer 节点存入 ctx；缺省 None → 不改
+
+    @new_thread('htcmc_sheet_set')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=None, need=need, mode=None, sort=sort, row_id=row_id,
+        )
+
+        def _show(data):
+            mode_label = "progress" if data.get("mode") == 1 else "lock"
+            server.tell(player_name, SHEET_OK_ROW_UPDATED.format(
+                item=data.get("item_name", "?"),
                 need=data.get("need_qty", need),
                 mode=mode_label,
             ))
@@ -1092,14 +1141,11 @@ def _sheet_setreg(src, ctx):
         row = _find_row_or_tell(server, player_name, player_uuid, sheet_id, row_id)
         if row is None:
             return
-        item_name = row.get("item_name")
+        # 按 row_id 更新：仅传 registry_id，need/mode/sort 不传 → 后端部分更新保留原值（issue #20）
         outcome = sheet_client.upsert_row(
             CONFIG, player_uuid, sheet_id,
-            item=item_name,
-            need=int(row.get("need_qty", 0)),
-            mode=int(row.get("mode", 0)),
-            sort=int(row.get("sort_order", 0)),
-            registry_id=registry_id,
+            item=None, need=None, mode=None, sort=None,
+            registry_id=registry_id, row_id=row_id,
         )
 
         def _show(data):

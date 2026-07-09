@@ -273,7 +273,7 @@ async function onAddRow(): Promise<void> {
       ...(regId ? { registry_id: regId } : {}),
     })
     if (sheet.value) {
-      // upsert：按 item_name 已存在则更新，否则新增；简单起见重新拉取一次保证一致
+      // 新建行（issue #20：同名已存在 → 后端 409，不再覆盖）；重新拉取一次保证一致
       const refreshed = await fetchSheet(sheetId.value)
       sheet.value = refreshed
       rowDrafts.value[created.id] = {
@@ -285,7 +285,7 @@ async function onAddRow(): Promise<void> {
       }
     }
     newRow.value = { item_name: '', registry_id: '', need_qty: 0, mode: MODE_LOCK, sort_order: 0 }
-    ElMessage.success('已添加/更新')
+    ElMessage.success('已添加')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
   }
@@ -301,8 +301,10 @@ async function onSaveRow(row: RowDetail): Promise<void> {
   }
   const regId = draft.registry_id.trim()
   try {
-    // registry_id 留空则不传（后端 None=不覆盖已有值，避免误擦匹配键）
+    // 带 row_id → 后端按主键更新（可改名，不再新建重复行，issue #20）；
+    // registry_id 留空则不传（后端 None=不覆盖已有值）
     await upsertRow(sheetId.value, {
+      row_id: row.id,
       item_name: itemName,
       need_qty: draft.need_qty,
       mode: draft.mode,
@@ -504,7 +506,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
           <el-option :value="1" label="进度" />
         </el-select>
         <el-input-number v-model="newRow.sort_order" :min="0" controls-position="right" style="width: 120px;" />
-        <el-button type="primary" @click="onAddRow">添加/upsert</el-button>
+        <el-button type="primary" @click="onAddRow">添加</el-button>
       </div>
 
       <el-table :data="sheet.rows" border>
