@@ -135,7 +135,7 @@ class ViewPermissionTest(unittest.TestCase):
         }
 
     def test_non_claimant_done_row_no_reject_button(self):
-        # 非认领人非拥有者查看含 done lock 行的表：不应出现 [打回]/reject 命令
+        # 非认领人非拥有者查看含 done lock 行的表：不应出现 [退]/reject 命令
         src, told = _make_src_server(player="玩家A")
         detail = self._detail_with_done_row(
             "done", 0,
@@ -145,12 +145,12 @@ class ViewPermissionTest(unittest.TestCase):
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 7})
         msg = str(told[0])
-        self.assertNotIn("[打回]", msg)
+        self.assertNotIn("[退]", msg)
         cmds = _all_click_values(told[0])
         self.assertFalse(any("reject" in c for c in cmds), cmds)
 
     def test_claimant_done_row_sees_reject_button(self):
-        # 认领人查看自己 done lock 行：应出现 [打回]/reject（UUID 路径命中）
+        # 认领人查看自己 done lock 行：应出现 [退]/reject（UUID 路径命中）
         src, told = _make_src_server(player="玩家A")
         viewer_uuid = sheet_commands.uuid_api_remake.get_uuid("玩家A")
         detail = self._detail_with_done_row(
@@ -159,12 +159,12 @@ class ViewPermissionTest(unittest.TestCase):
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 7})
         msg = str(told[0])
-        self.assertIn("[打回]", msg)
+        self.assertIn("[退]", msg)
         cmds = _all_click_values(told[0])
         self.assertTrue(any("reject" in c for c in cmds), cmds)
 
     def test_owner_progress_row_sees_adjust_button(self):
-        # owner 查看 progress 行：应出现 [调整进度]/progress 命令（绝对值覆写，owner 专用）
+        # owner 查看 progress 行：应出现 [调]/progress 命令（绝对值覆写，owner 专用）
         src, told = _make_src_server(player="玩家A")
         detail = self._detail_with_done_row(
             "claimed", 1, claimant_uuid=None, claimant_name=None, owner_name="玩家A",
@@ -172,12 +172,12 @@ class ViewPermissionTest(unittest.TestCase):
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 7})
         msg = str(told[0])
-        self.assertIn("[调整进度]", msg)
+        self.assertIn("[调]", msg)
         cmds = _all_click_values(told[0])
         self.assertTrue(any("progress" in c for c in cmds), cmds)
 
     def test_non_owner_progress_row_no_adjust_button(self):
-        # 非 owner 查看 progress 行：无 [调整进度]（真实权限以后端 403 为准，R-9）
+        # 非 owner 查看 progress 行：无 [调]（真实权限以后端 403 为准，R-9）
         src, told = _make_src_server(player="玩家A")
         detail = self._detail_with_done_row(
             "claimed", 1, claimant_uuid=None, claimant_name=None, owner_name="别人",
@@ -185,12 +185,12 @@ class ViewPermissionTest(unittest.TestCase):
         with mock.patch.object(sheet_commands.sheet_client, "view_sheet", return_value=detail):
             sheet_commands._sheet_view(src, {"sheet_id": 7})
         msg = str(told[0])
-        self.assertNotIn("[调整进度]", msg)
+        self.assertNotIn("[调]", msg)
         cmds = _all_click_values(told[0])
         self.assertFalse(any("progress" in c for c in cmds), cmds)
 
     def test_owner_lock_row_no_adjust_button(self):
-        # owner 查看 lock 行：无 [调整进度]（progress 专用，lock 用 delivery）
+        # owner 查看 lock 行：无 [调]（progress 专用，lock 用 delivery）
         src, told = _make_src_server(player="玩家A")
         detail = self._detail_with_done_row(
             "claimed", 0, claimant_uuid=None, claimant_name=None, owner_name="玩家A",

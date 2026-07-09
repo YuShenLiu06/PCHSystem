@@ -159,6 +159,8 @@ def upsert_row(
     sort: Optional[int],
     registry_id: Optional[str] = None,
     row_id: Optional[int] = None,
+    parent_row_id: Optional[int] = None,
+    qty_per_unit: Optional[int] = None,
 ) -> SheetOutcome:
     """PUT /sheets/{sheet_id}/rows 单端点按 row_id 分流（issue #20）→ RowDetail。
 
@@ -168,6 +170,9 @@ def upsert_row(
       后端据 registry_id 走翻译表补中文 item_name。**新建严格化：同名 → 409 不再覆盖**。
 
     need/mode/sort 为 None 时不下发（更新路径部分更新；新建路径后端缺省 0/lock/0）。
+
+    子物品（issue #19）：parent_row_id 非空时建子行，registry_id + qty_per_unit(≥1) 必传；
+    need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty）。子行更新可改 qty_per_unit。
     """
     body: dict = {}
     if row_id is not None:
@@ -182,6 +187,10 @@ def upsert_row(
         body["sort_order"] = sort
     if registry_id is not None:
         body["registry_id"] = registry_id
+    if parent_row_id is not None:
+        body["parent_row_id"] = parent_row_id
+    if qty_per_unit is not None:
+        body["qty_per_unit"] = qty_per_unit
     return _request(
         cfg,
         "PUT",

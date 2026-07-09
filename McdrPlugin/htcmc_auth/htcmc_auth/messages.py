@@ -79,7 +79,10 @@ SHEET_VIEW_ARG_UNKNOWN = "§c未知参数: {token}§r\n§7用法: !!PCH sheet vi
 # mode 0=lock 1=progress；status open/claimed/done
 _MODE_LABEL = {0: "lock", 1: "progress"}
 _STATUS_COLOR = {"open": "§7", "claimed": "§e", "done": "§a"}
+# 顶层行格式：#{row_id} {item} [{mode}] {delivered}/{need} {claimant}
 SHEET_ROW_LINE = "{status_c}#{row_id} §f{item} §7[{mode}] §b{delivered}/{need} §7{claimant}"
+# 子行格式：└ #{row_id} {item} [{mode}] ×{qty_per_unit}/件 (需{need}) {claimant}
+SHEET_SUB_ROW_LINE = "  §8└ {status_c}#{row_id} §f{item} §7[{mode}] §7×{qty_per_unit}/件 §b(需{need}) §7{claimant}"
 SHEET_OK_CREATED = "§a已建表 #{id} {title}"
 SHEET_OK_RENAMED = "§a已改标题 #{id} → {title}"
 SHEET_OK_DELETED = "§a已删表 #{id}"
@@ -158,13 +161,29 @@ def format_row_line(row: dict) -> str:
 
     progress 行：认领者列改显贡献者（按贡献量降序，至多 2 位 + 省略号）；无则「未认领」。
     lock 行：显 claimant_name。
+
+    子行（parent_row_id 非空）：缩进 2 空格 + └ 前缀，显示 qty_per_unit/件 (需{need})。
     """
     mode = _MODE_LABEL.get(int(row.get("mode", 0)), str(row.get("mode")))
     status = str(row.get("status", ""))
+    parent_row_id = row.get("parent_row_id")
     if int(row.get("mode", 0)) == 1:
         claimant = _format_contributors(row.get("contributors"))
     else:
         claimant = row.get("claimant_name") or "未认领"
+
+    if parent_row_id is not None:
+        # 子行格式：└ #{row_id} {item} [{mode}] ×{qty_per_unit}/件 (需{need}) {claimant}
+        return SHEET_SUB_ROW_LINE.format(
+            status_c=_status_color(status),
+            row_id=row.get("id"),
+            item=row.get("item_name"),
+            mode=mode,
+            qty_per_unit=row.get("qty_per_unit", 1),
+            need=row.get("need_qty", 0),
+            claimant=claimant,
+        )
+    # 顶层行格式
     return SHEET_ROW_LINE.format(
         status_c=_status_color(status),
         row_id=row.get("id"),
@@ -222,19 +241,21 @@ def format_row_clickable(
     查看者身份用 UUID 为主、名字兜底（离线模式名↔UUID 1:1，见 R-5）：
       is_claimant = (claimant_uuid == player_uuid) or (claimant_name == player_name)
     lock 模式（单认领人状态机）：
-      open      → [认领]（任意）
-      claimed   → [标备齐]（仅认领人；delivery 端点 owner 不豁免）/ [解除]（认领人 or owner）
-      done      → [打回]（认领人 or owner）
+      open      → [认]（任意）
+      claimed   → [完]（仅认领人）/ [释]（认领人 or owner）
+      done      → [退]（认领人 or owner）
     progress 模式（无认领，任意玩家增量上交；无认领人 → 仅 owner 可解除/重置）：
-      open      → [交付]（任意，直接贡献）
-      claimed   → [交付][标备齐]（任意；协作）/ [解除]（owner）
-      done      → [解除]（owner 重置进度；reject 对 progress 返 409 故无打回）
-    拥有者在任意状态额外追加 [调整进度]（仅 progress 行，绝对值覆写）与 [删行]。
+      open      → [献]（任意，直接贡献）
+      claimed   → [献][完]（任意；协作）/ [释]（owner）
+      done      → [释]（owner 重置进度；reject 对 progress 返 409 故无打回）
+    拥有者在任意状态额外追加 [调]（仅 progress 行，绝对值覆写）与 [改]/[ID]/[-]。
+    子行（parent_row_id 非空）缩进，按钮同上。
     其余状态/未知 → 仅行文本（无按钮）。
     """
     rid = row.get("id")
     status = str(row.get("status", ""))
     mode = int(row.get("mode", 0))
+    parent_row_id = row.get("parent_row_id")
     # 身份锚 = UUID（行上存的 claimant_uuid 是权威锚；claimant_name 仅展示，可变）；
     # 名字兜底防 payload 偶发缺 uuid。默认 player_*="" → is_claimant=False（fails closed）。
     is_claimant = (
@@ -246,34 +267,34 @@ def format_row_clickable(
     if status == "open":
         if mode == 1:  # progress：任意玩家直接上交（无需认领）
             buttons.append(rtext_button(
-                "[交付]", f"!!PCH sheet deliver {sheet_id} {rid} ",
+                "[献]", f"!!PCH sheet deliver {sheet_id} {rid} ",
                 color=RColor.aqua,
                 hover="上报本次上交数量（增量，末尾补数量后回车）",
             ))
         else:  # lock：认领
             buttons.append(rtext_button(
-                "[认领]", f"!!PCH sheet claim {sheet_id} {rid}",
+                "[认]", f"!!PCH sheet claim {sheet_id} {rid}",
                 color=RColor.green, hover="认领此行（open→claimed）",
             ))
     elif status == "claimed":
         if mode == 1:  # progress：可继续上交 + 一次性补齐（协作，任意玩家）
             buttons.append(rtext_button(
-                "[交付]", f"!!PCH sheet deliver {sheet_id} {rid} ",
+                "[献]", f"!!PCH sheet deliver {sheet_id} {rid} ",
                 color=RColor.aqua,
                 hover="上报本次上交数量（增量，末尾补数量后回车）",
             ))
             buttons.append(rtext_button(
-                "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
+                "[完]", f"!!PCH sheet done {sheet_id} {rid}",
                 color=RColor.green, hover="一次性补齐到需求量（progress）",
             ))
         elif is_claimant:  # lock：标备齐仅认领人（delivery 端点 owner 不豁免，sheets.py:472）
             buttons.append(rtext_button(
-                "[标备齐]", f"!!PCH sheet done {sheet_id} {rid}",
+                "[完]", f"!!PCH sheet done {sheet_id} {rid}",
                 color=RColor.green, hover="标记此行备齐（lock 快捷）",
             ))
         if can_release_or_reject:  # 解除：认领人自放 或 owner（progress 无认领人 → 仅 owner）
             buttons.append(rtext_button(
-                "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
+                "[释]", f"!!PCH sheet release {sheet_id} {rid}",
                 color=RColor.yellow,
                 hover="解除认领/重置进度（→open，progress 清贡献者）",
             ))
@@ -281,17 +302,17 @@ def format_row_clickable(
         if mode == 1:  # progress：无打回，owner 用解除重置进度（清贡献者）
             if can_release_or_reject:
                 buttons.append(rtext_button(
-                    "[解除]", f"!!PCH sheet release {sheet_id} {rid}",
+                    "[释]", f"!!PCH sheet release {sheet_id} {rid}",
                     color=RColor.yellow, hover="重置进度（done→open，清贡献者名单）",
                 ))
         elif can_release_or_reject:  # lock：打回（认领人自取消 或 owner）
             buttons.append(rtext_button(
-                "[打回]", f"!!PCH sheet reject {sheet_id} {rid}",
+                "[退]", f"!!PCH sheet reject {sheet_id} {rid}",
                 color=RColor.red, hover="打回（done→claimed，delivered 归零，可重做）",
             ))
     if is_owner and mode == 1:  # progress 行 owner 专用：绝对值覆写进度（可增可减）
         buttons.append(rtext_button(
-            "[调整进度]", f"!!PCH sheet progress {sheet_id} {rid} ",
+            "[调]", f"!!PCH sheet progress {sheet_id} {rid} ",
             color=RColor.yellow,
             hover="直接修正进度（绝对值，可增可减；末尾补数量后回车）",
         ))
@@ -302,9 +323,16 @@ def format_row_clickable(
             hover="改行 registry_id（直接回车=手持物品；或空格后输入新 registry_id）",
         ))
         buttons.append(rtext_button(
-            "[删行]", f"!!PCH sheet delrow {sheet_id} {rid}",
+            "[-]", f"!!PCH sheet delrow {sheet_id} {rid}",
             color=RColor.red, hover="删除此行（拥有者）",
         ))
+        # 顶层父行（非子行）显示 [+子] 按钮
+        if parent_row_id is None:
+            buttons.append(rtext_button(
+                "[+子]", f"!!PCH sheet addsub {sheet_id} {rid} ",
+                color=RColor.green,
+                hover="添加子物品（续输：registry_id 每件数量 [lock|progress] [排序]）",
+            ))
 
     line_text = format_row_line(row)
     if not buttons:

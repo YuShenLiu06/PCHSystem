@@ -196,6 +196,15 @@ def _sheet_root(src, ctx):
         _line("delete", "删表", "!!PCH sheet delete ", "delete <表id>"),
         _line("delrow", "删行", "!!PCH sheet delrow ", "delrow <表id> <行号>"),
         _line(
+            "addsub", "建子行（拥有者）", "!!PCH sheet addsub ",
+            "addsub <表id> <父行号> <registry_id> <每件数量> [lock|progress] [排序]",
+        ),
+        _line("delsub", "删子行", "!!PCH sheet delsub ", "delsub <表id> <子行号>"),
+        _line(
+            "setsub", "改子行", "!!PCH sheet setsub ",
+            "setsub <表id> <子行号> <每件数量> [lock|progress] [排序]",
+        ),
+        _line(
             "advance", "阶段流转（拥有者）", "!!PCH sheet advance ",
             "advance <表id> [constructing|archived]  收集→施工→归档",
         ),
@@ -780,6 +789,123 @@ def _sheet_delrow(src, ctx):
 
         def _show(_data):
             server.tell(player_name, SHEET_OK_ROW_DELETED.format(row_id=row_id))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_addsub(src, ctx):
+    """子物品：在父行下建子行（issue #19）。
+
+    参数：sheet_id, parent_row_id, registry_id, qty_per_unit(≥1), [mode], [sort]。
+    父 lock → 子强制 lock；父 progress → 子可 lock/progress（默认继承）。
+    need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty）。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    parent_row_id = ctx["parent_row_id"]
+    registry_id = ctx["registry_id"]
+    qty_per_unit = ctx["qty_per_unit"]
+    # mode 可选：字面量 lock/progress，默认继承父行（后端处理）
+    mode = 1 if ctx.get("mode") == "progress" else 0
+    sort = ctx.get("sort", 0)
+
+    @new_thread('htcmc_sheet_addsub')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=None, need=None, mode=mode, sort=sort,
+            registry_id=registry_id, parent_row_id=parent_row_id, qty_per_unit=qty_per_unit,
+        )
+
+        def _show(data):
+            mode_label = "progress" if mode else "lock"
+            server.tell(player_name, "§a已建子行 [{reg}] ×{qty}/件（{mode}）".format(
+                reg=data.get("registry_id", registry_id),
+                qty=data.get("qty_per_unit", qty_per_unit),
+                mode=mode_label,
+            ))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_delsub(src, ctx):
+    """删子行：复用 DELETE /rows/{row_id}（与 delrow 同端点，子行 row_id）。
+
+    约束：只能删子行（parent_row_id 非空）；删父行由 delrow 处理。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    row_id = ctx["row_id"]
+
+    @new_thread('htcmc_sheet_delsub')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.delete_row(CONFIG, player_uuid, sheet_id, row_id)
+
+        def _show(_data):
+            server.tell(player_name, "§a已删子行 #{row_id}".format(row_id=row_id))
+
+        _resolve(server, player_name, outcome, on_success=_show)
+
+    _do()
+
+
+def _sheet_setsub(src, ctx):
+    """改子行：按 row_id 更新 qty_per_unit（mode/sort 可选）。
+
+    子行更新可改 qty_per_unit/mode/sort；need_qty 被忽略（后端重算派生）。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    row_id = ctx["row_id"]
+    qty_per_unit = ctx["qty_per_unit"]
+    # mode 可选：字面量 lock/progress
+    mode = 1 if ctx.get("mode") == "progress" else 0
+    sort = ctx.get("sort")  # Integer 节点存入 ctx；缺省 None → 不改
+
+    @new_thread('htcmc_sheet_setsub')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        outcome = sheet_client.upsert_row(
+            CONFIG, player_uuid, sheet_id,
+            item=None, need=None, mode=mode, sort=sort,
+            row_id=row_id, qty_per_unit=qty_per_unit,
+        )
+
+        def _show(data):
+            mode_label = "progress" if data.get("mode") == 1 else "lock"
+            server.tell(player_name, "§a已更新子行 #{row_id} [{reg}] ×{qty}/件（{mode}）".format(
+                row_id=row_id,
+                reg=data.get("registry_id", "?"),
+                qty=data.get("qty_per_unit", qty_per_unit),
+                mode=mode_label,
+            ))
 
         _resolve(server, player_name, outcome, on_success=_show)
 

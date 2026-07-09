@@ -23,6 +23,9 @@ from .sheet_commands import (
     _sheet_upsert,
     _sheet_set,
     _sheet_delrow,
+    _sheet_addsub,
+    _sheet_delsub,
+    _sheet_setsub,
     _sheet_claim,
     _sheet_deliver,
     _sheet_done,
@@ -188,6 +191,54 @@ def _register_commands(server: PluginServerInterface):
             .then(
                 Literal("delrow")
                 .then(Integer("sheet_id").then(Integer("row_id").runs(_sheet_delrow)))
+            )
+            # 子物品（issue #19）：addsub 建子行 / delsub 删子行 / setsub 改子行
+            .then(
+                Literal("addsub")
+                .then(
+                    Integer("sheet_id")
+                    .then(
+                        Integer("parent_row_id")
+                        .then(
+                            Text("registry_id")
+                            .then(
+                                Integer("qty_per_unit").runs(_sheet_addsub)
+                                .then(
+                                    Literal("lock").runs(_sheet_addsub)
+                                    .then(Integer("sort").runs(_sheet_addsub))
+                                )
+                                .then(
+                                    Literal("progress").runs(_sheet_addsub)
+                                    .then(Integer("sort").runs(_sheet_addsub))
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            .then(
+                Literal("delsub")
+                .then(Integer("sheet_id").then(Integer("row_id").runs(_sheet_delsub)))
+            )
+            .then(
+                Literal("setsub")
+                .then(
+                    Integer("sheet_id")
+                    .then(
+                        Integer("row_id")
+                        .then(
+                            Integer("qty_per_unit").runs(_sheet_setsub)
+                            .then(
+                                Literal("lock").runs(_sheet_setsub)
+                                .then(Integer("sort").runs(_sheet_setsub))
+                            )
+                            .then(
+                                Literal("progress").runs(_sheet_setsub)
+                                .then(Integer("sort").runs(_sheet_setsub))
+                            )
+                        )
+                    )
+                )
             )
             # 一键提交：扫背包匹配行批量上报（纯申报，不清背包）
             .then(

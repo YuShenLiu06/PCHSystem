@@ -276,3 +276,43 @@ class TestMatchRows:
         a8 = _by_row(match_rows(rows, {"minecraft:stone": 99}, player_uuid="uuid-A"), 8)
         assert a8.action == "skip"
         assert "无需求" in a8.reason
+
+
+class TestMatchRowsSubItems:
+    """子物品匹配测试（issue #19）。
+
+    子行（parent_row_id 非空）是普通行，按 registry_id 匹配，参与 submit。
+    parent_row_id 不影响匹配逻辑（scanner.py 不改）。
+    """
+
+    def test_sub_row_lock_mode_自己认领_够数_deliver(self):
+        """子行 lock 模式：自己认领 + have>=need → deliver。"""
+        rows = [
+            {"id": 10, "item_name": "铁棒父", "registry_id": "minecraft:iron_ingot", "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "open"},
+            {"id": 11, "item_name": "铁棒子", "registry_id": "minecraft:iron_ingot", "parent_row_id": 10, "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"},
+        ]
+        actions = match_rows(rows, {"minecraft:iron_ingot": 64}, player_uuid="uuid-A")
+        a11 = _by_row(actions, 11)
+        assert a11.action == "deliver"
+        assert a11.qty == 64
+
+    def test_sub_row_progress_mode_未满_contribute(self):
+        """子行 progress 模式：未满 → contribute。"""
+        rows = [
+            {"id": 20, "item_name": "圆石父", "registry_id": "minecraft:cobblestone", "need_qty": 100, "delivered_qty": 0, "mode": 1, "status": "open"},
+            {"id": 21, "item_name": "圆石子", "registry_id": "minecraft:cobblestone", "parent_row_id": 20, "need_qty": 100, "delivered_qty": 40, "mode": 1, "status": "claimed"},
+        ]
+        actions = match_rows(rows, {"minecraft:cobblestone": 64})
+        a21 = _by_row(actions, 21)
+        assert a21.action == "contribute"
+        assert a21.qty == 60  # min(64, 100-40)=60
+
+    def test_sub_row_parent_row_id_不影响匹配(self):
+        """parent_row_id 字段存在但不影响匹配逻辑。"""
+        rows = [
+            {"id": 30, "item_name": "木板父", "registry_id": "minecraft:oak_planks", "need_qty": 64, "delivered_qty": 0, "mode": 1, "status": "open"},
+            {"id": 31, "item_name": "木板子", "registry_id": "minecraft:oak_planks", "parent_row_id": 30, "need_qty": 32, "delivered_qty": 0, "mode": 1, "status": "open"},
+        ]
+        # 父行和子行都按 registry_id 匹配
+        actions = match_rows(rows, {"minecraft:oak_planks": 96})
+        assert sorted(a.row_id for a in actions) == [30, 31]
