@@ -1378,3 +1378,290 @@ async def test_list_sheets_involved_first_ordering(client):
     # 参与的表内部按 id 升序
     involved_ids = [sid for sid in sheet_ids if sid in involved]
     assert involved_ids == sorted(involved_ids)
+
+
+# ---------- 子物品嵌套行（0012）API层 ----------
+@pytest.mark.asyncio
+async def test_upsert_row_creates_sub_item_successfully(client):
+    """子物品 upsert：带 parent_row_id + registry_id + qty_per_unit 建子行成功。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 先建父行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200
+    parent_rid = resp.json()["id"]
+    # 建子行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["parent_row_id"] == parent_rid
+    assert data["registry_id"] == "minecraft:stone"
+    assert data["qty_per_unit"] == 2
+    assert data["need_qty"] == 20  # 2 × 父 10
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_sub_item_requires_registry_id(client):
+    """子物品 upsert：parent_row_id 非空但缺 registry_id → 422。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 子行缺 registry_id
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"parent_row_id": parent_rid, "qty_per_unit": 2},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422
+    # Pydantic 验证错误 detail 是列表
+    detail = resp.json()["detail"]
+    if isinstance(detail, list):
+        error_msgs = " ".join(str(e.get("msg", "")) for e in detail)
+    else:
+        error_msgs = str(detail)
+    assert "registry_id" in error_msgs.lower()
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_sub_item_qty_per_unit_must_be_positive(client):
+    """子物品 upsert：parent_row_id 非空但 qty_per_unit < 1 → 422。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 子行 qty_per_unit = 0
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 0,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_sub_item_can_be_claimed_lock_mode(client):
+    """子物品：子行可复用既有端点 claim（lock 模式）。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建父行（lock）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 建子行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    child_rid = resp.json()["id"]
+    # 其他玩家认领子行
+    other, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{child_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "claimed"
+    assert data["claimant_uuid"] == str(other)
+
+
+@pytest.mark.asyncio
+async def test_sub_item_can_be_contributed_progress_mode(client):
+    """子物品：子行可复用既有端点 contribute（progress 模式）。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建父行（progress）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 1, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 建子行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    child_rid = resp.json()["id"]
+    # 其他玩家贡献
+    other, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{child_rid}/contribute",
+        json={"qty": 5},
+        headers=_auth(other_bearer),
+    )
+    print(f"DEBUG: status={resp.status_code}, body={resp.text[:200]}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["delivered_qty"] == 5
+
+
+@pytest.mark.asyncio
+async def test_sub_item_duplicate_registry_conflict(client):
+    """子物品：同父同 registry_id → 409（UNIQUE 约束）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建父行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 建第一个子行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200
+    # 建第二个子行（同 registry_id）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",  # 同 registry_id
+            "qty_per_unit": 1,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_sub_item_on_archived_sheet_409(client):
+    """子物品：archived 表建子行 → 409。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建父行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 归档表
+    resp = await client.post(
+        f"/sheets/{sid}/advance",
+        params={"to": "archived"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200
+    # 尝试建子行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_sub_item_by_non_owner_403(client):
+    """子物品：非 owner 建子行 → 403。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建父行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 其他玩家尝试建子行
+    other, other_bearer = await _make_player()
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_csv_export_includes_sub_item_columns(client):
+    """子物品：CSV 导出含 parent_row_id/qty_per_unit 两列。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建父行
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 建子行
+    await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    # CSV 导出
+    resp = await client.get(f"/sheets/{sid}?format=csv", headers=_auth(bearer))
+    assert resp.status_code == 200
+    lines = resp.text.strip().splitlines()
+    # 表头验证
+    assert lines[0] == (
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order,parent_row_id,qty_per_unit"
+    )
+    # 父行验证（parent_row_id 空）
+    assert f"{sid},父,,10,0,open,,0,0,," in lines[1]
+    # 子行验证（有 parent_row_id 和 qty_per_unit）
+    child_line = next(line for line in lines[1:] if f",{parent_rid}," in line)
+    assert f",minecraft:stone," in child_line
+    assert child_line.endswith(",2")  # qty_per_unit=2

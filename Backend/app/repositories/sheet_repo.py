@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import case, delete, func, or_, select, union_all
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -333,13 +334,13 @@ async def create_row(
         # 父行锁校验单层
         parent = await session.get(SheetRow, parent_row_id)
         if parent is None or parent.sheet_id != sheet_id:
-            raise IntegrityError("parent_row_id not found or cross-sheet")
+            raise ValueError("parent_row_id not found or cross-sheet")
         if parent.parent_row_id is not None:
-            raise IntegrityError("子行只能嵌套一层（parent.parent_row_id IS NULL）")
+            raise ValueError("子行只能嵌套一层（parent.parent_row_id IS NULL）")
         if registry_id is None:
-            raise IntegrityError("子行必传 registry_id")
+            raise ValueError("子行必传 registry_id")
         if qty_per_unit is None or qty_per_unit < 1:
-            raise IntegrityError("子行 qty_per_unit 必须≥1")
+            raise ValueError("子行 qty_per_unit 必须≥1")
         # 模式继承：父 lock 强制子 lock
         if parent.mode == MODE_LOCK:
             mode = MODE_LOCK

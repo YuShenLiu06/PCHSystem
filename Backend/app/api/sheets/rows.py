@@ -107,12 +107,17 @@ async def _create_row_by_item(
         item_name = _resolve_item_name(body.item_name, body.registry_id)
     else:
         item_name = _resolve_item_name(body.item_name, body.registry_id)
+    # 子物品模式继承：mode=None 传 None 让 repo 处理继承；顶层默认 MODE_LOCK
+    if body.parent_row_id is not None and body.mode is None:
+        mode = None  # 子物品：repo 层继承父 mode
+    else:
+        mode = body.mode if body.mode is not None else sheet_repo.MODE_LOCK
     row = await sheet_repo.create_row(
         session,
         sheet_id=sheet.id,
         item_name=item_name,
         need_qty=body.need_qty if body.need_qty is not None else 0,
-        mode=body.mode if body.mode is not None else sheet_repo.MODE_LOCK,
+        mode=mode,
         sort_order=body.sort_order if body.sort_order is not None else 0,
         registry_id=body.registry_id,
         parent_row_id=body.parent_row_id,

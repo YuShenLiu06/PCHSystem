@@ -11,6 +11,7 @@ import uuid
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.db import async_session_factory
 from app.models.sheet import Sheet, SheetRow
@@ -1424,3 +1425,212 @@ async def test_list_sheets_involved_first_ordering():
         sheets_no_uuid = await sheet_repo.list_sheets(s)
     sheet_ids_no_uuid = [sh.id for sh, _ in sheets_no_uuid]
     assert sheet_ids_no_uuid == sorted(sheet_ids_no_uuid)  # 全按 id 升序
+
+
+# ---------- 子物品嵌套行（0012） ----------
+async def _make_sheet_with_row(need_qty: int = 10, mode: int = 0) -> tuple[int, int]:
+    """seed 一张表 + 一行（open），返回 (sheet_id, row_id)。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.create_row(s, sheet.id, "x", need_qty=need_qty, mode=mode, sort_order=0)
+        await s.commit()
+        return sheet.id, row.id
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_requires_parent():
+    """子物品：parent_row_id 必须指向存在的顶层行（单层校验）。"""
+    sid, parent_rid = await _make_sheet_with_row()
+    async with async_session_factory() as s:
+        # 子行挂在顶层父行上 → 成功
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        assert child.parent_row_id == parent_rid
+        assert child.qty_per_unit == 2
+        assert child.need_qty == 20  # 2 × 10（父 need）
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_parent_must_be_top_level():
+    """子物品：父行必须是顶层（parent.parent_row_id IS NULL），否则 IntegrityError。"""
+    sid, parent_rid = await _make_sheet_with_row()
+    async with async_session_factory() as s:
+        # 先建一个子行
+        child1 = await sheet_repo.create_row(
+            s, sid, "child1", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=1
+        )
+        await s.commit()
+    # 尝试挂在子行上（单层违反）
+    async with async_session_factory() as s:
+        with pytest.raises(ValueError):
+            await sheet_repo.create_row(
+                s, sid, "grandchild", need_qty=0, mode=0, sort_order=0,
+                registry_id="minecraft:dirt", parent_row_id=child1.id, qty_per_unit=1
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_requires_registry_id():
+    """子物品：registry_id 必填（否则 IntegrityError）。"""
+    sid, parent_rid = await _make_sheet_with_row()
+    async with async_session_factory() as s:
+        with pytest.raises(ValueError):
+            await sheet_repo.create_row(
+                s, sid, "child", need_qty=0, mode=0, sort_order=0,
+                registry_id=None, parent_row_id=parent_rid, qty_per_unit=1
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_qty_per_unit_must_be_positive():
+    """子物品：qty_per_unit 必须 ≥ 1（否则 IntegrityError）。"""
+    sid, parent_rid = await _make_sheet_with_row()
+    async with async_session_factory() as s:
+        with pytest.raises(ValueError):
+            await sheet_repo.create_row(
+                s, sid, "child", need_qty=0, mode=0, sort_order=0,
+                registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=0
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_inherits_mode_from_lock_parent():
+    """子物品：父 lock（mode=0）→ 强制子 lock。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=0)  # lock
+    async with async_session_factory() as s:
+        # 尝试验 mode=1（progress），但被强制为 lock
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=1, sort_order=0,  # 传 mode=1，预期被覆盖
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        assert child.mode == 0  # 被强制为 lock
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_inherits_mode_from_progress_parent():
+    """子物品：父 progress（mode=1）→ 缺省继承父 mode（可显式指定）。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=1)  # progress
+    async with async_session_factory() as s:
+        # 不传 mode，缺省继承父 progress
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=None, sort_order=0,  # mode=None → 继承父
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        assert child.mode == 1  # 继承 progress
+
+
+@pytest.mark.asyncio
+async def test_update_row_parent_need_change_cascades_to_children():
+    """级联：父行 need 变 → 子行 need 重算（= qty_per_unit × 新父 need）。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=0)
+    child_rid = None
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        child_rid = child.id
+        await s.commit()
+        assert child.need_qty == 20  # 2 × 10
+    # 修改父行 need
+    async with async_session_factory() as s:
+        updated_parent = await sheet_repo.update_row(s, sid, parent_rid, need_qty=5)
+        await s.commit()
+        assert updated_parent.need_qty == 5
+    # 验证子行 need 被重算
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        child_row = next((r for r, _ in rows if r.id == child_rid), None)
+        assert child_row is not None
+        assert child_row.need_qty == 10  # 2 × 5（新父 need）
+
+
+@pytest.mark.asyncio
+async def test_update_row_parent_mode_to_lock_forces_children_lock():
+    """级联：父行 mode 切 lock → 非 lock 子行强制 lock + 重置协作（贡献者清空）。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=1)  # progress
+    contributor = await _seed_player("bob")
+    child_rid = None
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=1, sort_order=0,  # 子行 progress
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        child_rid = child.id
+        # 子行贡献（progress 模式用 contribute）
+        await sheet_repo.contribute_row(s, sid, child_rid, contributor, 5)
+        await s.commit()
+        assert child.delivered_qty == 5
+    # 父行切 lock
+    async with async_session_factory() as s:
+        updated_parent = await sheet_repo.update_row(s, sid, parent_rid, mode=0)
+        await s.commit()
+        assert updated_parent.mode == 0
+    # 验证子行被强制 lock + 重置
+    async with async_session_factory() as s:
+        child_result = await sheet_repo.get_row(s, sid, child_rid)
+        assert child_result is not None
+        child_row, _ = child_result
+        assert child_row.mode == 0  # 强制 lock
+        assert child_row.delivered_qty == 0  # 交付被清
+    # 验证贡献者被清空
+    async with async_session_factory() as s:
+        contrib_map = await sheet_repo.list_contributors(s, [child_rid])
+        # 没有贡献者时，字典中不包含该键
+        assert child_rid not in contrib_map or contrib_map.get(child_rid) == []
+
+
+@pytest.mark.asyncio
+async def test_update_row_child_qty_per_unit_change_recomputes_need():
+    """子物品：子行 qty_per_unit 变 → need 重算（= qty_per_unit × 父 need）。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=0)
+    child_rid = None
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        child_rid = child.id
+        await s.commit()
+        assert child.need_qty == 20  # 2 × 10
+    # 修改子行 qty_per_unit
+    async with async_session_factory() as s:
+        updated_child = await sheet_repo.update_row(s, sid, child_rid, qty_per_unit=3)
+        await s.commit()
+        assert updated_child.qty_per_unit == 3
+        assert updated_child.need_qty == 30  # 3 × 10
+
+
+@pytest.mark.asyncio
+async def test_list_rows_groups_children_after_parent():
+    """list_rows 分组排序：父行优先，子行紧跟父行，同组内按 sort_order。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        # 父行 sort_order=1
+        parent = await sheet_repo.create_row(s, sid, "父", need_qty=10, mode=0, sort_order=1)
+        await s.commit()
+        parent_rid = parent.id
+    # 建两个子行（sort_order 不同）
+    async with async_session_factory() as s:
+        child1 = await sheet_repo.create_row(
+            s, sid, "子1", need_qty=0, mode=0, sort_order=2,  # sort_order=2
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=1
+        )
+        child2 = await sheet_repo.create_row(
+            s, sid, "子2", need_qty=0, mode=0, sort_order=1,  # sort_order=1
+            registry_id="minecraft:dirt", parent_row_id=parent_rid, qty_per_unit=1
+        )
+        await s.commit()
+    # 验证排序：父、子2(sort=1)、子1(sort=2)
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        item_names = [r.item_name for r, _ in rows]
+        assert item_names == ["父", "子2", "子1"]
