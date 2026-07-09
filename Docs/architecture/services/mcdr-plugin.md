@@ -190,6 +190,16 @@ def _do_claim(server, player, sheet_id, row_id):
 
 > **匹配键**：一键提交只按 `registry_id` 精确匹配，不看 `item_name`（自由文本不可靠）。**block id ≠ item id**（如 `minecraft:wall_torch` vs `minecraft:torch`），v1 不做归一化，多数建材不受影响（见 §6）。
 
+### 3.10 数量显示换算（三端统一）
+
+游戏内 sheet 各显示点的物品数量复用项目**三端统一换算规约 `format_qty`**，从「原始整数」改为「个/组/盒」友好单位：
+
+- **阈值**：`>=1728` → `X盒`（潜影盒 27×64）、`>=64` → `X组`、否则 → `X个`；`round(x,2):g` 去尾零（如 `64.5`、`2`）。
+- **三端对齐**：权威源 = 后端 `Backend/app/core/qty.py`；前端 `Frontend/src/utils/qty.ts` 已对齐；MCDR 端新增 `htcmc_auth/qty.py` 作为**第三端**（`STACK`/`SHULKER`/`format_qty` 逐字照抄后端，三端字节级一致），另加 `format_qty_safe` 守护显示点传入 `"?"`/缺失字段时回退原值。
+- **覆盖显示点（11 处）**：`format_row_line`（sheet view 全行）+ 8 处命令回执 `_show`（add/set/deliver/progress/done/addhand/submit）+ `format_notification` 3 个通知模板。
+- **不换算**：HTTP 写调用（`upsert_row`/`deliver_row` 等上报数量）保持原始数字，后端契约不变；`scanner.py` 一键提交的「数量不足（X/Y）」诊断亦保持原样——scanner 是纯模块，测试用 `importlib` 按文件路径加载绕过包 init，加相对导入会 ImportError，且诊断场景原始数字对玩家更有用。
+- **纯显示层**：不入库、不进 API（红线 R-1/R-7 不变）。
+
 ## 4. 依赖的其他服务（HTTP API）
 
 | 调用 | 接口 | 时机 |
