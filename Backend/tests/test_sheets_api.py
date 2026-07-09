@@ -219,19 +219,27 @@ async def test_delete_sheet_non_owner_forbidden(client):
 
 # ---------- PUT /sheets/{id}/rows ----------
 @pytest.mark.asyncio
-async def test_upsert_row_create_then_update(client):
+async def test_upsert_row_create_duplicate_name_409_then_update_by_id(client):
+    """新建路径严格化（issue #20）：同名重复 PUT（无 row_id）→ 409 不再覆盖；
+    改字段须带 row_id 走更新路径。"""
     _, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
 
     first = await _upsert_row(client, bearer, sid, "iron", 64, 0)
     assert first["item_name"] == "iron"
-    assert first["need_qty"] == 64
-    assert first["mode"] == 0
 
-    # 同名再次 PUT → 更新而非 409
-    update_resp = await client.put(
+    # 同名再次 PUT（无 row_id）→ 409（不再静默覆盖）
+    dup_resp = await client.put(
         f"/sheets/{sid}/rows",
         json={"item_name": "iron", "need_qty": 192, "mode": 1, "sort_order": 5},
+        headers=_auth(bearer),
+    )
+    assert dup_resp.status_code == 409
+
+    # 改 need/mode 须带 row_id 走更新路径 → 200
+    update_resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": first["id"], "need_qty": 192, "mode": 1, "sort_order": 5},
         headers=_auth(bearer),
     )
     assert update_resp.status_code == 200
@@ -240,7 +248,7 @@ async def test_upsert_row_create_then_update(client):
     assert second["need_qty"] == 192
     assert second["mode"] == 1
 
-    # 仍是单行
+    # 仍是单行（未新建第二行）
     detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
     assert len(detail["rows"]) == 1
 
@@ -267,6 +275,129 @@ async def test_upsert_row_to_missing_sheet_404(client):
         headers=_auth(bearer),
     )
     assert resp.status_code == 404
+
+
+# ---------- PUT /sheets/{id}/rows 带 row_id（按主键更新；issue #20 改名重复修复）----------
+@pytest.mark.asyncio
+async def test_upsert_row_with_row_id_rename_no_duplicate(client):
+    """带 row_id 改名：行 id 不变、名变、不新增行（issue #20 核心，API 级复现）。"""
+    # Arrange：建一行「石英柱」
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    first = await _upsert_row(client, bearer, sid, "石英柱", 64, 0)
+    # Act：带 row_id 改名（item_name 换新值）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "row_id": first["id"],
+            "item_name": "石英柱1",
+            "need_qty": 64,
+            "mode": 0,
+            "sort_order": 0,
+        },
+        headers=_auth(bearer),
+    )
+    # Assert：id 不变、名变、仍单行（旧 bug 在此变 2 行）
+    assert resp.status_code == 200, resp.text
+    second = resp.json()
+    assert second["id"] == first["id"]
+    assert second["item_name"] == "石英柱1"
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
+    assert len(detail["rows"]) == 1
+    assert detail["rows"][0]["item_name"] == "石英柱1"
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_with_row_id_partial_need_keeps_name(client):
+    """带 row_id 只改 need（sparse body）：need 变，item_name 不变。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    first = await _upsert_row(client, bearer, sid, "铁锭", 64, 0)
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": first["id"], "need_qty": 200},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["need_qty"] == 200
+    assert body["item_name"] == "铁锭"  # 名不变
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_with_row_id_missing_404(client):
+    """row_id 不存在 → 404。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": 999999, "item_name": "x"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_with_row_id_non_owner_forbidden(client):
+    """非 owner 带 row_id 改行 → 403。"""
+    _, bearer_a = await _make_player("alice")
+    _, bearer_b = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer_a))).json()["id"]
+    rid = (await _upsert_row(client, bearer_a, sid, "iron", 1, 0))["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": rid, "item_name": "x"},
+        headers=_auth(bearer_b),
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_with_row_id_rename_collision_409(client):
+    """带 row_id 改名撞同表已存在名 → 409（UNIQUE(sheet_id,item_name) 防重名）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid_a = (await _upsert_row(client, bearer, sid, "A", 1, 0))["id"]
+    await _upsert_row(client, bearer, sid, "B", 1, 0)  # 同表已有 B
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": rid_a, "item_name": "B"},  # A 改名撞 B
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_with_row_id_on_archived_409(client, tmp_path, monkeypatch):
+    """archived 终态只读：带 row_id PUT → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 1, 0))["id"]
+    adv = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    assert adv.status_code == 200
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": rid, "item_name": "改名"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_upsert_row_without_row_id_still_creates(client):
+    """不带 row_id（回归）：走原 by-item_name 新建语义，不破。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "iron", "need_qty": 1, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["item_name"] == "iron"
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
+    assert len(detail["rows"]) == 1
 
 
 # ---------- DELETE /sheets/{id}/rows/{row_id} ----------
@@ -1109,7 +1240,7 @@ async def test_upsert_row_requires_name_or_registry(client):
 
 @pytest.mark.asyncio
 async def test_upsert_row_registry_id_not_overwritten_when_omitted(client):
-    """已存在行的 registry_id：后续 upsert 不传 registry_id → 保留原值（None 不覆盖）。"""
+    """已存在行的 registry_id：按 row_id 更新不传 registry_id → 保留原值（None 不覆盖）。"""
     _, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
     first = (
@@ -1126,11 +1257,11 @@ async def test_upsert_row_registry_id_not_overwritten_when_omitted(client):
         )
     ).json()
     assert first["registry_id"] == "minecraft:stone"
-    # 再次：同名不传 registry_id（只改 need）→ registry_id 保留
+    # 按 row_id 更新：不传 registry_id（只改 need）→ registry_id 保留
     second = (
         await client.put(
             f"/sheets/{sid}/rows",
-            json={"item_name": "石头", "need_qty": 128, "mode": 0, "sort_order": 0},
+            json={"row_id": first["id"], "need_qty": 128},
             headers=_auth(bearer),
         )
     ).json()

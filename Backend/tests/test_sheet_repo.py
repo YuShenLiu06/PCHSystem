@@ -727,6 +727,209 @@ async def test_upsert_row_overwrites_registry_id_when_provided():
         assert row.registry_id == "minecraft:cobblestone"
 
 
+# ---------- update_row（按主键部分更新；issue #20 改名重复修复）----------
+# "修改行"以 row_id（主键）为定位主轴，而非可变的 item_name。
+# 旧 upsert by item_name 路径下改名会用新名查不到旧行 → 新建 → 重复；
+# update_row 按主键定位绕开 item_name 匹配，逐字段部分更新（None=不改动）。
+
+
+@pytest.mark.asyncio
+async def test_update_row_rename_keeps_id_and_single_row():
+    """改名（只传 item_name）：id 不变、名变、其余字段保持原值、不新增行（issue #20 核心）。
+
+    Arrange / Act / Assert：直接证伪旧 bug —— 改名后仍单行、id 不变。
+    """
+    # Arrange：建一行「石英柱」need=64 mode=lock sort=2 registry_id 已设
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(
+            s,
+            sheet.id,
+            "石英柱",
+            64,
+            sheet_repo.MODE_LOCK,
+            2,
+            registry_id="minecraft:quartz_block",
+        )
+        await s.commit()
+        sid, old_id = sheet.id, row.id
+
+    # Act：按 id 改名（只传 item_name，其余不传）
+    async with async_session_factory() as s:
+        updated = await sheet_repo.update_row(s, sid, old_id, item_name="石英柱1")
+        await s.commit()
+
+    # Assert：id 不变、名变、其余字段保持原值
+    assert updated is not None
+    assert updated.id == old_id
+    assert updated.item_name == "石英柱1"
+    assert updated.need_qty == 64
+    assert updated.mode == sheet_repo.MODE_LOCK
+    assert updated.sort_order == 2
+    assert updated.registry_id == "minecraft:quartz_block"
+    # 仍只有一行（未新建第二行）—— 旧 bug 在此会变 2 行
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+    assert len(rows) == 1
+    assert rows[0][0].item_name == "石英柱1"
+
+
+@pytest.mark.asyncio
+async def test_update_row_partial_need_only_isolates_other_fields():
+    """只传 need_qty：need 变，item_name/mode/sort_order 不动。"""
+    # Arrange
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(s, sheet.id, "铁锭", 64, sheet_repo.MODE_LOCK, 3)
+        await s.commit()
+        sid, rid = sheet.id, row.id
+    # Act：只改 need
+    async with async_session_factory() as s:
+        updated = await sheet_repo.update_row(s, sid, rid, need_qty=200)
+        await s.commit()
+    # Assert：仅 need 变
+    assert updated.need_qty == 200
+    assert updated.item_name == "铁锭"
+    assert updated.mode == sheet_repo.MODE_LOCK
+    assert updated.sort_order == 3
+
+
+@pytest.mark.asyncio
+async def test_update_row_rename_preserves_claim_state_without_mode():
+    """认领中的 lock 行改名（不传 mode）：status/claimant/delivered 全保留（mode 未变不重置）。"""
+    # Arrange：建 + 认领 + 部分交付（claimed，delivered=4）
+    sid, rid = await _make_row(need_qty=10, mode=sheet_repo.MODE_LOCK)
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, rid, claimant)
+        await sheet_repo.set_row_delivery(s, sid, rid, 4)
+        await s.commit()
+    # Act：改名（不传 mode）
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, rid, item_name="改名后")
+        await s.commit()
+    # Assert：协作状态全保留
+    assert row.item_name == "改名后"
+    assert row.status == "claimed"
+    assert row.claimant_uuid == claimant
+    assert row.delivered_qty == 4
+
+
+@pytest.mark.asyncio
+async def test_update_row_mode_change_resets_collaboration():
+    """progress 行有贡献者：update_row 显式传 mode=lock → 重置协作（open/delivered 0/清贡献者）。"""
+    # Arrange：progress 行 + alice 上交 5（claimed + contributors=[alice]）
+    sid, rid = await _make_progress_row(need_qty=10)
+    alice = await _seed_player("alice")
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, rid, alice, 5)
+        await s.commit()
+    # Act：mode progress→lock
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, rid, mode=sheet_repo.MODE_LOCK)
+        await s.commit()
+    # Assert：重置
+    assert row.mode == sheet_repo.MODE_LOCK
+    assert row.status == "open"
+    assert row.delivered_qty == 0
+    assert row.claimant_uuid is None
+    async with async_session_factory() as s:
+        contribs = await sheet_repo.list_contributors(s, [rid])
+    assert contribs.get(rid, []) == []
+
+
+@pytest.mark.asyncio
+async def test_update_row_need_change_caps_and_recomputes_status():
+    """已交付 done 的 lock 行：update_row 下调 need（不传 mode）→ delivered 封顶 + status 重算。"""
+    # Arrange：claim + 交付满（done，need=10 delivered=10）
+    sid, rid = await _make_row(need_qty=10, mode=sheet_repo.MODE_LOCK)
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, rid, claimant)
+        await sheet_repo.set_row_delivery(s, sid, rid, 10)
+        await s.commit()
+    # Act：need 10→5 → delivered 封顶 5，status 仍 done
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, rid, need_qty=5)
+        await s.commit()
+    assert row.need_qty == 5
+    assert row.delivered_qty == 5
+    assert row.status == "done"
+    # Act：need 5→20 → delivered 5 < 20，done→claimed
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, rid, need_qty=20)
+        await s.commit()
+    assert row.status == "claimed"
+    assert row.delivered_qty == 5
+
+
+@pytest.mark.asyncio
+async def test_update_row_registry_id_overwrites_and_preserves():
+    """update_row 传 registry_id → 覆盖；不传（只改其它字段）→ 保留（None 不擦）。"""
+    # Arrange
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(
+            s,
+            sheet.id,
+            "石头",
+            64,
+            sheet_repo.MODE_LOCK,
+            0,
+            registry_id="minecraft:stone",
+        )
+        await s.commit()
+        sid, rid = sheet.id, row.id
+    # Act：传 registry_id 覆盖
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(
+            s, sid, rid, registry_id="minecraft:cobblestone"
+        )
+        await s.commit()
+    assert row.registry_id == "minecraft:cobblestone"
+    # Act：只改名（不传 registry_id）→ registry_id 保留
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, rid, item_name="圆石")
+        await s.commit()
+    assert row.item_name == "圆石"
+    assert row.registry_id == "minecraft:cobblestone"
+
+
+@pytest.mark.asyncio
+async def test_update_row_missing_returns_none():
+    """row_id 不存在 → None（api 层翻译 404）。"""
+    sid, _ = await _make_row()
+    async with async_session_factory() as s:
+        assert await sheet_repo.update_row(s, sid, 999999, item_name="x") is None
+
+
+@pytest.mark.asyncio
+async def test_update_row_on_archived_raises_sheet_archived():
+    """archived 终态只读：update_row 入口经 _assert_writable → raise SheetArchived。"""
+    # Arrange：建表 + 行，然后归档
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        row = await sheet_repo.upsert_row(s, sheet.id, "x", 10, sheet_repo.MODE_LOCK, 0)
+        await s.commit()
+        sid, rid = sheet.id, row.id
+    async with async_session_factory() as s:
+        await sheet_repo.advance_sheet(
+            s,
+            sid,
+            sheet_repo.SHEET_PHASE_ARCHIVED,
+            archived_path=f"projects/{sid}/index.md",
+        )
+        await s.commit()
+    # Act / Assert
+    async with async_session_factory() as s:
+        with pytest.raises(SheetArchived):
+            await sheet_repo.update_row(s, sid, rid, item_name="y")
+
+
 # ---------- 项目阶段生命周期（迁移 0009）----------
 # 三阶段：collecting（默认）→ constructing → archived（只读终态）；collecting 可直跳 archived。
 # 所有写操作入口经 _assert_writable 守卫：archived → SheetArchived；不存在 → 交给后续逻辑返 None→404。
