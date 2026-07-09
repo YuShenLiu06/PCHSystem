@@ -58,4 +58,12 @@ fi
 # --auto-init：自动生成缺失的 permission.yml 等运行时文件
 #   注意：init 仅在文件缺失时生成默认值，已存在的 config.yml 不会被覆盖
 echo "[entrypoint] 启动 MCDR..."
-exec mcdreforged start --auto-init
+# 非交互启动（docker run -d 未带 -it）时，MCDR 控制台 stdin 会立即 EOF，
+# readline() 死循环把空行当命令转发给服务端 → ~1500 空命令/秒 → 刷屏 → OOM。
+# 非 tty 时喂一个永不断开的空 stdin（tail -f /dev/null 永不输出也永不关闭），
+# 让 readline() 阻塞等待，从而无论是否 -it 都安全。
+if [ -t 0 ]; then
+    exec mcdreforged start --auto-init
+else
+    exec mcdreforged start --auto-init < <(tail -f /dev/null)
+fi
