@@ -12,7 +12,7 @@ import io
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select, union_all
+from sqlalchemy import delete, func, or_, select, union_all
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -194,15 +194,28 @@ async def list_sheets(
 
 
 async def list_rows(
-    session: AsyncSession, sheet_id: int
+    session: AsyncSession, sheet_id: int, *, search: str | None = None
 ) -> list[tuple[SheetRow, str | None]]:
-    """列单表所有行：left join players 取认领人游戏名。返回 [(SheetRow, claimant_name|None)]。"""
+    """列单表所有行：left join players 取认领人游戏名。返回 [(SheetRow, claimant_name|None)]。
+
+    ``search`` 非空时按 ``item_name`` / ``registry_id`` 大小写不敏感子串过滤（``registry_id`` 可空 →
+    NULL 不匹配，天然 null-safe）。``order_by`` 保持 ``sort_order, id``——优先级排序交 router 层
+    ``sort_sheet_rows`` 做，避免影响 archive/CSV 等其它调用方。
+    """
     stmt = (
         select(SheetRow, Player.current_name)
         .outerjoin(Player, Player.uuid == SheetRow.claimant_uuid)
         .where(SheetRow.sheet_id == sheet_id)
         .order_by(SheetRow.sort_order, SheetRow.id)
     )
+    if search:
+        pat = f"%{search.lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(SheetRow.item_name).like(pat),
+                func.lower(SheetRow.registry_id).like(pat),
+            )
+        )
     return [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
 
 
