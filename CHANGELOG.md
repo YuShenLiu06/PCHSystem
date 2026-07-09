@@ -35,6 +35,7 @@
 - **Added**：view 底栏常驻 `[搜索]` 按钮（与 `[一键提交]` 并列，所有查看者可见）；空表 / 搜索无匹配仅显示居中提示，不渲染快捷栏与分页栏。
 - **Changed**：分页 + 参数解析抽到 `view_args.py` 纯函数（仅依赖标准库、可单测），非法参数回显用法提示。
 - **Changed**：`!!PCH sheet set` 改为按行号（`row_id`）更新 need/排序，与 `delrow`/`claim` 等命令一致（id 主轴），不再按物品名 upsert。`setreg` 同改按 `row_id` 更新；`add` 保持按物品名严格新建（同名→回执报错）。
+- **Changed**：**数量显示统一换算**（#18）：sheet 各显示点的物品数量从原始整数改为「个/组/盒」友好单位（`>=1728` → 盒 / `>=64` → 组 / 否则个，去尾零），与后端 `core/qty.py`、前端 `utils/qty.ts` **三端对齐**；新增 `htcmc_auth/qty.py` 作为第三端（`format_qty` 逐字照抄 + `format_qty_safe` 兜底）。覆盖 sheet view 行、8 处命令回执、3 个通知模板共 11 处显示点；HTTP 写调用与 scanner 跳过诊断不换算（纯显示层，不入库不进 API）。
 
 ---
 
