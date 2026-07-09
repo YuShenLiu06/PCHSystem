@@ -74,6 +74,8 @@ SHEET_LIST_FLAG_HINT = (
 SHEET_LIST_FLAG_UNKNOWN = "§c未知旗标: {token}§r\n" + SHEET_LIST_FLAG_HINT
 SHEET_DETAIL_TITLE = "§6§l#{id} {title}§r §7[owner: {owner}]"
 SHEET_DETAIL_EMPTY = "§7（无行）"
+SHEET_VIEW_NO_MATCH = "§7（无匹配行）"
+SHEET_VIEW_ARG_UNKNOWN = "§c未知参数: {token}§r\n§7用法: !!PCH sheet view <id> [-p 页码] [-s 关键词]"
 # mode 0=lock 1=progress；status open/claimed/done
 _MODE_LABEL = {0: "lock", 1: "progress"}
 _STATUS_COLOR = {"open": "§7", "claimed": "§e", "done": "§a"}
@@ -350,6 +352,67 @@ def format_centered_text(text: str, *, pad_color=RColor.gray) -> RTextList:
         RText(leading, color=pad_color),
         RText(text),
         RText("\n", color=pad_color),
+    )
+
+
+def format_view_footer(sheet_id) -> RTextList:
+    """view 公开快捷按钮行（**常驻**，所有查看者可见）：[一键提交] + [搜索]。
+
+    [搜索] suggest `!!PCH sheet view <id> -s `，玩家补关键词回车；居中走 ``_center_button_row``。
+    """
+    return _center_button_row([
+        rtext_button(
+            "[一键提交]", f"!!PCH sheet submit {sheet_id}",
+            color=RColor.aqua,
+            hover="扫背包按 registry_id 匹配行批量上交（纯申报，不清背包；lock 行需已认领）",
+        ),
+        rtext_button(
+            "[搜索]", f"!!PCH sheet view {sheet_id} -s ",
+            color=RColor.aqua,
+            hover="按物品名 / 注册名搜索（补关键词后回车）",
+        ),
+    ])
+
+
+def format_pagination_footer(
+    sheet_id, page: int, total_pages: int, *, search: str | None = None
+) -> RTextList:
+    """分页栏：[上一页] §7page/total§r [下一页]，居中（``_center_button_row``）。
+
+    首/末页对应按钮灰显无点击（纯 ``RText(dark_gray)``）；其余 ``rtext_button`` suggest
+    `!!PCH sheet view <id> -p N`，搜索态额外携 `-s <kw>`（跨页保持）。
+    """
+    def _page_cmd(p: int) -> str:
+        return (
+            f"!!PCH sheet view {sheet_id} -p {p} -s {search}"
+            if search
+            else f"!!PCH sheet view {sheet_id} -p {p}"
+        )
+
+    parts = []
+    if page > 1:
+        parts.append(rtext_button("[上一页]", _page_cmd(page - 1), color=RColor.aqua, hover=f"第 {page - 1} 页"))
+    else:
+        parts.append(RText("[上一页]", color=RColor.dark_gray))
+    parts.append(RText(f"§7{page}/{total_pages}§r"))
+    if page < total_pages:
+        parts.append(rtext_button("[下一页]", _page_cmd(page + 1), color=RColor.aqua, hover=f"第 {page + 1} 页"))
+    else:
+        parts.append(RText("[下一页]", color=RColor.dark_gray))
+    return _center_button_row(parts)
+
+
+def format_search_hint(query: str, sheet_id) -> RTextList:
+    """搜索态提示行：§7搜索: §f<query>§r  + [清除]（suggest 无搜索的 view 回全表）。"""
+    return RTextList(
+        RText("§7搜索: §f"),
+        RText(f"{query}§r"),
+        RText("  "),
+        rtext_button(
+            "[清除]", f"!!PCH sheet view {sheet_id}",
+            color=RColor.yellow, hover="清除搜索，返回完整列表",
+        ),
+        RText("\n"),
     )
 
 

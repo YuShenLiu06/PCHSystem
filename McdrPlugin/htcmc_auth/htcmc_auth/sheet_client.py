@@ -103,9 +103,10 @@ def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False, stat
     return _request(cfg, "GET", "/sheets", player_uuid, params=params or None)
 
 
-def view_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
-    """GET /sheets/{sheet_id} → SheetDetail（含 rows）。"""
-    return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid)
+def view_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, search: str | None = None) -> SheetOutcome:
+    """GET /sheets/{sheet_id}[?q=<search>] → SheetDetail（含 rows，后端已按查看玩家排序 + 过滤）。"""
+    params = {"q": search} if search else None
+    return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid, params=params)
 
 
 def get_last_sheet(cfg: HtcmcAuthConfig, player_uuid: str) -> SheetOutcome:

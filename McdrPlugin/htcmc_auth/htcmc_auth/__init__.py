@@ -1,7 +1,7 @@
 import threading
 
 from mcdreforged.api.all import PluginServerInterface
-from mcdreforged.api.command import Literal, Text, Integer, QuotableText
+from mcdreforged.api.command import Literal, Text, Integer, QuotableText, GreedyText
 
 from . import notifier
 from .commands import configure, _pch_root, _not_impl, _login
@@ -12,6 +12,7 @@ from .sheet_commands import (
     _sheet_list_default,
     _sheet_list_flags,
     _sheet_view,
+    _sheet_view_args,
     _sheet_quick,
     _sheet_create,
     _sheet_rename,
@@ -123,7 +124,13 @@ def _register_commands(server: PluginServerInterface):
                 .runs(_sheet_list_default)                 # !!PCH sheet list → 进行中，参与优先
                 .then(Text("flags").runs(_sheet_list_flags))  # !!PCH sheet list <flags...>
             )
-            .then(Literal("view").then(Integer("sheet_id").runs(_sheet_view)))
+            .then(
+                Literal("view").then(
+                    Integer("sheet_id")
+                    .runs(_sheet_view)  # !!PCH sheet view <id> → 第 1 页无搜索
+                    .then(GreedyText("args").runs(_sheet_view_args))  # <id> [-p N] [-s kw] / 裸页码
+                )
+            )
             .then(Literal("last").runs(_sheet_quick))  # !!PCH sheet last → 快速重开上次
             .then(Literal("create").then(QuotableText("title").runs(_sheet_create)))
             .then(
@@ -269,7 +276,11 @@ def _register_commands(server: PluginServerInterface):
     sheet_alias = (
         Literal("!!sheet")
         .runs(_sheet_quick)                              # !!sheet → 重开上次
-        .then(Integer("sheet_id").runs(_sheet_view))    # !!sheet <id> → 直开
+        .then(
+            Integer("sheet_id")
+            .runs(_sheet_view)    # !!sheet <id> → 直开（第 1 页无搜索）
+            .then(GreedyText("args").runs(_sheet_view_args))  # !!sheet <id> [-p N] [-s kw]
+        )
     )
     server.register_command(sheet_alias)
     server.register_help_message("!!sheet", "快速打开上次查看的表格；!!sheet <id> 直达")
