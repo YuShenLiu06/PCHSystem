@@ -39,5 +39,6 @@ def format_qty_safe(value) -> str:
 
     用于 ``format_notification`` / 回执等用 ``payload.get(..., "?")`` 兜底的地方——
     ``format_qty("?")`` 会因 str 与 int 比较抛 ``TypeError``，故在此守护。
+    ``bool`` 虽是 ``int`` 子类，但语义上不是数量，一并走 ``str()`` 兜底（避免 ``True``→``"True个"``）。
     """
-    return format_qty(value) if isinstance(value, int) else str(value)
+    return format_qty(value) if isinstance(value, int) and not isinstance(value, bool) else str(value)

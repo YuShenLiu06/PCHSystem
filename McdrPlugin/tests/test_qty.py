@@ -58,6 +58,10 @@ class FormatQtyTest(unittest.TestCase):
     def test_零落个档(self):
         self.assertEqual(format_qty(0), "0个")
 
+    def test_负数落个档原样(self):
+        # 负数 < 64 走个档，原样带负号（DB schema ge=0 保证不出现，锁定行为）
+        self.assertEqual(format_qty(-1), "-1个")
+
     def test_盒档刚过阈值仍为一盒(self):
         # 1729 / 1728 = 1.000578 → round 2 位 = 1.0 → "1盒"（与 1728 同输出）
         self.assertEqual(format_qty(1729), "1盒")
@@ -96,6 +100,11 @@ class FormatQtySafeTest(unittest.TestCase):
 
     def test_none原样转字符串(self):
         self.assertEqual(format_qty_safe(None), "None")
+
+    def test_bool不算数量走str兜底(self):
+        # bool 是 int 子类但语义非数量；走 str() 兜底而非换算（避免 True→"True个"）
+        self.assertEqual(format_qty_safe(True), "True")
+        self.assertEqual(format_qty_safe(False), "False")
 
 
 if __name__ == "__main__":
