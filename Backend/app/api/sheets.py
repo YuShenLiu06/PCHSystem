@@ -48,6 +48,7 @@ from app.schemas.sheet import (
     SheetSummary,
 )
 from app.services import notification_service
+from app.services.sheet_row_order import sort_sheet_rows
 from app.services.archive import (
     ArchiveNotConfigured,
     SheetNotFoundError,
@@ -283,6 +284,7 @@ async def export_all(
 async def get_sheet(
     sheet_id: int,
     format: str | None = Query(default=None, description="传 csv 返回 text/csv"),
+    q: str | None = Query(default=None, description="按 item_name/registry_id 大小写不敏感过滤行"),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
 ):
@@ -290,20 +292,28 @@ async def get_sheet(
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
     sheet, owner_name = result
-    rows_with_names = await sheet_repo.list_rows(session, sheet_id)
+    rows_with_names = await sheet_repo.list_rows(session, sheet_id, search=q)
     if format == "csv":
+        # CSV 导出用自然序（sort_order, id），与导出者身份无关；search（?q=）过滤仍生效（显式数据过滤）。
         csv_str = sheet_repo.export_csv(sheet_id, [r for r, _ in rows_with_names])
         return PlainTextResponse(content=csv_str, media_type="text/csv")
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
+    # 玩家相关优先级排序：当前玩家贡献过的 progress 行 id 集 → 五档 + 还需数量降序
+    my_row_ids = {
+        rid
+        for rid, members in contributors_map.items()
+        if any(pu == player.uuid for pu, _ in members)
+    }
+    ordered = sort_sheet_rows(rows_with_names, player.uuid, my_row_ids)
     # 有意为之：GET 详情时自动记录 last_sheet_id（best-effort，失败不影响返回）
     try:
         await set_last_sheet(session, player.uuid, sheet_id)
         await session.commit()
     except Exception:
         logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)
-    return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
+    return _to_detail(sheet, ordered, owner_name, contributors_map)
 
 
 @router.patch("/{sheet_id}", response_model=SheetDetail)

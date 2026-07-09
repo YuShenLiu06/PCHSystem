@@ -19,6 +19,7 @@ from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
 from . import sheet_client, scanner
+from .view_args import paginate_rows, parse_view_args
 from .config import HtcmcAuthConfig
 from .messages import (
     SHEET_SERVICE_DOWN,
@@ -35,11 +36,16 @@ from .messages import (
     SHEET_LIST_FLAG_UNKNOWN,
     SHEET_DETAIL_TITLE,
     SHEET_DETAIL_EMPTY,
+    SHEET_VIEW_NO_MATCH,
+    SHEET_VIEW_ARG_UNKNOWN,
     SHEET_LAST_EMPTY,
     rtext_button,
     format_row_clickable,
     format_owner_footer,
     format_submit_footer,
+    format_view_footer,
+    format_pagination_footer,
+    format_search_hint,
     format_section_separator,
     format_centered_text,
     format_phase_label,
@@ -383,14 +389,17 @@ def _sheet_list_impl(server, player_name, *, mine: bool, status: str | None):
     _do()
 
 
-def _render_sheet_detail(server, player_name, player_uuid, sheet_id):
-    """渲染表详情（从 _sheet_view._do 提取的纯函数，供 _sheet_view 与 _sheet_quick 复用）。
+# 分页 / 参数解析纯函数见 view_args.py（stdlib-only，单测可按路径独立加载）
 
-    参数：server（MCDR ServerInterface）、player_name/uuid、sheet_id。
-    行为：调用 view_sheet → 按 outcome 分支 → 渲染 RText 详情并 tell。
+
+def _render_sheet_detail(server, player_name, player_uuid, sheet_id, *, page: int = 1, search: str | None = None):
+    """渲染表详情（供 _sheet_view / _sheet_quick / _sheet_view_args 复用）。
+
+    行为：调 ``view_sheet(search)`` → 按 outcome 分支 → 渲染 RText 详情并 tell。
+    后端已按查看玩家五档优先级排序 + （search 非空时）过滤；本函数仅做**客户端分页** + 常驻按钮。
     错误路径由 _resolve 统一翻译（404/403/409/422/RATE_LIMITED/REMOVED/None）。
     """
-    outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
+    outcome = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id, search=search)
 
     def _show(data):
         rows = data.get("rows") or []
@@ -417,19 +426,24 @@ def _render_sheet_detail(server, player_name, player_uuid, sheet_id):
         parts.append(format_section_separator("物品列表"))  # 需求1 主分隔符
         parts.append(RText("\n"))
         if not rows:
-            parts.append(format_centered_text(SHEET_DETAIL_EMPTY))  # 空表提示居中
+            # 空表 / 搜索无匹配：仅居中提示，不渲染快捷栏与分页栏
+            hint = SHEET_VIEW_NO_MATCH if search else SHEET_DETAIL_EMPTY
+            parts.append(format_centered_text(hint))
         else:
-            for r in rows:
+            if search:
+                parts.append(format_search_hint(search, sheet_id))  # §7搜索: kw + [清除]
+            page_rows, total_pages, _total = paginate_rows(rows, page)
+            for r in page_rows:
                 parts.append(format_row_clickable(
                     r, sheet_id,
                     is_owner=is_owner,
                     player_name=player_name,
                     player_uuid=player_uuid,
                 ))
-            # 空行分隔（[一键提交] 与上方物品行间留白）+ 公开一键提交底栏
-            # 仅非空表渲染：空表无可匹配行，submit 无效故隐去（避免误导）
             parts.append(RText("\n"))
-            parts.append(format_submit_footer(sheet_id))  # 公开：所有人可见（submit 无权限要求）
+            parts.append(format_view_footer(sheet_id))  # 常驻公开快捷按钮：[一键提交] [搜索]
+            if total_pages > 1:
+                parts.append(format_pagination_footer(sheet_id, page, total_pages, search=search))
         if is_owner:
             parts.append(RText("\n"))  # 物品区/底栏 与「列表管理」之间空行
             parts.append(format_section_separator("列表管理"))  # 与「物品列表」对称
@@ -456,6 +470,34 @@ def _sheet_view(src, ctx):
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
         _render_sheet_detail(server, player_name, player_uuid, sheet_id)
+
+    _do()
+
+
+def _sheet_view_args(src, ctx):
+    """!!PCH sheet view <sheet_id> <args...> —— 分页/搜索（GreedyText 捕获 -p/-s）。
+
+    解析 -p N / --page N / 裸页码 与 -s <kw> / --search <kw>；非法 token 回显用法。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    sheet_id = ctx["sheet_id"]
+    tokens = ctx.get("args", "").split() if ctx.get("args") else []
+    page, search, unknown = parse_view_args(tokens)
+    if unknown is not None:
+        server.tell(player_name, SHEET_VIEW_ARG_UNKNOWN.format(token=unknown))
+        return
+
+    @new_thread('htcmc_sheet_view')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+        _render_sheet_detail(server, player_name, player_uuid, sheet_id, page=page, search=search)
 
     _do()
 

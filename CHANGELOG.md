@@ -18,6 +18,8 @@
 
 ### Backend
 
+- **Added**：`GET /sheets/{id}` 详情行按查看玩家做**五档优先级排序**：我认领的 lock ＞ 我参与的 progress ＞ 我未参与的 progress ＞ 非我认领的 lock ＞ 已完成；同档内按还需数量（`need - delivered`）降序，末位 tiebreak `sort_order, id`。CSV 导出仍用自然序（与导出者身份无关）。排序逻辑抽到 `services/sheet_row_order.py` 纯函数（免 DB、可单测、不改入参）。
+- **Added**：`GET /sheets/{id}?q=<关键词>` 新增**行搜索**：按 `item_name` / `registry_id` 大小写不敏感子串过滤（`registry_id` 可空 → NULL 不匹配，天然 null-safe），对 JSON 与 CSV 均生效。
 - **Fixed**：sheet 行改名不再重复建行（issue #20）。`PUT /sheets/{id}/rows` 改为单端点按 `row_id` 分流——带 `row_id` 按主键更新（可改名，字段部分更新），不带 `row_id` 严格新建。`item_name` 从 upsert 锁点降级为普通数据字段，修改操作统一以 `id` 为定位主轴。
 - **Fixed**：新建同名行不再静默覆盖旧行（严格 INSERT，撞 `UNIQUE(sheet_id, item_name)` → 409 中文提示「物品名重复」）。
 - **Changed**：archived 终态写操作 409 文案改中文（「项目已归档，只读」）。
@@ -26,8 +28,12 @@
 
 - **Changed**：行编辑保存带 `row_id`（走按主键更新路径，改名生效且不再重复）；`RowUpsertRequest` 增可选 `row_id`。
 
-### McdrPlugin
+### htcmc_auth
 
+- **Added**：**sheet view 分页**（#17）：物品列表 30 行/页，避免超出 MC 聊天框截断阈值；底栏 `[上一页]/[下一页]` 可点击翻页（首/末页灰显无点击），支持 `!!PCH sheet view <id> -p <页码>`、`--page` 及裸页码便捷写法。
+- **Added**：**sheet view 关键词搜索**：`!!PCH sheet view <id> -s <关键词>`（`--search`）按物品名 / 注册名过滤；搜索态顶部显示当前关键词 + `[清除]`，翻页时跨页保持搜索条件。
+- **Added**：view 底栏常驻 `[搜索]` 按钮（与 `[一键提交]` 并列，所有查看者可见）；空表 / 搜索无匹配仅显示居中提示，不渲染快捷栏与分页栏。
+- **Changed**：分页 + 参数解析抽到 `view_args.py` 纯函数（仅依赖标准库、可单测），非法参数回显用法提示。
 - **Changed**：`!!PCH sheet set` 改为按行号（`row_id`）更新 need/排序，与 `delrow`/`claim` 等命令一致（id 主轴），不再按物品名 upsert。`setreg` 同改按 `row_id` 更新；`add` 保持按物品名严格新建（同名→回执报错）。
 
 ---
