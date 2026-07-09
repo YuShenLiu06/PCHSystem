@@ -83,7 +83,9 @@ SHEET_ROW_LINE = "{status_c}#{row_id} §f{item} §7[{mode}] §b{delivered}/{need
 SHEET_OK_CREATED = "§a已建表 #{id} {title}"
 SHEET_OK_RENAMED = "§a已改标题 #{id} → {title}"
 SHEET_OK_DELETED = "§a已删表 #{id}"
-SHEET_OK_ROW_SET = "§a已 upsert 行 [{item}] need={need} mode={mode}"
+# add（新建，严格 INSERT，撞名 409）/ set（按 row_id 更新）回执分用，不再共用「已 upsert」文案
+SHEET_OK_ROW_ADDED = "§a已新建行 [{item}] need={need} mode={mode}"
+SHEET_OK_ROW_UPDATED = "§a已更新行 [{item}] need={need} mode={mode}"
 SHEET_OK_ROW_DELETED = "§a已删行 #{row_id}"
 SHEET_OK_CLAIMED = "§a已认领 [{item}]（lock 模式请用 !!PCH sheet done 标备齐）"
 SHEET_OK_DELIVERED = "§a已上报交付 [{item}] {delivered}/{need}"

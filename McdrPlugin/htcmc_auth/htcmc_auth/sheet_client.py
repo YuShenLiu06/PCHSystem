@@ -154,23 +154,32 @@ def upsert_row(
     player_uuid: str,
     sheet_id: int,
     item: Optional[str],
-    need: int,
-    mode: int,
-    sort: int,
+    need: Optional[int],
+    mode: Optional[int],
+    sort: Optional[int],
     registry_id: Optional[str] = None,
+    row_id: Optional[int] = None,
 ) -> SheetOutcome:
-    """PUT /sheets/{sheet_id}/rows {need_qty,mode,sort_order[,item_name][,registry_id]} → RowDetail。
+    """PUT /sheets/{sheet_id}/rows 单端点按 row_id 分流（issue #20）→ RowDetail。
 
-    后端契约：item_name 与 registry_id 至少传一个；item_name 缺失时后端据 registry_id
-    走翻译表补中文 item_name（A2）。need_qty/mode/sort_order 恒传。
+    - ``row_id`` 非空 → **更新**路径（按主键改 need/mode/sort/registry_id，未传字段不改）；
+      此时 item 应为 None（更新路径不靠 item_name 定位）。
+    - ``row_id`` 空 → **新建**路径，item_name（或 registry_id）必传一个；item_name 缺失时
+      后端据 registry_id 走翻译表补中文 item_name。**新建严格化：同名 → 409 不再覆盖**。
+
+    need/mode/sort 为 None 时不下发（更新路径部分更新；新建路径后端缺省 0/lock/0）。
     """
-    body: dict = {
-        "need_qty": need,
-        "mode": mode,
-        "sort_order": sort,
-    }
-    if item is not None:
+    body: dict = {}
+    if row_id is not None:
+        body["row_id"] = row_id
+    elif item is not None:
         body["item_name"] = item
+    if need is not None:
+        body["need_qty"] = need
+    if mode is not None:
+        body["mode"] = mode
+    if sort is not None:
+        body["sort_order"] = sort
     if registry_id is not None:
         body["registry_id"] = registry_id
     return _request(

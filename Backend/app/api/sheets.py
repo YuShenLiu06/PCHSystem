@@ -79,12 +79,17 @@ logger = logging.getLogger(__name__)
 def _resolve_item_name(item_name: str | None, registry_id: str | None) -> str:
     """item_name 缺失时用 registry_id 翻译补默认中文名；未命中回退 registry_id 本身。
 
-    供 upsert / from-items 落库前补默认名（MCDR addhand 只传 registry_id 时走此路径）。
-    schema 的 model_validator 已保证二者至少有一个非空，此处不再校验。
+    供新建路径（from-items / 无 row_id upsert）落库前补默认名（MCDR addhand 只传
+    registry_id 时走此路径）。schema 的 model_validator 已保证二者至少有一个非空；
+    此处仍防御性返回 422（不裸 assert 致 500，issue #20 回归）。
     """
     if item_name:
         return item_name
-    assert registry_id is not None
+    if registry_id is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "item_name 与 registry_id 至少提供一个",
+        )
     return _translator.translate(registry_id)
 
 
@@ -222,18 +227,21 @@ async def create_sheet_from_items(
     for item in body.items:
         item_name = _resolve_item_name(item.item_name, item.registry_id)
         try:
-            await sheet_repo.upsert_row(
+            await sheet_repo.create_row(
                 session,
                 sheet_id=sheet.id,
                 item_name=item_name,
-                need_qty=item.need_qty,
-                mode=item.mode,
-                sort_order=item.sort_order,
+                need_qty=item.need_qty if item.need_qty is not None else 0,
+                mode=item.mode if item.mode is not None else sheet_repo.MODE_LOCK,
+                sort_order=item.sort_order if item.sort_order is not None else 0,
                 registry_id=item.registry_id,
             )
-        except IntegrityError as exc:  # 同名并发 insert 命中 UNIQUE（防御）
+        except IntegrityError as exc:  # 批量内同名 / 撞已存在名 → UNIQUE
             await session.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"物品名重复：{item_name} 已存在",
+            ) from exc
     await session.commit()
     result = await sheet_repo.get_sheet(session, sheet.id)
     if result is None:
@@ -396,6 +404,167 @@ async def delete_sheet(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+async def _collect_progress_contributors(
+    session: AsyncSession, row: SheetRow
+) -> list[tuple[uuid.UUID, str]]:
+    """mode 从 progress 变走时，repo 会 clear_contributors —— 预取名单用于事后通知。"""
+    _contrib_map = await sheet_repo.list_contributors(session, [row.id])
+    return _contrib_map.get(row.id, [])
+
+
+async def _dispatch_row_edit_notifications(
+    session: AsyncSession,
+    *,
+    sheet: Sheet,
+    player: Player,
+    row: SheetRow,
+    item_name: str,
+    mode_changed: bool,
+    prev_mode: int | None,
+    old_need: int | None,
+    new_need: int,
+    claimant_uuid: uuid.UUID | None,
+    progress_contributors: list[tuple[uuid.UUID, str]],
+) -> None:
+    """行编辑后的通知派发（新建/更新两路径共用，DRY）。
+
+    - mode 变化：通知原认领人「认领已重置」；若从 progress 变走，再通知每位贡献者。
+    - mode 不变但 need 变化：通知认领人「所需数量已调整」。
+    """
+    sheet_id = sheet.id
+    if mode_changed and claimant_uuid is not None:
+        # 换模式重置了行 → 通知原认领人协作已取消
+        await _notify(
+            session,
+            recipient_uuid=claimant_uuid,
+            actor=player,
+            category="sheet_released",
+            title="模式变更，认领已重置",
+            body=f"[{item_name}] 拥有者调整了模式，认领/进度已重置",
+            payload={
+                "sheet_id": sheet_id,
+                "sheet_title": sheet.title,
+                "row_id": row.id,
+                "item_name": item_name,
+            },
+        )
+    if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
+        # progress→lock：repo 已清空贡献者，通知每位贡献者贡献已被重置
+        for contrib_uuid, _cname in progress_contributors:
+            await _notify(
+                session,
+                recipient_uuid=contrib_uuid,
+                actor=player,
+                category="sheet_progress_reset",
+                title="贡献已被拥有者清空",
+                body=f"拥有者调整了 [{item_name}] 的模式，进度与贡献已重置",
+                payload={
+                    "sheet_id": sheet_id,
+                    "sheet_title": sheet.title,
+                    "row_id": row.id,
+                    "item_name": item_name,
+                },
+            )
+    elif (
+        not mode_changed
+        and claimant_uuid is not None
+        and old_need is not None
+        and old_need != new_need
+    ):
+        await _notify(
+            session,
+            recipient_uuid=claimant_uuid,
+            actor=player,
+            category="sheet_qty_changed",
+            title="所需数量已调整",
+            body=f"[{item_name}] 所需数量变为 {new_need}（原 {old_need}）",
+            payload={
+                "sheet_id": sheet_id,
+                "sheet_title": sheet.title,
+                "row_id": row.id,
+                "item_name": item_name,
+                "old": old_need,
+                "new": new_need,
+            },
+        )
+
+
+async def _create_row_by_item(
+    session: AsyncSession, sheet: Sheet, body: RowUpsertRequest
+) -> SheetRow:
+    """新建路径（无 row_id）：严格 INSERT，不再 upsert 覆盖同名（issue #20 后 item_name 是数据字段）。
+
+    同名由 ``UNIQUE(sheet_id, item_name)`` 兜底 → IntegrityError → api 翻译 409（中文）。
+    need_qty/mode/sort_order 缺省 coerce 到 0 / lock(0) / 0。新建行无旧协作状态，不发通知。
+    """
+    item_name = _resolve_item_name(body.item_name, body.registry_id)
+    row = await sheet_repo.create_row(
+        session,
+        sheet_id=sheet.id,
+        item_name=item_name,
+        need_qty=body.need_qty if body.need_qty is not None else 0,
+        mode=body.mode if body.mode is not None else sheet_repo.MODE_LOCK,
+        sort_order=body.sort_order if body.sort_order is not None else 0,
+        registry_id=body.registry_id,
+    )
+    return row
+
+
+async def _update_row_by_id(
+    session: AsyncSession, sheet: Sheet, player: Player, body: RowUpsertRequest
+) -> SheetRow:
+    """更新路径（带 row_id）：按主键部分更新（可改名；item_name 是数据字段非定位键）。
+
+    item_name 未传 → 保留原名；need_qty/mode/sort_order 未传 → 不改（None 透传给
+    repo ``update_row`` 跳过）。mode 仅在传入且变化时重置协作。issue #20：改名不再新建行。
+    """
+    prev = await sheet_repo.get_row(session, sheet.id, body.row_id)
+    if prev is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    prev_row, _ = prev
+    old_need = prev_row.need_qty
+    claimant_uuid = prev_row.claimant_uuid
+    prev_mode = prev_row.mode
+    mode_changed = body.mode is not None and prev_mode != body.mode
+    progress_contributors: list[tuple[uuid.UUID, str]] = (
+        await _collect_progress_contributors(session, prev_row)
+        if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS
+        else []
+    )
+    # item_name 未传 → 保留原名用于通知文案（更新路径不做 registry→name 翻译）；
+    # need 未传 → new_need 取原值，使 old_need != new_need 为 False（不发数量通知）
+    item_name = body.item_name if body.item_name is not None else prev_row.item_name
+    new_need = body.need_qty if body.need_qty is not None else old_need
+    row = await sheet_repo.update_row(
+        session,
+        sheet_id=sheet.id,
+        row_id=body.row_id,
+        item_name=body.item_name,
+        registry_id=body.registry_id,
+        need_qty=body.need_qty,
+        mode=body.mode,
+        sort_order=body.sort_order,
+    )
+    if row is None:
+        # 并发删行竞态：上面 get_row 之后、update_row FOR UPDATE 锁行之前，行被另一事务
+        # 删除并提交 → update_row 返 None。干净 404，避免下游 _dispatch 解引用 / refresh(None) 致 500。
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    await _dispatch_row_edit_notifications(
+        session,
+        sheet=sheet,
+        player=player,
+        row=row,
+        item_name=item_name,
+        mode_changed=mode_changed,
+        prev_mode=prev_mode,
+        old_need=old_need,
+        new_need=new_need,
+        claimant_uuid=claimant_uuid,
+        progress_contributors=progress_contributors,
+    )
+    return row
+
+
 @router.put("/{sheet_id}/rows", response_model=RowDetail)
 async def upsert_row(
     sheet_id: int,
@@ -403,90 +572,35 @@ async def upsert_row(
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
 ) -> RowDetail:
+    """行新建 / 更新（单端点按 ``row_id`` 分流；issue #20 改名重复修复）。
+
+    - **带 ``row_id``**：按主键**更新**（``_update_row_by_id``），item_name 可改名，
+      其余字段部分更新（未传=不改）。改名不再新建重复行。
+    - **不带 ``row_id``**：按 ``item_name`` **严格新建**（``_create_row_by_item``），
+      同名不再覆盖 → 409。
+
+    archived 终态 → 409（只读）；新建/改名撞 ``UNIQUE(sheet_id, item_name)`` → 409（中文）。
+    """
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
-    item_name = _resolve_item_name(body.item_name, body.registry_id)
-    # 捕获旧状态：判定 mode 是否变化（重置）、need 是否变化（通知认领人）
-    prev_row = await sheet_repo.get_row_by_item(session, sheet_id, item_name)
-    old_need = prev_row.need_qty if prev_row is not None else None
-    claimant_uuid = prev_row.claimant_uuid if prev_row is not None else None
-    prev_mode = prev_row.mode if prev_row is not None else None
-    mode_changed = prev_row is not None and prev_row.mode != body.mode
-    # mode 从 progress 变走时，repo upsert 会 clear_contributors，必须预取名单用于通知
-    progress_contributors: list[tuple[uuid.UUID, str]] = []
-    if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
-        _contrib_map = await sheet_repo.list_contributors(session, [prev_row.id])
-        progress_contributors = _contrib_map.get(prev_row.id, [])
     try:
-        row = await sheet_repo.upsert_row(
-            session,
-            sheet_id=sheet_id,
-            item_name=item_name,
-            need_qty=body.need_qty,
-            mode=body.mode,
-            sort_order=body.sort_order,
-            registry_id=body.registry_id,
-        )
-        if mode_changed and claimant_uuid is not None:
-            # 换模式重置了行 → 通知原认领人协作已取消
-            await _notify(
-                session,
-                recipient_uuid=claimant_uuid,
-                actor=player,
-                category="sheet_released",
-                title="模式变更，认领已重置",
-                body=f"[{item_name}] 拥有者调整了模式，认领/进度已重置",
-                payload={
-                    "sheet_id": sheet_id,
-                    "sheet_title": sheet.title,
-                    "row_id": row.id,
-                    "item_name": item_name,
-                },
-            )
-        if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
-            # progress→lock：repo 已清空贡献者，通知每位贡献者贡献已被重置
-            for contrib_uuid, _cname in progress_contributors:
-                await _notify(
-                    session,
-                    recipient_uuid=contrib_uuid,
-                    actor=player,
-                    category="sheet_progress_reset",
-                    title="贡献已被拥有者清空",
-                    body=f"拥有者调整了 [{item_name}] 的模式，进度与贡献已重置",
-                    payload={
-                        "sheet_id": sheet_id,
-                        "sheet_title": sheet.title,
-                        "row_id": row.id,
-                        "item_name": item_name,
-                    },
-                )
-        elif (
-            not mode_changed
-            and claimant_uuid is not None
-            and old_need is not None
-            and old_need != body.need_qty
-        ):
-            await _notify(
-                session,
-                recipient_uuid=claimant_uuid,
-                actor=player,
-                category="sheet_qty_changed",
-                title="所需数量已调整",
-                body=f"[{item_name}] 所需数量变为 {body.need_qty}（原 {old_need}）",
-                payload={
-                    "sheet_id": sheet_id,
-                    "sheet_title": sheet.title,
-                    "row_id": row.id,
-                    "item_name": item_name,
-                    "old": old_need,
-                    "new": body.need_qty,
-                },
-            )
+        if body.row_id is not None:
+            row = await _update_row_by_id(session, sheet, player, body)
+        else:
+            row = await _create_row_by_item(session, sheet, body)
         await session.commit()
-    except IntegrityError as exc:  # 并发同名 insert 命中 UNIQUE
+    except SheetArchived:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "项目已归档，只读"
+        )
+    except IntegrityError as exc:  # 新建/改名撞 UNIQUE(sheet_id, item_name)
+        await session.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "物品名重复：该项目已存在同名行，请编辑该行而非新建",
+        ) from exc
     await session.refresh(row)
     return RowDetail(**_row_dict(row, None))
 

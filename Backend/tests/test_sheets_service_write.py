@@ -291,7 +291,7 @@ async def test_upsert_change_need_notifies_claimant_with_old_new(client):
 
     await client.put(
         f"/sheets/{sid}/rows",
-        json={"item_name": "iron", "need_qty": 20, "mode": 0, "sort_order": 0},
+        json={"row_id": rid, "need_qty": 20},
         headers=_svc_headers(owner),
     )
 
@@ -308,11 +308,11 @@ async def test_upsert_no_change_does_not_notify(client):
     owner = await _seed("alice")
     bob = await _seed("bob")
     sid = await _create_sheet(client, _jwt_headers(owner))
-    await _upsert(client, _jwt_headers(owner), sid, "iron", 10)
-    # bob 没认领，upsert 也不改 need_qty → 不应通知 bob（也无 claimant）
+    rid = (await _upsert(client, _jwt_headers(owner), sid, "iron", 10))["id"]
+    # bob 没认领，按 row_id 更新且 need_qty 不变 → 不应通知 bob（也无 claimant）
     await client.put(
         f"/sheets/{sid}/rows",
-        json={"item_name": "iron", "need_qty": 10, "mode": 0, "sort_order": 0},
+        json={"row_id": rid, "need_qty": 10},
         headers=_svc_headers(owner),
     )
     notes = await _fetch_notifications(bob)
