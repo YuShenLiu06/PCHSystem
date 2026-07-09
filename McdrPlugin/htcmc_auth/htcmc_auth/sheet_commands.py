@@ -197,12 +197,12 @@ def _sheet_root(src, ctx):
         _line("delrow", "删行", "!!PCH sheet delrow ", "delrow <表id> <行号>"),
         _line(
             "addsub", "建子行（拥有者）", "!!PCH sheet addsub ",
-            "addsub <表id> <父行号> <registry_id> <每件数量> [lock|progress] [排序]",
+            "addsub <表id> <父行号> <倍数> [lock|progress] [排序]  手持该子物品提供 registry_id",
         ),
         _line("delsub", "删子行", "!!PCH sheet delsub ", "delsub <表id> <子行号>"),
         _line(
             "setsub", "改子行", "!!PCH sheet setsub ",
-            "setsub <表id> <子行号> <每件数量> [lock|progress] [排序]",
+            "setsub <表id> <子行号> <倍数> [lock|progress] [排序]",
         ),
         _line(
             "advance", "阶段流转（拥有者）", "!!PCH sheet advance ",
@@ -798,7 +798,8 @@ def _sheet_delrow(src, ctx):
 def _sheet_addsub(src, ctx):
     """子物品：在父行下建子行（issue #19）。
 
-    参数：sheet_id, parent_row_id, registry_id, qty_per_unit(≥1), [mode], [sort]。
+    参数：sheet_id, parent_row_id, qty_per_unit(≥1), [mode], [sort]。
+    registry_id 取自手持物品（依赖 minecraft_data_api）。
     父 lock → 子强制 lock；父 progress → 子可 lock/progress（默认继承）。
     need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty）。
     """
@@ -808,7 +809,6 @@ def _sheet_addsub(src, ctx):
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
     parent_row_id = ctx["parent_row_id"]
-    registry_id = ctx["registry_id"]
     qty_per_unit = ctx["qty_per_unit"]
     # mode 可选：字面量 lock/progress，默认继承父行（后端处理）
     mode = 1 if ctx.get("mode") == "progress" else 0
@@ -821,6 +821,18 @@ def _sheet_addsub(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
+
+        # 手持扫描取 registry_id（复用 addhand 范本）
+        api = server.get_plugin_instance("minecraft_data_api")
+        if api is None:
+            server.tell(player_name, SHEET_NO_DATA_API)
+            return
+        held = scanner.read_held_item(api, player_name)
+        if held is None:
+            server.tell(player_name, SHEET_ADDHAND_NEED_HAND)
+            return
+        registry_id = held[0]
+
         outcome = sheet_client.upsert_row(
             CONFIG, player_uuid, sheet_id,
             item=None, need=None, mode=mode, sort=sort,

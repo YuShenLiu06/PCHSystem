@@ -1488,7 +1488,7 @@ async def test_create_row_sub_item_requires_registry_id():
 
 @pytest.mark.asyncio
 async def test_create_row_sub_item_qty_per_unit_must_be_positive():
-    """子物品：qty_per_unit 必须 ≥ 1（否则 IntegrityError）。"""
+    """子物品：qty_per_unit 必须 > 0（0/负数 → ValueError）。"""
     sid, parent_rid = await _make_sheet_with_row()
     async with async_session_factory() as s:
         with pytest.raises(ValueError):
@@ -1629,8 +1629,63 @@ async def test_list_rows_groups_children_after_parent():
             registry_id="minecraft:dirt", parent_row_id=parent_rid, qty_per_unit=1
         )
         await s.commit()
-    # 验证排序：父、子2(sort=1)、子1(sort=2)
+    # 验证排序：父、子2(sort=1)、子1(sort=2)；子行 item_name 自动加父名前缀「父-」
     async with async_session_factory() as s:
         rows = await sheet_repo.list_rows(s, sid)
         item_names = [r.item_name for r, _ in rows]
-        assert item_names == ["父", "子2", "子1"]
+        assert item_names == ["父", "父-子2", "父-子1"]
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_float_qty_per_unit_ceils_need():
+    """子物品：浮点倍数 → need = ceil(qty_per_unit × 父 need)，向上取整保够用（0.5×7=3.5→4）。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=7, mode=0)
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=0.5,
+        )
+        await s.commit()
+        assert float(child.qty_per_unit) == 0.5
+        assert child.need_qty == 4  # ceil(0.5 × 7) = ceil(3.5) = 4
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_name_gets_parent_prefix():
+    """子物品：子行 item_name 自动加父名前缀「父名-本名」（flat 视图 CSV/MCDR 消歧）。"""
+    sid, parent_rid = await _make_sheet_with_row()  # 父行 item_name="x"
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "木板", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:oak_planks", parent_row_id=parent_rid, qty_per_unit=2,
+        )
+        await s.commit()
+        assert child.item_name == "x-木板"  # 父名 "x" + "-" + "木板"
+
+
+def test_sort_sheet_rows_keeps_children_under_parent():
+    """sort_sheet_rows：子行恒紧跟其父——即使子行优先级更高（档1）也不排到父行（档3）上方。
+
+    复现用户 bug「子 #1877 排在父 #1700 上方」：旧 flat 排序按 (priority,...) 忽略
+    parent_row_id；新实现仅父行参与主排序、子行紧随其父。
+    """
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    from app.services.sheet_row_order import sort_sheet_rows
+
+    viewer = UUID("00000000-0000-0000-0000-000000000001")
+
+    def mk(rid, name, *, parent=None, mode=0, status="open", claimant=None,
+           need=10, delivered=0, sort=0):
+        return SimpleNamespace(
+            id=rid, item_name=name, parent_row_id=parent, mode=mode, status=status,
+            claimant_uuid=claimant, need_qty=need, delivered_qty=delivered, sort_order=sort,
+        )
+
+    parent = mk(1, "父", mode=0, status="open", claimant=None)   # other-lock → 档 3
+    child = mk(2, "子", parent=1, mode=1, status="open", need=5)  # my-progress → 档 1
+    rows = [(parent, None), (child, None)]
+
+    out = sort_sheet_rows(rows, viewer, my_row_ids={2})
+    assert [r.item_name for r, _ in out] == ["父", "子"]  # 子紧跟父，不排到上方

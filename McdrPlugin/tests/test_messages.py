@@ -156,7 +156,7 @@ class FormatRowClickableTest(unittest.TestCase):
         self.assertIn("铁锭", s)       # 行文本仍保留
         self.assertIn("[认]", s)
         self.assertIn("[-]", s)     # 拥有者追加
-        self.assertIn("[改ID]", s)     # 拥有者追加（setreg 改 registry_id）
+        self.assertIn("[改]", s)     # 拥有者追加（setreg 改 registry_id）
         cmds = _click_values(rtl)
         self.assertIn("!!PCH sheet claim 3 5", cmds)
         self.assertIn("!!PCH sheet delrow 3 5", cmds)
@@ -167,7 +167,7 @@ class FormatRowClickableTest(unittest.TestCase):
         rtl = format_row_clickable(self._row(), 3, is_owner=False)
         self.assertIn("[认]", str(rtl))
         self.assertNotIn("[-]", str(rtl))
-        self.assertNotIn("[改ID]", str(rtl))  # setreg owner 专用
+        self.assertNotIn("[改]", str(rtl))  # setreg owner 专用
 
     def test_claimed_lock_non_claimant_no_priv_buttons(self):
         # 非认领人非拥有者看 lock claimed 行：不显示任何特权按钮（仅行文本）

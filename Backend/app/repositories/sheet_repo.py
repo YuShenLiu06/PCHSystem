@@ -9,6 +9,7 @@
 """
 import csv
 import io
+import math
 import uuid
 from datetime import datetime, timezone
 
@@ -317,15 +318,16 @@ async def create_row(
     sort_order: int,
     registry_id: str | None = None,
     parent_row_id: int | None = None,
-    qty_per_unit: int | None = None,
+    qty_per_unit: float | None = None,
 ) -> SheetRow:
     """严格新建行（不做 upsert）。
 
-    子物品嵌套行（0012）：
+    子物品嵌套行（0012，0013 倍数放宽为小数）：
     - 父行锁校验单层（parent.parent_row_id IS NULL）。
     - 模式继承：父 lock 强制子 lock；缺省继承父 mode。
-    - need_qty = qty_per_unit × parent.need_qty（子行派生）。
-    - 子行必传 registry_id + qty_per_unit≥1。
+    - need_qty = ceil(qty_per_unit × parent.need_qty)（子行派生，向上取整成整数）。
+    - item_name 自动加父名前缀 ``{父.item_name}-{item_name}``（仅创建路径；flat 视图消歧）。
+    - 子行必传 registry_id + qty_per_unit > 0。
     """
     await _assert_writable(session, sheet_id)
 
@@ -339,14 +341,17 @@ async def create_row(
             raise ValueError("子行只能嵌套一层（parent.parent_row_id IS NULL）")
         if registry_id is None:
             raise ValueError("子行必传 registry_id")
-        if qty_per_unit is None or qty_per_unit < 1:
-            raise ValueError("子行 qty_per_unit 必须≥1")
+        if qty_per_unit is None or qty_per_unit <= 0:
+            raise ValueError("子行 qty_per_unit 必须 > 0")
         # 模式继承：父 lock 强制子 lock
         if parent.mode == MODE_LOCK:
             mode = MODE_LOCK
         else:
             mode = mode if mode is not None else parent.mode
-        need_qty = qty_per_unit * parent.need_qty
+        need_qty = math.ceil(qty_per_unit * parent.need_qty)
+        # 子行 item_name 自动加父名前缀，避免 flat 视图（CSV/MCDR 列表）重名歧义。
+        # 仅创建路径加前缀；更新路径（update_row）尊重调用方传入值，不重拼。
+        item_name = f"{parent.item_name}-{item_name}"
 
     row = SheetRow(
         sheet_id=sheet_id,
@@ -409,12 +414,12 @@ async def update_row(
     mode: int | None = None,
     sort_order: int | None = None,
     parent_row_id: int | None = None,
-    qty_per_unit: int | None = None,
+    qty_per_unit: float | None = None,
 ) -> SheetRow | None:
     """按主键 row_id 部分更新行（子物品嵌套行 0012）。
 
-    子行 qty_per_unit/mode 变 → 重算 need_qty = qty_per_unit × 父.need_qty。
-    顶层行 need/mode 变 → 级联子行重算。
+    子行 qty_per_unit/mode 变 → 重算 need_qty = ceil(qty_per_unit × 父.need_qty)。
+    顶层行 need/mode 变 → 级联子行重算（同样 ceil）。
     """
     await _assert_writable(session, sheet_id)
     stmt = (
@@ -436,7 +441,7 @@ async def update_row(
     if qty_per_unit is not None and row.parent_row_id is not None:
         parent = await session.get(SheetRow, row.parent_row_id)
         if parent:
-            row.need_qty = qty_per_unit * parent.need_qty
+            row.need_qty = math.ceil(qty_per_unit * parent.need_qty)
 
     if item_name is not None:
         row.item_name = item_name
@@ -475,7 +480,7 @@ async def update_row(
         for child in child_rows:
             child_need_changed = False
             if need_changed and child.qty_per_unit is not None:
-                child.need_qty = child.qty_per_unit * row.need_qty
+                child.need_qty = math.ceil(child.qty_per_unit * row.need_qty)
                 child_need_changed = True
             if mode_changed and row.mode == MODE_LOCK:
                 child.mode = MODE_LOCK
@@ -771,7 +776,7 @@ def _row_to_csv_record(sheet_id: int, row: SheetRow) -> list[str | int]:
         row.delivered_qty,
         row.sort_order,
         row.parent_row_id or "",
-        row.qty_per_unit or "",
+        "" if row.qty_per_unit is None else f"{float(row.qty_per_unit):g}",
     ]
 
 

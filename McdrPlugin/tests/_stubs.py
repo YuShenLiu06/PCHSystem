@@ -118,6 +118,9 @@ def install_stubs() -> None:
     class Integer(_Node):
         pass
 
+    class Float(_Node):
+        pass
+
     class QuotableText(_Node):
         pass
 
@@ -127,6 +130,7 @@ def install_stubs() -> None:
     command.Literal = Literal
     command.Text = Text
     command.Integer = Integer
+    command.Float = Float
     command.QuotableText = QuotableText
     command.GreedyText = GreedyText
 
@@ -161,6 +165,7 @@ def install_stubs() -> None:
     api_all.Literal = Literal
     api_all.Text = Text
     api_all.Integer = Integer
+    api_all.Float = Float
     api_all.QuotableText = QuotableText
     api_all.GreedyText = GreedyText
 

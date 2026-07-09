@@ -1441,7 +1441,7 @@ async def test_upsert_row_sub_item_requires_registry_id(client):
 
 @pytest.mark.asyncio
 async def test_upsert_row_sub_item_qty_per_unit_must_be_positive(client):
-    """子物品 upsert：parent_row_id 非空但 qty_per_unit < 1 → 422。"""
+    """子物品 upsert：parent_row_id 非空但 qty_per_unit ≤ 0 → 422。"""
     _, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
     resp = await client.put(

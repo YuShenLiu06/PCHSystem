@@ -1,7 +1,7 @@
 import threading
 
 from mcdreforged.api.all import PluginServerInterface
-from mcdreforged.api.command import Literal, Text, Integer, QuotableText, GreedyText
+from mcdreforged.api.command import Literal, Text, Integer, Float, QuotableText, GreedyText
 
 from . import notifier
 from .commands import configure, _pch_root, _not_impl, _login
@@ -200,17 +200,14 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         Integer("parent_row_id")
                         .then(
-                            Text("registry_id")
+                            Float("qty_per_unit").runs(_sheet_addsub)
                             .then(
-                                Integer("qty_per_unit").runs(_sheet_addsub)
-                                .then(
-                                    Literal("lock").runs(_sheet_addsub)
-                                    .then(Integer("sort").runs(_sheet_addsub))
-                                )
-                                .then(
-                                    Literal("progress").runs(_sheet_addsub)
-                                    .then(Integer("sort").runs(_sheet_addsub))
-                                )
+                                Literal("lock").runs(_sheet_addsub)
+                                .then(Integer("sort").runs(_sheet_addsub))
+                            )
+                            .then(
+                                Literal("progress").runs(_sheet_addsub)
+                                .then(Integer("sort").runs(_sheet_addsub))
                             )
                         )
                     )
@@ -227,7 +224,7 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         Integer("row_id")
                         .then(
-                            Integer("qty_per_unit").runs(_sheet_setsub)
+                            Float("qty_per_unit").runs(_sheet_setsub)
                             .then(
                                 Literal("lock").runs(_sheet_setsub)
                                 .then(Integer("sort").runs(_sheet_setsub))

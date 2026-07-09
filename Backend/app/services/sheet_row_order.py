@@ -56,16 +56,27 @@ def sort_sheet_rows(
     player_uuid: UUID,
     my_row_ids: set[int],
 ) -> list[tuple[SheetRow, str | None]]:
-    """按 (priority, -remaining, sort_order, id) 稳定升序排序，返回新列表。
+    """按 (priority, -remaining, sort_order, id) 稳定升序排序，**子行恒紧跟其父**，返回新列表。
 
-    - priority：五档（``row_priority``），升序；
-    - -remaining：还需数量**降序**（剩余多优先）；
-    - sort_order、id：末位稳定 tiebreaker（保留 owner 显式排序意图）。
+    - 仅**顶层行**（parent_row_id IS NULL）参与主排序键：
+      - priority：五档（``row_priority``），升序；
+      - -remaining：还需数量**降序**（剩余多优先）；
+      - sort_order、id：末位稳定 tiebreaker（保留 owner 显式排序意图）。
+    - 每个顶层行排定后，其子行按 (sort_order, id) 紧随其后（子行**不**参与独立优先级）。
+      这修复了子行脱离父行、甚至排到父行上方的 bug（用户例：子 #1877 排在父 #1700 上方）。
+    - 孤儿子行（父行不在结果中，理论 FK ON DELETE CASCADE 不会出现）兜底按 (sort_order, id) 追加末尾。
 
     入参 ``rows`` = list_rows 返回的 ``[(SheetRow, claimant_name|None)]``；不改入参。
     """
-    return sorted(
-        rows,
+    parents = [item for item in rows if item[0].parent_row_id is None]
+    children_by_parent: dict[int, list[tuple[SheetRow, str | None]]] = {}
+    for item in rows:
+        parent_id = item[0].parent_row_id
+        if parent_id is not None:
+            children_by_parent.setdefault(parent_id, []).append(item)
+
+    sorted_parents = sorted(
+        parents,
         key=lambda item: (
             row_priority(item[0], player_uuid, my_row_ids),
             -row_remaining(item[0]),
@@ -73,3 +84,16 @@ def sort_sheet_rows(
             item[0].id,
         ),
     )
+
+    result: list[tuple[SheetRow, str | None]] = []
+    for parent in sorted_parents:
+        result.append(parent)
+        kids = children_by_parent.pop(parent[0].id, [])
+        kids.sort(key=lambda item: (item[0].sort_order, item[0].id))
+        result.extend(kids)
+
+    # 残留 = 父行不在列表的孤儿子行，兜底追加末尾
+    orphans = [kid for kids in children_by_parent.values() for kid in kids]
+    orphans.sort(key=lambda item: (item[0].sort_order, item[0].id))
+    result.extend(orphans)
+    return result

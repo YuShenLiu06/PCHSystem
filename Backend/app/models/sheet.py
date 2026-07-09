@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -6,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     SmallInteger,
     Text,
     UniqueConstraint,
@@ -116,7 +118,7 @@ class SheetRow(Base):
         ForeignKey("sheets.sheet_rows.id", ondelete="CASCADE"),
         nullable=True,
     )
-    qty_per_unit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    qty_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

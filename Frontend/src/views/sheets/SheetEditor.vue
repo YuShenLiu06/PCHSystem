@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElTable } from 'element-plus'
 import {
   getSheet,
   patchSheet,
@@ -53,10 +53,10 @@ const newRow = ref({
 })
 
 // 新增子物品表单（临时存储，每行独立）
-const newSubRow = ref<Record<number, { registry_id: string; qty_per_unit: number; mode: number; sort_order: number }>>({})
+const newSubRow = ref<Record<number, { item_name: string; registry_id: string; qty_per_unit: number; mode: number; sort_order: number }>>({})
 
-// 子物品展开状态（记录哪些父行的子行表格已展开）
-const subRowsExpanded = ref<Set<number>>(new Set())
+// 表格 ref（用于控制展开/折叠）
+const sheetTableRef = ref<any>()
 
 // 编辑标题
 const titleEditing = ref(false)
@@ -219,6 +219,7 @@ async function load(): Promise<void> {
     titleDraft.value = data.title
     // 初始化行草稿（含 mode + parent_row_id + qty_per_unit）
     rowDrafts.value = {}
+    newSubRow.value = {}
     for (const r of data.rows) {
       rowDrafts.value[r.id] = {
         item_name: r.item_name,
@@ -228,6 +229,18 @@ async function load(): Promise<void> {
         sort_order: r.sort_order,
         parent_row_id: r.parent_row_id,
         qty_per_unit: r.qty_per_unit,
+      }
+      // 顶层行预初始化「添加子物品」表单对象——popover 内容随表格 scoped slot 预渲染，
+      // 若 newSubRow[row.id] 缺失，模板访问 .registry_id 会抛 TypeError 中断整表渲染。
+      // 模式继承该行当前 mode（owner 改父行 mode 后下次 load/轮询会重建）。
+      if (r.parent_row_id === null) {
+        newSubRow.value[r.id] = {
+          item_name: '',
+          registry_id: '',
+          qty_per_unit: 1,
+          mode: r.mode === MODE_LOCK ? MODE_LOCK : MODE_PROGRESS,
+          sort_order: 0,
+        }
       }
     }
   } catch (e: unknown) {
@@ -258,8 +271,28 @@ async function silentRefresh(): Promise<void> {
         qty_per_unit: r.qty_per_unit,
       }
     }
+    // 顶层行预初始化「添加子物品」表单（同 load，防 popover 预渲染抛错）；已有则保留用户输入
+    if (r.parent_row_id === null && !newSubRow.value[r.id]) {
+      newSubRow.value[r.id] = {
+        item_name: '',
+        registry_id: '',
+        qty_per_unit: 1,
+        mode: r.mode === MODE_LOCK ? MODE_LOCK : MODE_PROGRESS,
+        sort_order: 0,
+      }
+    }
   }
-  sheet.value = data
+  // 身份保留式合并：轮询拿到的 data 是全新对象，直接赋值会让 el-table 判定数据全变 →
+  // 整表 tear down 重建（176 行 × ~2000 组件）造成每秒卡顿。改为复用「未变化行」的原对象引用，
+  // el-table keyed diff 命中同引用 → 跳过该行重渲染。仅真正变化的行（状态/认领/交付进度等）才换新。
+  const prevById = new Map(sheet.value.rows.map((r) => [r.id, r]))
+  sheet.value = {
+    ...data,
+    rows: data.rows.map((r) => {
+      const prev = prevById.get(r.id)
+      return prev && rowEqual(prev, r) ? prev : r
+    }),
+  }
 }
 
 async function onSaveTitle(): Promise<void> {
@@ -361,34 +394,6 @@ async function onDeleteRow(row: RowDetail): Promise<void> {
 
 // === 子物品操作 ===
 
-// 切换子行展开/折叠
-function toggleSubRows(parentRowId: number): void {
-  if (subRowsExpanded.value.has(parentRowId)) {
-    subRowsExpanded.value.delete(parentRowId)
-  } else {
-    subRowsExpanded.value.add(parentRowId)
-  }
-  // 触发响应式更新
-  subRowsExpanded.value = new Set(subRowsExpanded.value)
-}
-
-// 判断子行是否展开
-function isSubRowsExpanded(parentRowId: number): boolean {
-  return subRowsExpanded.value.has(parentRowId)
-}
-
-// 初始化子物品表单（展开时）
-function initSubRowForm(parentRowId: number): void {
-  if (!newSubRow.value[parentRowId]) {
-    newSubRow.value[parentRowId] = {
-      registry_id: '',
-      qty_per_unit: 1,
-      mode: MODE_LOCK,
-      sort_order: 0,
-    }
-  }
-}
-
 // 新增子物品
 async function onAddSubRow(parentRow: RowDetail): Promise<void> {
   const parentId = parentRow.id
@@ -400,20 +405,23 @@ async function onAddSubRow(parentRow: RowDetail): Promise<void> {
     ElMessage.warning('请输入子物品注册名（如 minecraft:stick）')
     return
   }
-  if (form.qty_per_unit < 1) {
-    ElMessage.warning('每件数量必须 >= 1')
+  if (form.qty_per_unit <= 0) {
+    ElMessage.warning('倍数必须 > 0')
     return
   }
+  const itemName = form.item_name.trim()
 
   try {
     // 新建子行：parent_row_id + registry_id + qty_per_unit（必须）
-    // need_qty 由后端派生 = qty_per_unit × 父行.need_qty
+    // need_qty 由后端派生 = ceil(qty_per_unit × 父行.need_qty)；
+    // item_name 可选——填了后端拼「父名-item_name」，没填按 registry_id 翻译再拼父名前缀。
     const created = await upsertRow(sheetId.value, {
       parent_row_id: parentId,
       registry_id: regId,
       qty_per_unit: form.qty_per_unit,
       mode: form.mode,
       sort_order: form.sort_order,
+      ...(itemName ? { item_name: itemName } : {}),
     })
 
     if (sheet.value) {
@@ -433,6 +441,7 @@ async function onAddSubRow(parentRow: RowDetail): Promise<void> {
 
     // 重置表单
     newSubRow.value[parentId] = {
+      item_name: '',
       registry_id: '',
       qty_per_unit: 1,
       mode: MODE_LOCK,
@@ -444,17 +453,28 @@ async function onAddSubRow(parentRow: RowDetail): Promise<void> {
   }
 }
 
-// 保存子物品（编辑 qty_per_unit 等）
+// 保存子物品（编辑 item_name / qty_per_unit 等）
 async function onSaveSubRow(subRow: RowDetail): Promise<void> {
   const draft = rowDrafts.value[subRow.id]
   if (!draft) return
 
+  if (draft.qty_per_unit === null || draft.qty_per_unit <= 0) {
+    ElMessage.warning('倍数必须 > 0')
+    return
+  }
+  const itemName = draft.item_name.trim()
+  if (!itemName) {
+    ElMessage.warning('物品名不能为空')
+    return
+  }
   const regId = draft.registry_id.trim()
   try {
-    // 更新子物品：传 row_id + qty_per_unit（可改每件数量）
+    // 更新子物品：传 row_id + item_name（改名）+ qty_per_unit（重算 need）；
+    // item_name 为当前完整名（含父名前缀），后端 update 路径尊重传入值、不重拼。
     await upsertRow(sheetId.value, {
       row_id: subRow.id,
-      qty_per_unit: draft.qty_per_unit ?? 1,
+      item_name: itemName,
+      qty_per_unit: draft.qty_per_unit,
       mode: draft.mode,
       sort_order: draft.sort_order,
       ...(regId ? { registry_id: regId } : {}),
@@ -591,35 +611,81 @@ function back(): void {
   router.push('/sheets')
 }
 
-// === 树状渲染 computed ===
-
-// 按父行分组：Map<parent_row_id | null, RowDetail[]>
-const rowsByParent = computed(() => {
-  if (!sheet.value) return new Map<number | null, RowDetail[]>()
-  const map = new Map<number | null, RowDetail[]>()
-  for (const row of sheet.value.rows) {
-    const key = row.parent_row_id
-    if (!map.has(key)) {
-      map.set(key, [])
-    }
-    map.get(key)!.push(row)
-  }
-  return map
-})
-
-// 顶层行列表（parent_row_id 为 null）
-const topRows = computed(() => {
-  return rowsByParent.value.get(null) ?? []
-})
-
-// 获取某行的子行列表
-function getSubRows(parentRowId: number): RowDetail[] {
-  return rowsByParent.value.get(parentRowId) ?? []
-}
+// === 树状渲染：身份保留构建 ===
 
 // 判断是否为子行
 function isSubRow(row: RowDetail): boolean {
   return row.parent_row_id !== null
+}
+
+// 轮询身份保留用：比较两行是否完全一致（全字段，含 contributors 嵌套数组）。
+// 未变行复用原对象引用 → el-table keyed diff 跳过重渲染。
+// JSON.stringify 安全：两端均出自同一 Pydantic 序列化路径，键序一致、均为 JSON 原生类型（无函数/Date 对象）。
+function rowEqual(a: RowDetail, b: RowDetail): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+// 朴素 treeRows = top.map(r => ({...r, children})) 每秒轮询都产全新包装对象 → el-table 判定
+// :data 全变 → 反复 re-normalize 树 → 展开态丢失 / 图标过渡动画被打断 / 缩进抖动。
+// 解法：缓存包装节点，仅当某顶层行引用或其子行集合（按元素引用）变化时才重建该节点；
+//       全部未变时复用上一轮外层数组引用。silentRefresh 已对未变行复用 sheet.value.rows
+//       元素引用，故多数轮询周期 :data 引用完全不变 → el-table 跳过 re-normalize → 稳定。
+//       注：行字段真变化（他人协作）时 silentRefresh 换新对象 → 命中重建，标量自然刷新，无陈旧。
+type TreeNode = RowDetail & { children: RowDetail[] }
+const nodeCache = new Map<number, { node: TreeNode; src: RowDetail; children: RowDetail[] }>()
+let cachedTree: TreeNode[] = []
+
+const treeRows = computed<TreeNode[]>(() => {
+  if (!sheet.value) return []
+  // 按父分组（每轮重建，仅供本次决策，不长期持有）
+  const byParent = new Map<number | null, RowDetail[]>()
+  for (const r of sheet.value.rows) {
+    const list = byParent.get(r.parent_row_id)
+    if (list) list.push(r)
+    else byParent.set(r.parent_row_id, [r])
+  }
+  const tops = byParent.get(null) ?? []
+
+  let anyChanged = tops.length !== cachedTree.length
+  const next: TreeNode[] = []
+  for (let i = 0; i < tops.length; i++) {
+    const row = tops[i]
+    const newChildren = byParent.get(row.id) ?? []
+    const cached = nodeCache.get(row.id)
+    // 子行集合按元素引用比较（newChildren 每轮是新数组，不能比数组引用）
+    const reuse =
+      !!cached &&
+      cached.src === row &&
+      cached.children.length === newChildren.length &&
+      cached.children.every((c, idx) => c === newChildren[idx])
+    if (reuse) {
+      next.push(cached!.node)
+    } else {
+      const node: TreeNode = { ...row, children: newChildren }
+      nodeCache.set(row.id, { node, src: row, children: newChildren })
+      next.push(node)
+      anyChanged = true
+    }
+  }
+  // 全部未变 → 复用上一轮外层数组引用
+  if (!anyChanged) return cachedTree
+  cachedTree = next
+  return next
+})
+
+// Popover 打开时展开父行
+function onSubRowPopoverShow(parentRow: RowDetail): void {
+  sheetTableRef.value?.toggleRowExpansion(parentRow, true)
+  // 初始化该父行的新增子物品表单
+  if (!newSubRow.value[parentRow.id]) {
+    newSubRow.value[parentRow.id] = {
+      item_name: '',
+      registry_id: '',
+      qty_per_unit: 1,
+      mode: parentRow.mode === MODE_LOCK ? MODE_LOCK : MODE_PROGRESS,
+      sort_order: 0,
+    }
+  }
 }
 
 onMounted(load)
@@ -670,32 +736,32 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
       <div v-if="canEdit && !isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <el-input v-model="newRow.item_name" placeholder="物品名" style="width: 200px;" maxlength="128" />
         <el-input v-model="newRow.registry_id" placeholder="注册名（可空，如 minecraft:stone）" style="width: 240px;" maxlength="128" />
-        <el-input-number v-model="newRow.need_qty" :min="0" controls-position="right" style="width: 130px;" />
+        <el-input-number v-model="newRow.need_qty" :min="0" placeholder="数量" controls-position="right" style="width: 130px;" />
         <el-select v-model="newRow.mode" style="width: 120px;">
           <el-option :value="0" label="锁定" />
           <el-option :value="1" label="进度" />
         </el-select>
-        <el-input-number v-model="newRow.sort_order" :min="0" controls-position="right" style="width: 120px;" />
+        <el-input-number v-model="newRow.sort_order" :min="0" placeholder="排序" controls-position="right" style="width: 120px;" />
         <el-button type="primary" @click="onAddRow">添加</el-button>
       </div>
 
-      <!-- 树状表格：顶层行 + 嵌套子行 -->
-      <el-table :data="topRows" border>
+      <!-- 树状表格：顶层行 + 嵌套子行（el-table tree mode）。indent 加大让父子层级更直观 -->
+      <el-table
+        ref="sheetTableRef"
+        :data="treeRows"
+        border
+        row-key="id"
+        :indent="24"
+        :tree-props="{ children: 'children' }"
+      >
         <el-table-column label="物品名" min-width="180">
           <template #default="{ row }">
-            <!-- 顶层行：物品名 -->
-            <template v-if="!isSubRow(row)">
-              <el-input
-                v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
-                v-model="rowDrafts[row.id].item_name"
-                maxlength="128"
-              />
-              <span v-else>{{ row.item_name }}</span>
-            </template>
-            <!-- 子行：缩进 + 物品名 -->
-            <template v-else>
-              <span style="padding-left: 24px;">└ {{ row.item_name }}</span>
-            </template>
+            <el-input
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+              v-model="rowDrafts[row.id].item_name"
+              maxlength="128"
+            />
+            <span v-else>{{ row.item_name }}</span>
           </template>
         </el-table-column>
 
@@ -715,23 +781,33 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
 
         <el-table-column label="需要数量" width="100">
           <template #default="{ row }">
-            <template v-if="isSubRow(row) && row.qty_per_unit">
-              <!-- 子行：显示「每件 ×N」+ 总量 -->
-              <span style="font-size: 12px; color: #666;">每件 ×{{ row.qty_per_unit }}</span>
-              <br />
-              <span>{{ row.need_qty }}</span>
-            </template>
-            <template v-else>
-              <!-- 顶层行：可编辑 need_qty -->
+            <el-input-number
+              v-if="canEdit && !isReadOnly && rowDrafts[row.id] && !isSubRow(row)"
+              v-model="rowDrafts[row.id].need_qty"
+              :min="0"
+              placeholder="数量"
+              controls-position="right"
+              size="small"
+            />
+            <span v-else>{{ row.need_qty }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="倍数" width="100">
+          <template #default="{ row }">
+            <template v-if="isSubRow(row)">
               <el-input-number
-                v-if="canEdit && !isReadOnly && rowDrafts[row.id] && !isSubRow(row)"
-                v-model="rowDrafts[row.id].need_qty"
+                v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+                v-model="rowDrafts[row.id].qty_per_unit"
                 :min="0"
+                :step="0.1"
+                :precision="2"
                 controls-position="right"
                 size="small"
               />
-              <span v-else>{{ row.need_qty }}</span>
+              <span v-else>{{ row.qty_per_unit }}</span>
             </template>
+            <span v-else style="color: #ccc;">—</span>
           </template>
         </el-table-column>
 
@@ -741,7 +817,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
           </template>
         </el-table-column>
 
-        <!-- 模式列：顶层行可切换；子行继承父行模式（父 lock 强制子 lock） -->
+        <!-- 模式列：顶层行可切换；子行继承父行模式 -->
         <el-table-column label="模式" width="80">
           <template #default="{ row }">
             <el-select
@@ -811,6 +887,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
               v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
               v-model="rowDrafts[row.id].sort_order"
               :min="0"
+              placeholder="排序"
               controls-position="right"
               size="small"
             />
@@ -818,279 +895,86 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
           </template>
         </el-table-column>
 
-        <!-- 动作列：紧凑按钮 + tooltip -->
-        <el-table-column label="操作" width="200" align="center">
+        <!-- 统一操作列：文字按钮 -->
+        <el-table-column label="操作" width="320" align="center">
           <template #default="{ row }">
             <template v-if="!isReadOnly">
-              <!-- 顶层行操作 -->
-              <template v-if="!isSubRow(row)">
-                <!-- 拥有者：保存/删除/展开子行 -->
-                <template v-if="canEdit">
-                  <el-tooltip content="保存" placement="top">
-                    <el-button type="primary" size="small" icon="Check" circle @click="onSaveRow(row)" />
-                  </el-tooltip>
-                  <el-tooltip content="删除" placement="top">
-                    <el-button type="danger" size="small" icon="Delete" circle @click="onDeleteRow(row)" />
-                  </el-tooltip>
-                  <el-tooltip content="子物品" placement="top">
-                    <el-button
-                      :type="isSubRowsExpanded(row.id) ? 'primary' : 'default'"
+              <!-- 拥有者操作 -->
+              <template v-if="canEdit">
+                <el-button size="small" type="primary" @click="isSubRow(row) ? onSaveSubRow(row) : onSaveRow(row)">保存</el-button>
+                <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
+                <!-- 父行：添加子物品按钮（Popover） -->
+                <el-popover
+                  v-if="!isSubRow(row)"
+                  placement="right"
+                  width="400"
+                  trigger="click"
+                  @show="() => onSubRowPopoverShow(row)"
+                >
+                  <template #reference>
+                    <el-button size="small">添加子物品</el-button>
+                  </template>
+                  <!-- v-if 守卫：popover 内容随表格预渲染，newSubRow[row.id] 缺失时跳过整块，
+                       避免下方 v-model="newSubRow[row.id].X" 访问 undefined 抛错（数据层已预初始化，此处为防御兜底） -->
+                  <div v-if="newSubRow[row.id]" style="display: flex; flex-direction: column; gap: 8px;">
+                    <div style="font-weight: 600;">新增子物品</div>
+                    <el-input
+                      v-model="newSubRow[row.id].item_name"
+                      placeholder="物品名（可空，留空按注册名翻译；存储为「父名-本名」）"
+                      maxlength="128"
                       size="small"
-                      @click="() => { toggleSubRows(row.id); initSubRowForm(row.id) }"
-                    >
-                      {{ isSubRowsExpanded(row.id) ? '收起' : `子物品${getSubRows(row.id).length}` }}
-                    </el-button>
-                  </el-tooltip>
-                </template>
-                <!-- 玩家协作按钮 -->
-                <el-tooltip v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" content="认领" placement="top">
-                  <el-button type="primary" size="small" icon="User" circle @click="onClaim(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" content="上交材料" placement="top">
-                  <el-button type="primary" size="small" icon="Upload" circle @click="onContribute(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" content="标备齐" placement="top">
-                  <el-button type="success" size="small" icon="Check" circle @click="onSetDelivery(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit" content="放弃" placement="top">
-                  <el-button size="small" icon="Close" circle @click="onRelease(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" content="解除锁定" placement="top">
-                  <el-button size="small" icon="Unlock" plain circle @click="onRelease(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="canEdit && row.mode === MODE_PROGRESS" content="调整进度" placement="top">
-                  <el-button type="warning" size="small" icon="Edit" plain circle @click="onAdjustProgress(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" content="打回" placement="top">
-                  <el-button type="warning" size="small" icon="RefreshLeft" plain circle @click="onReject(row)" />
-                </el-tooltip>
+                    />
+                    <el-input
+                      v-model="newSubRow[row.id].registry_id"
+                      placeholder="注册名（如 minecraft:stick）"
+                      maxlength="128"
+                      size="small"
+                    />
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <span style="font-size: 12px; color: #666;">倍数：</span>
+                      <el-input-number
+                        v-model="newSubRow[row.id].qty_per_unit"
+                        :min="0"
+                        :step="0.1"
+                        :precision="2"
+                        controls-position="right"
+                        size="small"
+                        style="width: 110px;"
+                      />
+                      <span style="font-size: 12px; color: #888;">× {{ row.need_qty }} = {{ Math.ceil(row.need_qty * (newSubRow[row.id]?.qty_per_unit || 0)) }}</span>
+                    </div>
+                    <el-select v-model="newSubRow[row.id].mode" size="small">
+                      <el-option :value="0" label="锁定" />
+                      <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
+                    </el-select>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <span style="font-size: 12px; color: #666;">排序：</span>
+                      <el-input-number
+                        v-model="newSubRow[row.id].sort_order"
+                        :min="0"
+                        controls-position="right"
+                        size="small"
+                        style="width: 100px;"
+                      />
+                    </div>
+                    <el-button type="primary" size="small" @click="onAddSubRow(row)">确认添加</el-button>
+                  </div>
+                </el-popover>
               </template>
 
-              <!-- 子行操作 -->
-              <template v-else>
-                <!-- 拥有者：保存/删除子行 -->
-                <template v-if="canEdit">
-                  <el-tooltip content="保存" placement="top">
-                    <el-button type="primary" size="small" icon="Check" circle @click="onSaveSubRow(row)" />
-                  </el-tooltip>
-                  <el-tooltip content="删除" placement="top">
-                    <el-button type="danger" size="small" icon="Delete" circle @click="onDeleteSubRow(row)" />
-                  </el-tooltip>
-                </template>
-                <!-- 子行协作按钮（复用 claim/delivery/contribute） -->
-                <el-tooltip v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" content="认领" placement="top">
-                  <el-button type="primary" size="small" icon="User" circle @click="onClaim(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" content="上交材料" placement="top">
-                  <el-button type="primary" size="small" icon="Upload" circle @click="onContribute(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" content="标备齐" placement="top">
-                  <el-button type="success" size="small" icon="Check" circle @click="onSetDelivery(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit" content="放弃" placement="top">
-                  <el-button size="small" icon="Close" circle @click="onRelease(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" content="解除锁定" placement="top">
-                  <el-button size="small" icon="Unlock" plain circle @click="onRelease(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="canEdit && row.mode === MODE_PROGRESS" content="调整进度" placement="top">
-                  <el-button type="warning" size="small" icon="Edit" plain circle @click="onAdjustProgress(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" content="打回" placement="top">
-                  <el-button type="warning" size="small" icon="RefreshLeft" plain circle @click="onReject(row)" />
-                </el-tooltip>
-              </template>
+              <!-- 玩家协作按钮 -->
+              <el-button v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" size="small" type="primary" @click="onClaim(row)">认领</el-button>
+              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit" size="small" @click="onRelease(row)">放弃</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" size="small" @click="onRelease(row)">解除锁定</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
             </template>
             <span v-else style="color: #aaa;">—</span>
           </template>
         </el-table-column>
       </el-table>
-
-      <!-- 子行嵌套表格（展开时显示） -->
-      <template v-for="topRow in topRows" :key="topRow.id">
-        <div
-          v-if="isSubRowsExpanded(topRow.id) && canEdit && !isReadOnly"
-          style="margin-left: 24px; margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px;"
-        >
-          <!-- 新增子物品表单 -->
-          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-            <span style="font-size: 12px; color: #666;">新增子物品：</span>
-            <el-input
-              v-model="newSubRow[topRow.id].registry_id"
-              placeholder="注册名（如 minecraft:stick）"
-              style="width: 200px;"
-              maxlength="128"
-              size="small"
-            />
-            <el-input-number
-              v-model="newSubRow[topRow.id].qty_per_unit"
-              :min="1"
-              controls-position="right"
-              style="width: 110px;"
-              size="small"
-            />
-            <span style="font-size: 12px; color: #888;">每件 × 总量 = {{ topRow.need_qty * (newSubRow[topRow.id].qty_per_unit || 0) }}</span>
-            <el-select v-model="newSubRow[topRow.id].mode" style="width: 90px;" size="small">
-              <el-option :value="0" label="锁定" />
-              <el-option :value="1" label="进度" :disabled="topRow.mode === MODE_LOCK" />
-            </el-select>
-            <el-input-number
-              v-model="newSubRow[topRow.id].sort_order"
-              :min="0"
-              controls-position="right"
-              style="width: 100px;"
-              size="small"
-            />
-            <el-button type="primary" size="small" @click="onAddSubRow(topRow)">添加子物品</el-button>
-          </div>
-        </div>
-
-        <!-- 子行列表（内联展开） -->
-        <el-table
-          v-if="isSubRowsExpanded(topRow.id)"
-          :data="getSubRows(topRow.id)"
-          border
-          style="margin-left: 24px; margin-top: 8px;"
-          size="small"
-        >
-          <el-table-column label="物品名" min-width="140">
-            <template #default="{ row }">
-              <span style="padding-left: 8px;">└ {{ row.item_name }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="注册名" min-width="140">
-            <template #default="{ row }">
-              <el-input
-                v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
-                v-model="rowDrafts[row.id].registry_id"
-                placeholder="minecraft:stick"
-                maxlength="128"
-                size="small"
-              />
-              <span v-else style="color: #999; font-size: 12px;">{{ row.registry_id }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="每件 × 总量" width="100">
-            <template #default="{ row }">
-              <template v-if="canEdit && !isReadOnly && rowDrafts[row.id]">
-                <el-input-number
-                  v-model="rowDrafts[row.id].qty_per_unit"
-                  :min="1"
-                  controls-position="right"
-                  size="small"
-                  style="width: 80px;"
-                />
-                <span style="font-size: 12px; color: #666;">× {{ topRow.need_qty }} = {{ row.need_qty }}</span>
-              </template>
-              <template v-else>
-                <span style="font-size: 12px; color: #666;">每件 ×{{ row.qty_per_unit }}</span>
-                <br />
-                <span>{{ row.need_qty }}</span>
-              </template>
-            </template>
-          </el-table-column>
-          <el-table-column label="模式" width="70">
-            <template #default="{ row }">
-              <el-select
-                v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
-                v-model="rowDrafts[row.id].mode"
-                size="small"
-                :disabled="topRow.mode === MODE_LOCK"
-              >
-                <el-option :value="0" label="锁定" />
-                <el-option :value="1" label="进度" :disabled="topRow.mode === MODE_LOCK" />
-              </el-select>
-              <span v-else>{{ row.mode === 1 ? '进度' : '锁定' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="认领者" width="120">
-            <template #default="{ row }">
-              <template v-if="row.mode === MODE_PROGRESS">
-                <template v-if="row.contributors && row.contributors.length">
-                  <el-tag v-for="c in row.contributors" :key="c.player_uuid" size="small" style="margin: 2px;">
-                    {{ c.player_name }}
-                  </el-tag>
-                </template>
-                <span v-else style="color: #aaa;">—</span>
-              </template>
-              <template v-else>
-                <span v-if="row.claimant_name">{{ row.claimant_name }}</span>
-                <span v-else style="color: #aaa;">—</span>
-              </template>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="70" align="center">
-            <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status as 'open' | 'claimed' | 'done')" size="small">
-                {{ statusLabel(row.status as 'open' | 'claimed' | 'done') }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="进度" width="100">
-            <template #default="{ row }">
-              <template v-if="row.mode === MODE_PROGRESS">
-                <span style="font-size: 12px;">{{ row.delivered_qty }}/{{ row.need_qty }}</span>
-                <el-progress
-                  :percentage="row.need_qty > 0 ? Math.min(Math.round((row.delivered_qty / row.need_qty) * 100), 100) : 0"
-                  :stroke-width="6"
-                  :show-text="false"
-                  style="margin-top: 2px;"
-                />
-              </template>
-              <span v-else style="color: #aaa;">—</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="排序" width="80">
-            <template #default="{ row }">
-              <el-input-number
-                v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
-                v-model="rowDrafts[row.id].sort_order"
-                :min="0"
-                controls-position="right"
-                size="small"
-                style="width: 70px;"
-              />
-              <span v-else>{{ row.sort_order }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="140" align="center">
-            <template #default="{ row }">
-              <template v-if="!isReadOnly">
-                <template v-if="canEdit">
-                  <el-tooltip content="保存" placement="top">
-                    <el-button type="primary" size="small" icon="Check" circle @click="onSaveSubRow(row)" />
-                  </el-tooltip>
-                  <el-tooltip content="删除" placement="top">
-                    <el-button type="danger" size="small" icon="Delete" circle @click="onDeleteSubRow(row)" />
-                  </el-tooltip>
-                </template>
-                <el-tooltip v-if="row.mode === MODE_LOCK && row.status === 'open' && auth.player" content="认领" placement="top">
-                  <el-button type="primary" size="small" icon="User" circle @click="onClaim(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" content="上交" placement="top">
-                  <el-button type="primary" size="small" icon="Upload" circle @click="onContribute(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" content="备齐" placement="top">
-                  <el-button type="success" size="small" icon="Check" circle @click="onSetDelivery(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit" content="放弃" placement="top">
-                  <el-button size="small" icon="Close" circle @click="onRelease(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done')" content="解锁" placement="top">
-                  <el-button size="small" icon="Unlock" plain circle @click="onRelease(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="canEdit && row.mode === MODE_PROGRESS" content="调整" placement="top">
-                  <el-button type="warning" size="small" icon="Edit" plain circle @click="onAdjustProgress(row)" />
-                </el-tooltip>
-                <el-tooltip v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" content="打回" placement="top">
-                  <el-button type="warning" size="small" icon="RefreshLeft" plain circle @click="onReject(row)" />
-                </el-tooltip>
-              </template>
-              <span v-else style="color: #aaa;">—</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </template>
     </template>
   </el-card>
 

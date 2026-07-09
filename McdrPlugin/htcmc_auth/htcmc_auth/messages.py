@@ -81,8 +81,8 @@ _MODE_LABEL = {0: "lock", 1: "progress"}
 _STATUS_COLOR = {"open": "§7", "claimed": "§e", "done": "§a"}
 # 顶层行格式：#{row_id} {item} [{mode}] {delivered}/{need} {claimant}
 SHEET_ROW_LINE = "{status_c}#{row_id} §f{item} §7[{mode}] §b{delivered}/{need} §7{claimant}"
-# 子行格式：└ #{row_id} {item} [{mode}] ×{qty_per_unit}/件 (需{need}) {claimant}
-SHEET_SUB_ROW_LINE = "  §8└ {status_c}#{row_id} §f{item} §7[{mode}] §7×{qty_per_unit}/件 §b(需{need}) §7{claimant}"
+# 子行格式：└ #{row_id} {item} [{mode}] 每件×{qty_per_unit} (需{need}) {claimant}
+SHEET_SUB_ROW_LINE = "  §8└ {status_c}#{row_id} §f{item} §7[{mode}] §7每件×{qty_per_unit} §b(需{need}) §7{claimant}"
 SHEET_OK_CREATED = "§a已建表 #{id} {title}"
 SHEET_OK_RENAMED = "§a已改标题 #{id} → {title}"
 SHEET_OK_DELETED = "§a已删表 #{id}"
@@ -162,8 +162,12 @@ def format_row_line(row: dict) -> str:
     progress 行：认领者列改显贡献者（按贡献量降序，至多 2 位 + 省略号）；无则「未认领」。
     lock 行：显 claimant_name。
 
-    子行（parent_row_id 非空）：缩进 2 空格 + └ 前缀，显示 qty_per_unit/件 (需{need})。
+    子行（parent_row_id 非空）：缩进 2 空格 + └ 前缀，显示每件×{qty_per_unit} (需{need})。
     """
+    def _fmt_mult(v):
+        """去除浮点数尾零：2.0→2，1.5→1.5（避免「×2.0」）"""
+        return f"{float(v):g}" if v is not None else "1"
+
     mode = _MODE_LABEL.get(int(row.get("mode", 0)), str(row.get("mode")))
     status = str(row.get("status", ""))
     parent_row_id = row.get("parent_row_id")
@@ -173,13 +177,13 @@ def format_row_line(row: dict) -> str:
         claimant = row.get("claimant_name") or "未认领"
 
     if parent_row_id is not None:
-        # 子行格式：└ #{row_id} {item} [{mode}] ×{qty_per_unit}/件 (需{need}) {claimant}
+        # 子行格式：└ #{row_id} {item} [{mode}] 每件×{qty_per_unit} (需{need}) {claimant}
         return SHEET_SUB_ROW_LINE.format(
             status_c=_status_color(status),
             row_id=row.get("id"),
             item=row.get("item_name"),
             mode=mode,
-            qty_per_unit=row.get("qty_per_unit", 1),
+            qty_per_unit=_fmt_mult(row.get("qty_per_unit", 1)),
             need=row.get("need_qty", 0),
             claimant=claimant,
         )
@@ -248,7 +252,7 @@ def format_row_clickable(
       open      → [献]（任意，直接贡献）
       claimed   → [献][完]（任意；协作）/ [释]（owner）
       done      → [释]（owner 重置进度；reject 对 progress 返 409 故无打回）
-    拥有者在任意状态额外追加 [调]（仅 progress 行，绝对值覆写）与 [改]/[ID]/[-]。
+    拥有者在任意状态额外追加 [调]（仅 progress 行，绝对值覆写）与 [改]/[-]。
     子行（parent_row_id 非空）缩进，按钮同上。
     其余状态/未知 → 仅行文本（无按钮）。
     """
@@ -318,7 +322,7 @@ def format_row_clickable(
         ))
     if is_owner:
         buttons.append(rtext_button(
-            "[改ID]", f"!!PCH sheet setreg {sheet_id} {rid} ",
+            "[改]", f"!!PCH sheet setreg {sheet_id} {rid} ",
             color=RColor.yellow,
             hover="改行 registry_id（直接回车=手持物品；或空格后输入新 registry_id）",
         ))
@@ -326,12 +330,12 @@ def format_row_clickable(
             "[-]", f"!!PCH sheet delrow {sheet_id} {rid}",
             color=RColor.red, hover="删除此行（拥有者）",
         ))
-        # 顶层父行（非子行）显示 [+子] 按钮
+        # 顶层父行（非子行）显示 [子] 按钮
         if parent_row_id is None:
             buttons.append(rtext_button(
-                "[+子]", f"!!PCH sheet addsub {sheet_id} {rid} ",
+                "[子]", f"!!PCH sheet addsub {sheet_id} {rid} ",
                 color=RColor.green,
-                hover="添加子物品（续输：registry_id 每件数量 [lock|progress] [排序]）",
+                hover="添加子物品（手持该物品；续输：倍数 [lock|progress] [排序]）",
             ))
 
     line_text = format_row_line(row)

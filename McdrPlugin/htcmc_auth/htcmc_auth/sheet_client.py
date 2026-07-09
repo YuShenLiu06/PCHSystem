@@ -160,7 +160,7 @@ def upsert_row(
     registry_id: Optional[str] = None,
     row_id: Optional[int] = None,
     parent_row_id: Optional[int] = None,
-    qty_per_unit: Optional[int] = None,
+    qty_per_unit: Optional[float] = None,
 ) -> SheetOutcome:
     """PUT /sheets/{sheet_id}/rows 单端点按 row_id 分流（issue #20）→ RowDetail。
 
