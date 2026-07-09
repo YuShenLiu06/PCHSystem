@@ -2,7 +2,7 @@
 注入最小替身使被测模块可 import。
 
 约定：
-- mcdreforged.api.command：Literal/Text/Integer/QuotableText 链式 .then/.runs 返回 self
+- mcdreforged.api.command：Literal/Text/Integer/QuotableText/GreedyText 链式 .then/.runs 返回 self
 - mcdreforged.api.rtext：RText/RTextList/RColor/RStyle/RAction 真实可用（§码渲染为字符串）
 - mcdreforged.api.decorator.new_thread：passthrough（同步执行被装饰函数并返回其结果）
 - mcdreforged.api.utils.Serializable：基类，提供从 dict 反序列化的最小能力
@@ -121,10 +121,14 @@ def install_stubs() -> None:
     class QuotableText(_Node):
         pass
 
+    class GreedyText(_Node):
+        pass
+
     command.Literal = Literal
     command.Text = Text
     command.Integer = Integer
     command.QuotableText = QuotableText
+    command.GreedyText = GreedyText
 
     # === mcdreforged.api.decorator ===
     decorator = types.ModuleType("mcdreforged.api.decorator")
@@ -158,6 +162,7 @@ def install_stubs() -> None:
     api_all.Text = Text
     api_all.Integer = Integer
     api_all.QuotableText = QuotableText
+    api_all.GreedyText = GreedyText
 
     # 组装 mcdreforged 包树
     mcdreforged = types.ModuleType("mcdreforged")
