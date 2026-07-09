@@ -12,7 +12,7 @@ import io
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, or_, select, union_all
+from sqlalchemy import case, delete, func, or_, select, union_all
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +42,8 @@ _CSV_HEADER = [
     "claimant_uuid",
     "delivered_qty",
     "sort_order",
+    "parent_row_id",
+    "qty_per_unit",
 ]
 
 
@@ -198,15 +200,26 @@ async def list_rows(
 ) -> list[tuple[SheetRow, str | None]]:
     """列单表所有行：left join players 取认领人游戏名。返回 [(SheetRow, claimant_name|None)]。
 
-    ``search`` 非空时按 ``item_name`` / ``registry_id`` 大小写不敏感子串过滤（``registry_id`` 可空 →
-    NULL 不匹配，天然 null-safe）。``order_by`` 保持 ``sort_order, id``——优先级排序交 router 层
-    ``sort_sheet_rows`` 做，避免影响 archive/CSV 等其它调用方。
+    ``search`` 非空时按 ``item_name`` / ``registry_id`` 大小写不敏感子串过滤。
+    分组排序：父行（parent_row_id IS NULL）优先，子行紧跟其父行（按 parent_row_id 分组）。
+    同组内按 sort_order, id。
     """
     stmt = (
         select(SheetRow, Player.current_name)
         .outerjoin(Player, Player.uuid == SheetRow.claimant_uuid)
         .where(SheetRow.sheet_id == sheet_id)
-        .order_by(SheetRow.sort_order, SheetRow.id)
+        .order_by(
+            # 父行（parent_row_id IS NULL）排在前面
+            SheetRow.parent_row_id.is_(None).desc(),
+            # 父行按 sort_order 排序，子行按 parent_row_id（父的 id）分组
+            case(
+                (SheetRow.parent_row_id.is_(None), SheetRow.sort_order),
+                else_=SheetRow.parent_row_id,
+            ),
+            # 同组内按 sort_order, id
+            SheetRow.sort_order,
+            SheetRow.id,
+        )
     )
     if search:
         # 转义 LIKE 通配符（% _ \）：registry_id 普遍含 _（如 minecraft:oak_log），
@@ -302,14 +315,38 @@ async def create_row(
     mode: int,
     sort_order: int,
     registry_id: str | None = None,
+    parent_row_id: int | None = None,
+    qty_per_unit: int | None = None,
 ) -> SheetRow:
-    """严格新建行（不做 upsert；issue #20 后 item_name 不再作 upsert 锁点）。
+    """严格新建行（不做 upsert）。
 
-    新建行：status=open / claimant=None / delivered=0。``item_name`` 是数据字段，
-    同名由 ``UNIQUE(sheet_id, item_name)`` 约束兜底 —— 并发同名 insert 触发
-    IntegrityError，上抛交 api 层翻译为 409（不再静默覆盖旧行）。
+    子物品嵌套行（0012）：
+    - 父行锁校验单层（parent.parent_row_id IS NULL）。
+    - 模式继承：父 lock 强制子 lock；缺省继承父 mode。
+    - need_qty = qty_per_unit × parent.need_qty（子行派生）。
+    - 子行必传 registry_id + qty_per_unit≥1。
     """
     await _assert_writable(session, sheet_id)
+
+    # 子物品逻辑
+    if parent_row_id is not None:
+        # 父行锁校验单层
+        parent = await session.get(SheetRow, parent_row_id)
+        if parent is None or parent.sheet_id != sheet_id:
+            raise IntegrityError("parent_row_id not found or cross-sheet")
+        if parent.parent_row_id is not None:
+            raise IntegrityError("子行只能嵌套一层（parent.parent_row_id IS NULL）")
+        if registry_id is None:
+            raise IntegrityError("子行必传 registry_id")
+        if qty_per_unit is None or qty_per_unit < 1:
+            raise IntegrityError("子行 qty_per_unit 必须≥1")
+        # 模式继承：父 lock 强制子 lock
+        if parent.mode == MODE_LOCK:
+            mode = MODE_LOCK
+        else:
+            mode = mode if mode is not None else parent.mode
+        need_qty = qty_per_unit * parent.need_qty
+
     row = SheetRow(
         sheet_id=sheet_id,
         item_name=item_name,
@@ -317,6 +354,8 @@ async def create_row(
         mode=mode,
         sort_order=sort_order,
         registry_id=registry_id,
+        parent_row_id=parent_row_id,
+        qty_per_unit=qty_per_unit,
     )
     session.add(row)
     await session.flush()
@@ -368,18 +407,13 @@ async def update_row(
     need_qty: int | None = None,
     mode: int | None = None,
     sort_order: int | None = None,
+    parent_row_id: int | None = None,
+    qty_per_unit: int | None = None,
 ) -> SheetRow | None:
-    """按主键 row_id 部分更新行（"修改"操作以 id 为定位主轴，而非可变的 item_name）。
+    """按主键 row_id 部分更新行（子物品嵌套行 0012）。
 
-    issue #20：旧 upsert by item_name 改名会用新名查不到旧行 → 新建 → 重复。
-    update_row 按 (sheet_id, id) 锁行后逐字段部分更新（None=不改动）：
-    item_name 改名 / registry_id 覆盖（None 不擦）/ need_qty·mode·sort_order 调整。
-
-    mode 仅在「传入且与原值不同」时重置协作；未传 mode 不重置。need_qty/mode 均未传
-    时（纯改名/改 sort/改 registry_id）不动协作状态。并发同名改名命中
-    UNIQUE(sheet_id, item_name) → IntegrityError 上抛交 api 层翻译为 409。
-
-    返回更新后的行；行不存在 → None（→ api 404）。
+    子行 qty_per_unit/mode 变 → 重算 need_qty = qty_per_unit × 父.need_qty。
+    顶层行 need/mode 变 → 级联子行重算。
     """
     await _assert_writable(session, sheet_id)
     stmt = (
@@ -390,22 +424,68 @@ async def update_row(
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         return None
+
+    # 记录是否为顶层行（用于级联判断）
+    is_top_level = row.parent_row_id is None
+    old_parent_id = row.parent_row_id
+    old_mode = row.mode
+    old_need = row.need_qty
+
+    # 子物品逻辑：子行 qty_per_unit 变
+    if qty_per_unit is not None and row.parent_row_id is not None:
+        parent = await session.get(SheetRow, row.parent_row_id)
+        if parent:
+            row.need_qty = qty_per_unit * parent.need_qty
+
     if item_name is not None:
         row.item_name = item_name
     if registry_id is not None:
         row.registry_id = registry_id
-    mode_changed = mode is not None and row.mode != mode
     if need_qty is not None:
         row.need_qty = need_qty
     if mode is not None:
         row.mode = mode
     if sort_order is not None:
         row.sort_order = sort_order
-    # mode/need 任一变化才重算；二者都未传 → 纯改名/改 sort，不动协作状态
-    if mode_changed or need_qty is not None:
+    if parent_row_id is not None:
+        row.parent_row_id = parent_row_id
+    if qty_per_unit is not None:
+        row.qty_per_unit = qty_per_unit
+
+    mode_changed = mode is not None and row.mode != old_mode
+    need_changed = need_qty is not None and row.need_qty != old_need
+
+    # mode/need 任一变化才重算
+    if mode_changed or need_changed:
         await _recompute_after_edit(
             session, row, mode_changed=mode_changed, new_need_qty=row.need_qty
         )
+
+    await session.flush()
+
+    # 顶层行 need/mode 变 → 级联子行重算
+    if is_top_level and (need_changed or mode_changed):
+        child_stmt = (
+            select(SheetRow)
+            .where(SheetRow.parent_row_id == row_id)
+            .order_by(SheetRow.id)
+        )
+        child_rows = (await session.execute(child_stmt)).scalars().all()
+        for child in child_rows:
+            child_need_changed = False
+            if need_changed and child.qty_per_unit is not None:
+                child.need_qty = child.qty_per_unit * row.need_qty
+                child_need_changed = True
+            if mode_changed and row.mode == MODE_LOCK:
+                child.mode = MODE_LOCK
+                await _recompute_after_edit(
+                    session, child, mode_changed=True, new_need_qty=child.need_qty
+                )
+            elif child_need_changed:
+                await _recompute_after_edit(
+                    session, child, mode_changed=False, new_need_qty=child.need_qty
+                )
+
     await session.flush()
     return row
 
@@ -689,6 +769,8 @@ def _row_to_csv_record(sheet_id: int, row: SheetRow) -> list[str | int]:
         str(row.claimant_uuid) if row.claimant_uuid is not None else "",
         row.delivered_qty,
         row.sort_order,
+        row.parent_row_id or "",
+        row.qty_per_unit or "",
     ]
 
 

@@ -135,6 +135,8 @@ def _row_dict(
         "contributors": contributors or [],
         "sort_order": row.sort_order,
         "updated_at": row.updated_at,
+        "parent_row_id": row.parent_row_id,
+        "qty_per_unit": row.qty_per_unit,
     }
 
 

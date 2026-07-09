@@ -71,18 +71,17 @@ class SheetRow(Base):
 
     item_name 自由文本（D-2，红线 R-6 不覆盖 sheets）；
     need_qty 原始整数（D-4，永不存换算结果）；
-    mode=0 lock（二元备齐，单人锁定）/ mode=1 progress（进度，多人贡献者列表，spec D-4 已推翻为众筹）；
+    mode=0 lock（二元备齐，单人锁定）/ mode=1 progress（进度，多人贡献者列表）；
     status 三态 open/claimed/done；lock=认领协作状态机，progress=由 delivered_qty 推导；
     claimant_uuid lock 模式当前认领人（open 态 null）；progress 模式恒 null（贡献者走 SheetRowContributor 子表）；
     delivered_qty 已交付数量（lock 认领人维护；progress 任何人 contribute 累加）。
-    UNIQUE(sheet_id, item_name) 兼作 upsert 锁点。
+
+    子物品嵌套行（0012 迁移）：parent_row_id（FK 自引用 CASCADE）+ qty_per_unit。
+    顶层行 UNIQUE(sheet_id, item_name)，子行 UNIQUE(parent_row_id, registry_id)。
     """
 
     __tablename__ = "sheet_rows"
-    __table_args__ = (
-        UniqueConstraint("sheet_id", "item_name", name="uq_sheet_rows_sheet_item"),
-        {"schema": "sheets"},
-    )
+    __table_args__ = {"schema": "sheets"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     sheet_id: Mapped[int] = mapped_column(
@@ -91,7 +90,7 @@ class SheetRow(Base):
         nullable=False,
     )
     item_name: Mapped[str] = mapped_column(Text, nullable=False)
-    # MC 注册名（namespace:path，如 minecraft:stone）；隐式可空——
+    # MC 注册名（namespace:path，如 minecraft:stone）；隐式可空。
     # 投影解析 from-items 透传 / MCDR 手持新建行 / Web 行编辑器手填。
     # 一键提交按此字段精确匹配；旧行与纯文本行为 null（不参与匹配）。
     registry_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -111,6 +110,13 @@ class SheetRow(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 子物品嵌套行（0012 迁移）
+    parent_row_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("sheets.sheet_rows.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    qty_per_unit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

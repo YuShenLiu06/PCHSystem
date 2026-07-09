@@ -26,6 +26,10 @@ class RowUpsertRequest(BaseModel):
         翻译补默认 ``item_name``（未命中回退 registry_id 本身）。
 
     issue #20：旧实现无 row_id，改名走 by-``item_name`` upsert 查不到旧行 → 新建 → 重复。
+
+    子物品嵌套行（0012）：
+    - ``parent_row_id`` 非空时为子行：要求 ``registry_id`` 非空 + ``qty_per_unit`` ≥ 1。
+    - 子行 ``need_qty`` 由 API 派生（= qty_per_unit × 父行.need_qty），请求传入时忽略。
     """
 
     row_id: int | None = Field(default=None, ge=1)
@@ -34,12 +38,24 @@ class RowUpsertRequest(BaseModel):
     need_qty: int | None = Field(default=None, ge=0)
     mode: int | None = Field(default=None, ge=0, le=1)
     sort_order: int | None = Field(default=None, ge=0)
+    parent_row_id: int | None = Field(default=None, ge=1)
+    qty_per_unit: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _require_name_or_registry_when_create(self) -> "RowUpsertRequest":
         # 仅新建路径（无 row_id）要求 item_name/registry_id 至少一个；更新路径字段全可选
         if self.row_id is None and not self.item_name and not self.registry_id:
             raise ValueError("item_name 与 registry_id 至少提供一个")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_sub_item_requirements(self) -> "RowUpsertRequest":
+        # 子物品路径：parent_row_id 非空时，registry_id 必填 + qty_per_unit ≥ 1
+        if self.parent_row_id is not None:
+            if self.registry_id is None:
+                raise ValueError("子物品（parent_row_id 非空）必须提供 registry_id")
+            if self.qty_per_unit is None or self.qty_per_unit < 1:
+                raise ValueError("子物品（parent_row_id 非空）qty_per_unit 必须 ≥ 1")
         return self
 
 
@@ -79,6 +95,8 @@ class RowDetail(BaseModel):
     contributors: list[RowContributor] = []
     sort_order: int
     updated_at: datetime
+    parent_row_id: int | None = None
+    qty_per_unit: int | None = None
 
 
 class SheetSummary(BaseModel):

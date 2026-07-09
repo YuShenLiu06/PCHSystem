@@ -144,9 +144,9 @@ async def test_get_sheet_csv_format(client):
     assert resp.headers["content-type"].startswith("text/csv")
     lines = resp.text.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order,parent_row_id,qty_per_unit"
     )
-    assert lines[1] == f"{sid},iron,,64,0,open,,0,0"
+    assert lines[1] == f"{sid},iron,,64,0,open,,0,0,,"
 
 
 # ---------- PATCH /sheets/{id} ----------
@@ -664,9 +664,9 @@ async def test_export_all_returns_csv(client):
     assert resp.headers["content-type"].startswith("text/csv")
     lines = resp.text.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order,parent_row_id,qty_per_unit"
     )
-    assert f"{sid},iron,,64,0,open,,0,0" in lines[1:]
+    assert f"{sid},iron,,64,0,open,,0,0,," in lines[1:]
 
 
 # ---------- progress 行：多人贡献者（contribute） ----------

@@ -188,10 +188,10 @@ async def test_export_csv_single_sheet():
     csv_str = sheet_repo.export_csv(sheet.id, rows)
     lines = csv_str.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order,parent_row_id,qty_per_unit"
     )
-    assert lines[1] == f"{sheet.id},iron,,64,0,open,,0,0"
-    assert lines[2] == f"{sheet.id},gold,,128,1,open,,0,1"
+    assert lines[1] == f"{sheet.id},iron,,64,0,open,,0,0,,"
+    assert lines[2] == f"{sheet.id},gold,,128,1,open,,0,1,,"
 
 
 @pytest.mark.asyncio
@@ -210,11 +210,11 @@ async def test_export_all_csv_multiple_sheets():
     csv_str = sheet_repo.export_all_csv(bundled)
     lines = csv_str.strip().splitlines()
     assert lines[0] == (
-        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order,parent_row_id,qty_per_unit"
     )
     body = lines[1:]
-    assert f"{s1.id},a,,1,0,open,,0,0" in body
-    assert f"{s2.id},b,,2,1,open,,0,0" in body
+    assert f"{s1.id},a,,1,0,open,,0,0,," in body
+    assert f"{s2.id},b,,2,1,open,,0,0,," in body
     assert len(body) == 2
 
 
@@ -228,7 +228,7 @@ async def test_export_csv_empty_sheet_has_header_only():
     csv_str = sheet_repo.export_csv(sheet.id, [])
     lines = csv_str.strip().splitlines()
     assert lines == [
-        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order"
+        "sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,sort_order,parent_row_id,qty_per_unit"
     ]
 
 

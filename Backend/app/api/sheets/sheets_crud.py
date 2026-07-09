@@ -63,6 +63,8 @@ async def create_sheet_from_items(
                 mode=item.mode if item.mode is not None else sheet_repo.MODE_LOCK,
                 sort_order=item.sort_order if item.sort_order is not None else 0,
                 registry_id=item.registry_id,
+                parent_row_id=item.parent_row_id,
+                qty_per_unit=item.qty_per_unit,
             )
         except IntegrityError as exc:
             await session.rollback()

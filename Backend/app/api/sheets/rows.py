@@ -102,7 +102,11 @@ async def _create_row_by_item(
     session: AsyncSession, sheet: Sheet, body: RowUpsertRequest
 ) -> SheetRow:
     """新建路径（无 row_id）：严格 INSERT。"""
-    item_name = _resolve_item_name(body.item_name, body.registry_id)
+    # 子物品路径：parent_row_id 非空时 item_name 可缺失（用 registry_id 翻译）
+    if body.parent_row_id is not None:
+        item_name = _resolve_item_name(body.item_name, body.registry_id)
+    else:
+        item_name = _resolve_item_name(body.item_name, body.registry_id)
     row = await sheet_repo.create_row(
         session,
         sheet_id=sheet.id,
@@ -111,6 +115,8 @@ async def _create_row_by_item(
         mode=body.mode if body.mode is not None else sheet_repo.MODE_LOCK,
         sort_order=body.sort_order if body.sort_order is not None else 0,
         registry_id=body.registry_id,
+        parent_row_id=body.parent_row_id,
+        qty_per_unit=body.qty_per_unit,
     )
     return row
 
@@ -143,6 +149,8 @@ async def _update_row_by_id(
         need_qty=body.need_qty,
         mode=body.mode,
         sort_order=body.sort_order,
+        parent_row_id=body.parent_row_id,
+        qty_per_unit=body.qty_per_unit,
     )
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
