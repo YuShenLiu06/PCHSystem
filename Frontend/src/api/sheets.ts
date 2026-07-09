@@ -26,6 +26,8 @@ export interface SheetDetail extends SheetSummary {
 // status: open（未认领/未交付）| claimed（认领中/部分交付）| done（已备齐）
 // progress 行：claimant_uuid 恒为 null，contributors 列出所有贡献过的玩家（聚合）
 // lock 行：contributors 恒为空数组，由 claimant_uuid 单人锁定
+// parent_row_id: 非空表示子物品（父行 id），顶层行为 null
+// qty_per_unit: 子物品每件需求量（父行 need_qty × qty_per_unit = 子行 need_qty），顶层行为 null
 export interface RowDetail {
   id: number
   item_name: string
@@ -40,6 +42,8 @@ export interface RowDetail {
   delivered_qty: number
   contributors: { player_uuid: string; player_name: string }[]
   sort_order: number
+  parent_row_id: number | null
+  qty_per_unit: number | null
   updated_at: string
 }
 
@@ -54,6 +58,7 @@ export interface SheetPatchRequest {
 // PUT /sheets/{sid}/rows 单端点按 row_id 分流（issue #20 改名重复修复）：
 //   带 row_id → 按主键更新（item_name 可改名，其余字段部分更新；修改以 id 为定位主轴）；
 //   不带 row_id → 按 item_name 新建（item_name 与 registry_id 至少传一个）。
+//   带 parent_row_id → 新建子物品（子行），须同时传 registry_id + qty_per_unit（>=1）。
 export interface RowUpsertRequest {
   row_id?: number
   item_name?: string
@@ -61,16 +66,21 @@ export interface RowUpsertRequest {
   need_qty?: number
   mode?: number
   sort_order?: number
+  parent_row_id?: number
+  qty_per_unit?: number
 }
 
 // mode: 0=lock（默认）| 1=progress，与 RowUpsertRequest 同语义；用于 from-items 批量建表。
 // 投影解析路径透传 registry_id（= PreviewItem.item_id）+ 中文 item_name。
+// parent_row_id + qty_per_unit: 用于子物品（暂不支持批量建子表，仅为接口一致性）。
 export interface SheetItemIn {
   item_name?: string
   registry_id?: string
   need_qty: number
   mode?: number
   sort_order?: number
+  parent_row_id?: number
+  qty_per_unit?: number
 }
 
 export interface SheetFromItemsRequest {

@@ -75,6 +75,8 @@ const rowDetail = {
   delivered_qty: 0,
   contributors: [],
   sort_order: 1,
+  parent_row_id: null,
+  qty_per_unit: null,
   updated_at: '',
 }
 
@@ -199,6 +201,46 @@ describe('sheets API client', () => {
         item_name: '石英柱1',
       })
       expect(result).toEqual(renamed)
+    })
+
+    it('新建子物品（带 parent_row_id + registry_id + qty_per_unit）', async () => {
+      const subRow = {
+        ...rowDetail,
+        id: 11,
+        item_name: '木棍',
+        parent_row_id: 10,
+        qty_per_unit: 2,
+        need_qty: 128, // 父行 64 × 2 = 128
+      }
+      mocked.put.mockResolvedValue({ data: subRow })
+      const result = await upsertRow(1, {
+        parent_row_id: 10,
+        registry_id: 'minecraft:stick',
+        qty_per_unit: 2,
+      })
+      expect(mocked.put).toHaveBeenCalledWith('/sheets/1/rows', {
+        parent_row_id: 10,
+        registry_id: 'minecraft:stick',
+        qty_per_unit: 2,
+      })
+      expect(result).toEqual(subRow)
+    })
+
+    it('更新子物品 qty_per_unit（带 row_id + qty_per_unit）', async () => {
+      const updatedSub = {
+        ...rowDetail,
+        id: 11,
+        parent_row_id: 10,
+        qty_per_unit: 4,
+        need_qty: 256, // 父行 64 × 4 = 256
+      }
+      mocked.put.mockResolvedValue({ data: updatedSub })
+      const result = await upsertRow(1, { row_id: 11, qty_per_unit: 4 })
+      expect(mocked.put).toHaveBeenCalledWith('/sheets/1/rows', {
+        row_id: 11,
+        qty_per_unit: 4,
+      })
+      expect(result).toEqual(updatedSub)
     })
   })
 
