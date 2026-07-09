@@ -209,11 +209,14 @@ async def list_rows(
         .order_by(SheetRow.sort_order, SheetRow.id)
     )
     if search:
-        pat = f"%{search.lower()}%"
+        # 转义 LIKE 通配符（% _ \）：registry_id 普遍含 _（如 minecraft:oak_log），
+        # 不转义则 _ 被当单字符通配，搜 oak_log 会误匹配 oakXlog 之类
+        escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pat = f"%{escaped}%"
         stmt = stmt.where(
             or_(
-                func.lower(SheetRow.item_name).like(pat),
-                func.lower(SheetRow.registry_id).like(pat),
+                func.lower(SheetRow.item_name).like(pat, escape="\\"),
+                func.lower(SheetRow.registry_id).like(pat, escape="\\"),
             )
         )
     return [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
