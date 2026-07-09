@@ -307,15 +307,20 @@ erDiagram
 - **lock（mode=0）**：单认领人状态机 `open → claimed → done`（claim / delivery / release / reject）；`open ⇒ claimant IS NULL ∧ delivered=0`，`claimed ⇒ claimant NOT NULL`，`done ⇒ claimant NOT NULL ∧ delivered≥need`。
 - **progress（mode=1）**：`claimant_uuid` **恒 null**（不锁定单人）；`status` 由 `delivered_qty` 推导（`=0 → open` / `0<x<need → claimed` / `>=need → done`）；贡献者走 `sheet_row_contributors` 子表，任何人 `POST /contribute`（增量累加、幂等加入）。`claim/delivery/reject` 对 progress 行 → 409；owner `release` 清 delivered + 贡献者重置。
 
-### 10.3 `sheet_row_contributors`（progress 行贡献者，迁移 0007）
+### 10.3 `sheet_row_contributors`（progress 行贡献者，迁移 0007 + 0008）
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | bigserial | PK | |
 | `row_id` | bigint | FK→sheet_rows.id `ON DELETE CASCADE`, not null | 删行级联清贡献者 |
 | `player_uuid` | uuid | FK→players.uuid, not null | 贡献者身份锚（R-5） |
-| `joined_at` | timestamptz | not null default now() | 首次上交时间（贡献者排序依据） |
+| `joined_at` | timestamptz | not null default now() | 首次上交时间 |
+| `contributed_qty` | integer | not null default 0（迁移 0008 加） | 该玩家对该行的**历史累计上交量**；每次 `contribute` 增量累加（append-only），owner 调进度（`PATCH /progress`）**不改它** |
 
-约束：`UNIQUE(row_id, player_uuid)`（同一玩家对同一行只一条记录，配合 `INSERT ... ON CONFLICT DO NOTHING` 幂等加入）。仅 progress（mode=1）行写入；lock 行不用本表。
+约束：`UNIQUE(row_id, player_uuid)`（同一玩家对同一行只一条记录）。`contribute_row` 用 `INSERT ... ON CONFLICT (row_id, player_uuid) DO UPDATE SET contributed_qty = contributed_qty + <本次qty>` 幂等加入并按人累加（**非** `DO NOTHING`——`DO NOTHING` 会丢量）。仅 progress（mode=1）行写入；lock 行不用本表。
+
+> **与 `sheet_rows.delivered_qty` 解耦（重要）**：`delivered_qty` 是 owner 可修正的**当前进度**（绝对值覆写，可增可减）；`contributed_qty` 是每位玩家**历史累计上交**（只增）。因此 `Σ contributed_qty` **可能 ≠ `delivered_qty`**——owner 一旦手动调过进度，二者就会漂移（属预期，不是 bug：贡献者统计保留历史，进度条反映当前）。
+>
+> **排序**：`list_contributors` 按 `contributed_qty DESC, joined_at, id` 返回贡献者名单（贡献多者在前）。**注意（已知缺口）**：当前该列只用于排序，`list_contributors` 的 SELECT 与响应 schema `RowContributor` 均**未带出 `contributed_qty`** → 客户端只拿到排好序的名字列表、看不到每人具体量；归档统计 `aggregate_contributor_totals` 则会用到（见 §10.4）。
 
 > **权限（RBAC，后端为准）**：JWT 已登录可读所有表；表的 `owner_uuid` 或 admin/owner 角色可写；CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。
