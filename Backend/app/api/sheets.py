@@ -78,12 +78,17 @@ logger = logging.getLogger(__name__)
 def _resolve_item_name(item_name: str | None, registry_id: str | None) -> str:
     """item_name 缺失时用 registry_id 翻译补默认中文名；未命中回退 registry_id 本身。
 
-    供 upsert / from-items 落库前补默认名（MCDR addhand 只传 registry_id 时走此路径）。
-    schema 的 model_validator 已保证二者至少有一个非空，此处不再校验。
+    供新建路径（from-items / 无 row_id upsert）落库前补默认名（MCDR addhand 只传
+    registry_id 时走此路径）。schema 的 model_validator 已保证二者至少有一个非空；
+    此处仍防御性返回 422（不裸 assert 致 500，issue #20 回归）。
     """
     if item_name:
         return item_name
-    assert registry_id is not None
+    if registry_id is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "item_name 与 registry_id 至少提供一个",
+        )
     return _translator.translate(registry_id)
 
 
@@ -530,6 +535,10 @@ async def _update_row_by_id(
         mode=body.mode,
         sort_order=body.sort_order,
     )
+    if row is None:
+        # 并发删行竞态：上面 get_row 之后、update_row FOR UPDATE 锁行之前，行被另一事务
+        # 删除并提交 → update_row 返 None。干净 404，避免下游 _dispatch 解引用 / refresh(None) 致 500。
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     await _dispatch_row_edit_notifications(
         session,
         sheet=sheet,

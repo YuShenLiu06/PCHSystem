@@ -128,3 +128,28 @@ async def test_from_items_requires_name_or_registry_per_item(client):
         headers=_auth(bearer),
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_from_items_rejects_row_id_in_item(client):
+    """issue #20 回归：SheetItemIn 继承了 row_id，但批量建行每条均新建，row_id 无意义。
+
+    旧 bug：携带 row_id 会绕过「name/registry 至少一个」校验（该豁免仅服务更新路径），
+    使 item_name=None & registry_id=None 直抵 _resolve_item_name 的防御点 → AssertionError → 500。
+    现 SheetItemIn._forbid_row_id_in_batch_create 拒绝 → 干净 422（而非 500）。
+    """
+    _, bearer = await _make_player("leader")
+    # 仅 row_id（既无 name 也无 registry）—— 旧实现会绕过校验后崩 500
+    resp = await client.post(
+        "/sheets/from-items",
+        json={"title": "x", "items": [{"row_id": 1}]},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 422, resp.text
+    # 带 name 也带 row_id —— 同样应被拒（row_id 在此场景无意义）
+    resp2 = await client.post(
+        "/sheets/from-items",
+        json={"title": "y", "items": [{"row_id": 1, "item_name": "石头", "need_qty": 1}]},
+        headers=_auth(bearer),
+    )
+    assert resp2.status_code == 422, resp2.text

@@ -1,8 +1,9 @@
 """_sheet_upsert 默认值回归测试。
 
-背景：`!!PCH sheet add/set <表id> <物品> <数量>` 省略 mode/sort 时，命令树经
+背景：`!!PCH sheet add <表id> <物品> <数量>` 省略 mode/sort 时，命令树经
 `Integer("need").runs(_sheet_upsert)` 触发本回调，ctx 内不含 mode/sort 键。
 此处锁定回调的默认映射：mode→0(lock)、sort→0，并覆盖 progress / 显式 sort 非默认路径。
+（注：`set` 改行数量走 `_sheet_set`（按 row_id），见 test_sheet_set_defaults.py。）
 
 说明：命令树的路由接线（need 节点是否挂 .runs）属 MCDR 框架解析行为，_stubs 不实现
 解析器、无法在单测层覆盖；其正确性由 S-1 联网核实 + 游戏内热重载实测保证（见

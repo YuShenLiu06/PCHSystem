@@ -221,16 +221,6 @@ async def get_row(
     return row[0], row[1]
 
 
-async def get_row_by_item(
-    session: AsyncSession, sheet_id: int, item_name: str
-) -> SheetRow | None:
-    """按 (sheet_id, item_name) UNIQUE 锁点查行（upsert 前捕获旧状态用）。"""
-    stmt = select(SheetRow).where(
-        SheetRow.sheet_id == sheet_id, SheetRow.item_name == item_name
-    )
-    return (await session.execute(stmt)).scalar_one_or_none()
-
-
 async def upsert_row(
     session: AsyncSession,
     sheet_id: int,
@@ -241,6 +231,10 @@ async def upsert_row(
     registry_id: str | None = None,
 ) -> SheetRow:
     """按 UNIQUE(sheet_id, item_name) upsert（拥有者改需求/mode/sort/registry_id）。在则改，不在则 insert。
+
+    ⚠️ **仅供测试 seeding 用**——生产路径已弃用此 by-``item_name`` upsert（issue #20：
+    改名查不到旧行 → 新建 → 重复）。新代码请用 ``create_row``（严格新建）/ ``update_row``
+    （按 row_id 主键更新）。**勿在 app/ 内复用本函数**，否则会悄悄把 #20 引回来。
 
     新建行：status=open / claimant=None / delivered=0。
     更新行 mode 不变：仅改 need_qty/sort_order（+ registry_id 仅当传入非 None），保留 status/claimant/delivered；

@@ -101,7 +101,17 @@ class SheetItemIn(RowUpsertRequest):
     """``/sheets/from-items`` 批量建行条目（继承 ``RowUpsertRequest`` 字段 + 校验，mode 默认 lock）。
 
     投影解析 ``PreviewItem`` 透传 ``registry_id``（= ``item_id``）+ 中文 ``item_name``。
+    每条均为**新建**（新表无既有行可定位）→ ``row_id`` 在此无意义，禁止携带：
+    否则会绕过父类「name/registry 至少一个」校验（该豁免仅服务更新路径），
+    使 ``item_name=None & registry_id=None`` 直抵 ``_resolve_item_name`` 的防御点 → 500。
     """
+
+    @model_validator(mode="after")
+    def _forbid_row_id_in_batch_create(self) -> "SheetItemIn":
+        # row_id 是更新路径的定位主轴；批量新建携带它既无意义又会绕过 name/registry 校验
+        if self.row_id is not None:
+            raise ValueError("from-items 批量建行不支持 row_id（每行均为新建）")
+        return self
 
 
 class SheetFromItemsRequest(BaseModel):
