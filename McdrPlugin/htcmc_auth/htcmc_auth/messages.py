@@ -355,7 +355,7 @@ def format_centered_text(text: str, *, pad_color=RColor.gray) -> RTextList:
     )
 
 
-def format_view_footer(sheet_id) -> RTextList:
+def format_view_footer(sheet_id: int) -> RTextList:
     """view 公开快捷按钮行（**常驻**，所有查看者可见）：[一键提交] + [搜索]。
 
     [搜索] suggest `!!PCH sheet view <id> -s `，玩家补关键词回车；居中走 ``_center_button_row``。
@@ -375,7 +375,7 @@ def format_view_footer(sheet_id) -> RTextList:
 
 
 def format_pagination_footer(
-    sheet_id, page: int, total_pages: int, *, search: str | None = None
+    sheet_id: int, page: int, total_pages: int, *, search: str | None = None
 ) -> RTextList:
     """分页栏：[上一页] §7page/total§r [下一页]，居中（``_center_button_row``）。
 
@@ -402,7 +402,7 @@ def format_pagination_footer(
     return _center_button_row(parts)
 
 
-def format_search_hint(query: str, sheet_id) -> RTextList:
+def format_search_hint(query: str, sheet_id: int) -> RTextList:
     """搜索态提示行：§7搜索: §f<query>§r  + [清除]（suggest 无搜索的 view 回全表）。"""
     return RTextList(
         RText("§7搜索: §f"),

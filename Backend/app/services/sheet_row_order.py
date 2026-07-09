@@ -65,7 +65,7 @@ def sort_sheet_rows(
     入参 ``rows`` = list_rows 返回的 ``[(SheetRow, claimant_name|None)]``；不改入参。
     """
     return sorted(
-        list(rows),
+        rows,
         key=lambda item: (
             row_priority(item[0], player_uuid, my_row_ids),
             -row_remaining(item[0]),

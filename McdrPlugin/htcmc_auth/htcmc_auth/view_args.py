@@ -9,7 +9,7 @@ from __future__ import annotations
 VIEW_PAGE_SIZE = 30
 
 
-def paginate_rows(rows: list, page: int, size: int = VIEW_PAGE_SIZE):
+def paginate_rows(rows: list, page: int, size: int = VIEW_PAGE_SIZE) -> tuple[list, int, int]:
     """把 rows 切成第 page 页。返回 (page_rows, total_pages, total)。
 
     page 钳到 ``[1, total_pages]``；空表 ``total_pages=1``（避免 0 页导致按钮/计算异常）。
@@ -22,7 +22,7 @@ def paginate_rows(rows: list, page: int, size: int = VIEW_PAGE_SIZE):
     return rows[start:start + size], total_pages, total
 
 
-def parse_view_args(tokens):
+def parse_view_args(tokens: list[str]) -> tuple[int, str | None, str | None]:
     """解析 view 参数 token 列表 → (page, search, unknown)。
 
     支持：``-p N`` / ``--page N`` / 裸整数（页码）；``-s <kw>`` / ``--search <kw>``
