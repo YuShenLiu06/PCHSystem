@@ -12,6 +12,7 @@ import io
 import math
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import case, delete, func, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
@@ -203,8 +204,10 @@ async def list_rows(
     """列单表所有行：left join players 取认领人游戏名。返回 [(SheetRow, claimant_name|None)]。
 
     ``search`` 非空时按 ``item_name`` / ``registry_id`` 大小写不敏感子串过滤。
-    分组排序：父行（parent_row_id IS NULL）优先，子行紧跟其父行（按 parent_row_id 分组）。
-    同组内按 sort_order, id。
+    分组排序：所有父行（parent_row_id IS NULL）排在前面（组内按 sort_order, id），
+    所有子行排在后面（按 parent_row_id 分组——同父的子行相邻，组内再按 sort_order, id）。
+    注意：子行并非紧跟各自父行，而是父行段与子行段分两段（archive 不渲染行清单、CSV
+    依赖此稳定顺序，勿改 SQL）。
     """
     stmt = (
         select(SheetRow, Player.current_name)
@@ -308,6 +311,32 @@ async def upsert_row(
     return row
 
 
+async def _validate_parent_for_sub(
+    session: AsyncSession,
+    sheet_id: int,
+    parent_row_id: int,
+    *,
+    self_row_id: int | None = None,
+) -> SheetRow:
+    """子物品父行校验（create_row / update_row 共用，DRY）。
+
+    校验：
+    - 自引用：``parent_row_id == self_row_id`` → ValueError（仅 update 需要，create 无 id）。
+    - parent 存在且同表：parent is None 或 parent.sheet_id != sheet_id → ValueError（跨表拦截）。
+    - 单层：parent.parent_row_id is not None → ValueError（不允许子行再挂子行）。
+
+    返回合法的 parent SheetRow；不合法 raise ValueError。
+    """
+    if self_row_id is not None and parent_row_id == self_row_id:
+        raise ValueError("parent_row_id 不能指向自身（自引用）")
+    parent = await session.get(SheetRow, parent_row_id)
+    if parent is None or parent.sheet_id != sheet_id:
+        raise ValueError("parent_row_id not found or cross-sheet")
+    if parent.parent_row_id is not None:
+        raise ValueError("子行只能嵌套一层（parent.parent_row_id IS NULL）")
+    return parent
+
+
 async def create_row(
     session: AsyncSession,
     sheet_id: int,
@@ -333,12 +362,8 @@ async def create_row(
 
     # 子物品逻辑
     if parent_row_id is not None:
-        # 父行锁校验单层
-        parent = await session.get(SheetRow, parent_row_id)
-        if parent is None or parent.sheet_id != sheet_id:
-            raise ValueError("parent_row_id not found or cross-sheet")
-        if parent.parent_row_id is not None:
-            raise ValueError("子行只能嵌套一层（parent.parent_row_id IS NULL）")
+        # 父行校验复用共享 helper（同表/单层/自引用）。create 无 self id，不传 self_row_id。
+        parent = await _validate_parent_for_sub(session, sheet_id, parent_row_id)
         if registry_id is None:
             raise ValueError("子行必传 registry_id")
         if qty_per_unit is None or qty_per_unit <= 0:
@@ -348,7 +373,9 @@ async def create_row(
             mode = MODE_LOCK
         else:
             mode = mode if mode is not None else parent.mode
-        need_qty = math.ceil(qty_per_unit * parent.need_qty)
+        # D2：Decimal 精确计算（Python float 直接相乘会让 ceil(0.07*100)=8，
+        # 应为 7）。parent.need_qty 是 int，Decimal×int 精确。
+        need_qty = math.ceil(Decimal(str(qty_per_unit)) * parent.need_qty)
         # 子行 item_name 自动加父名前缀，避免 flat 视图（CSV/MCDR 列表）重名歧义。
         # 仅创建路径加前缀；更新路径（update_row）尊重调用方传入值，不重拼。
         item_name = f"{parent.item_name}-{item_name}"
@@ -437,11 +464,58 @@ async def update_row(
     old_mode = row.mode
     old_need = row.need_qty
 
-    # 子物品逻辑：子行 qty_per_unit 变
-    if qty_per_unit is not None and row.parent_row_id is not None:
-        parent = await session.get(SheetRow, row.parent_row_id)
-        if parent:
-            row.need_qty = math.ceil(qty_per_unit * parent.need_qty)
+    # D1：reparent 校验（parent_row_id 传入时）。复用 create_row 的父行校验 +
+    # 自引用拦截（update 特有，create 新建无 id）+ 顶层→子行转换必须有
+    # registry_id/qty_per_unit（子行不变量）。
+    reparent = parent_row_id is not None and parent_row_id != old_parent_id
+    new_parent: SheetRow | None = None
+    if parent_row_id is not None:
+        new_parent = await _validate_parent_for_sub(
+            session, sheet_id, parent_row_id, self_row_id=row_id
+        )
+        if reparent:
+            # D1 收尾：reparent 时 row 自身不能已有子行，否则形成多层嵌套
+            # （顶层行 A 有子 B，把 A 挂到 C 下 → A→C 且 A→B = 两层）。
+            # 单层不变量要求：子行的 parent 必须顶层；故挂为子行前须确认 row 无子行。
+            existing_child = (
+                await session.execute(
+                    select(SheetRow.id)
+                    .where(SheetRow.parent_row_id == row_id)
+                    .limit(1)
+                )
+            ).first()
+            if existing_child is not None:
+                raise ValueError("不能把已有子行的行挂为子行（会形成多层嵌套）")
+        if old_parent_id is None:
+            # 顶层行转子行：子行不变量要求 registry_id + qty_per_unit（本次传入或已有）。
+            effective_registry = (
+                registry_id if registry_id is not None else row.registry_id
+            )
+            if effective_registry is None:
+                raise ValueError("顶层行转子行必须有 registry_id")
+            effective_qty = (
+                qty_per_unit if qty_per_unit is not None else row.qty_per_unit
+            )
+            if effective_qty is None or effective_qty <= 0:
+                raise ValueError("顶层行转子行必须有 qty_per_unit > 0")
+
+    # D2/D3：子行 need_qty 重算。触发：
+    #   - qty_per_unit 变（非 reparent）→ 用当前 parent
+    #   - reparent（parent_row_id 变）→ 用新 parent（顶层→子行 / 子→子换父）
+    #   - 两者同时 → 用新 parent + 新 qty_per_unit
+    # Decimal 精确计算（float 直接相乘会让 ceil(0.07*100)=8）。
+    need_recompute = (
+        qty_per_unit is not None and row.parent_row_id is not None
+    ) or reparent
+    if need_recompute:
+        if reparent:
+            calc_parent = new_parent
+        else:
+            calc_parent = await session.get(SheetRow, row.parent_row_id)
+        if calc_parent is not None:
+            calc_qty = qty_per_unit if qty_per_unit is not None else row.qty_per_unit
+            if calc_qty is not None:
+                row.need_qty = math.ceil(Decimal(str(calc_qty)) * calc_parent.need_qty)
 
     if item_name is not None:
         row.item_name = item_name
@@ -482,6 +556,8 @@ async def update_row(
             if need_changed and child.qty_per_unit is not None:
                 child.need_qty = math.ceil(child.qty_per_unit * row.need_qty)
                 child_need_changed = True
+            # D7（by-design）：级联只紧不松——父切 LOCK 强制子 LOCK；父切 PROGRESS
+            # 不反向放松子行（允许 progress 父 + lock 子混合，放松留待 owner 手动改子行 mode）。
             if mode_changed and row.mode == MODE_LOCK:
                 child.mode = MODE_LOCK
                 await _recompute_after_edit(
@@ -510,7 +586,13 @@ async def _lock_row(
 async def claim_row(
     session: AsyncSession, sheet_id: int, row_id: int, claimant_uuid: uuid.UUID
 ) -> SheetRow | None:
-    """lock 行 open → claimed：置 claimant、delivered=0。progress 行 / 非 open 行视为非法转移。"""
+    """lock 行 open → claimed：置 claimant、delivered=0。progress 行 / 非 open 行视为非法转移。
+
+    子物品级联（0012）：
+    - 子行不得单独认领/解除当其父行=lock（随父行）。
+    - 认领顶层 lock 父行 = 同事务认领其所有 open lock 子行（同 claimant）。
+    - 父行=progress 时，被改成 lock 的子行可单独认领/解除（progress 父行本身不可认领，无法级联）。
+    """
     await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
@@ -519,9 +601,36 @@ async def claim_row(
         raise SheetRowConflict("progress rows use contribute, not claim")
     if row.status != STATUS_OPEN:
         raise SheetRowConflict(f"cannot claim row in status {row.status}")
+
+    # 子行守卫：子行随父 lock 行，不得单独认领
+    if row.parent_row_id is not None:
+        parent = await _lock_row(session, sheet_id, row.parent_row_id)
+        if parent is not None and parent.mode == MODE_LOCK:
+            raise SheetRowConflict("子物品随父行认领，不得单独认领")
+
+    # 认领本行
     row.status = STATUS_CLAIMED
     row.claimant_uuid = claimant_uuid
     row.delivered_qty = 0
+
+    # 顶层级联：认领所有 open lock 子行
+    if row.parent_row_id is None:
+        child_stmt = (
+            select(SheetRow)
+            .where(
+                SheetRow.sheet_id == sheet_id,
+                SheetRow.parent_row_id == row_id,
+                SheetRow.mode == MODE_LOCK,
+                SheetRow.status == STATUS_OPEN,
+            )
+            .order_by(SheetRow.id)
+        )
+        child_rows = (await session.execute(child_stmt)).scalars().all()
+        for child in child_rows:
+            child.status = STATUS_CLAIMED
+            child.claimant_uuid = claimant_uuid
+            child.delivered_qty = 0
+
     await session.flush()
     return row
 
@@ -573,17 +682,51 @@ async def set_row_progress(
 async def release_row(
     session: AsyncSession, sheet_id: int, row_id: int
 ) -> SheetRow | None:
-    """claimed/done → open：清 claimant、delivered=0、清贡献者（progress 行）。"""
+    """claimed/done → open：清 claimant、delivered=0、清贡献者（progress 行）。
+
+    子物品级联（0012）：
+    - 子行不得单独认领/解除当其父行=lock（随父行）。
+    - 解除顶层 lock 父行 = 同事务解除其所有 claimed/done lock 子行（清 claimant、delivered、贡献者）。
+    - 父行=progress 时，被改成 lock 的子行可单独认领/解除。
+    """
     await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
         raise SheetRowConflict(f"cannot release row in status {row.status}")
+
+    # 子行守卫：子行随父 lock 行，不得单独解除
+    if row.parent_row_id is not None:
+        parent = await _lock_row(session, sheet_id, row.parent_row_id)
+        if parent is not None and parent.mode == MODE_LOCK:
+            raise SheetRowConflict("子物品随父行解除，请解除父行")
+
+    # 解除本行
     row.status = STATUS_OPEN
     row.claimant_uuid = None
     row.delivered_qty = 0
     await clear_contributors(session, row.id)
+
+    # 顶层级联：解除所有 claimed/done 子行
+    if row.parent_row_id is None:
+        child_stmt = (
+            select(SheetRow)
+            .where(
+                SheetRow.sheet_id == sheet_id,
+                SheetRow.parent_row_id == row_id,
+                SheetRow.mode == MODE_LOCK,
+                SheetRow.status.in_((STATUS_CLAIMED, STATUS_DONE)),
+            )
+            .order_by(SheetRow.id)
+        )
+        child_rows = (await session.execute(child_stmt)).scalars().all()
+        for child in child_rows:
+            child.status = STATUS_OPEN
+            child.claimant_uuid = None
+            child.delivered_qty = 0
+            await clear_contributors(session, child.id)
+
     await session.flush()
     return row
 

@@ -50,11 +50,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # 子行是父行的派生物（item_name 自动加「父名-本名」前缀，need_qty 派生计算）；
+    # 降级回「无子物品」时代必须先删子行，否则 DROP COLUMN 后子行变孤儿顶层行，
+    # 其拼接名可能与既有顶层行撞 UNIQUE(sheet_id, item_name) 而 abort。
+    # 顺序：① DROP 索引/CHECK/FK → ② DELETE 子行 → ③ DROP COLUMN → ④ 还原非部分 UNIQUE。
     op.execute("""
         DROP INDEX sheets.ix_sheet_rows_parent;
         ALTER TABLE sheets.sheet_rows DROP CONSTRAINT ck_sheet_rows_sub_invariants;
         DROP INDEX sheets.uq_sheet_rows_sub_registry;
         DROP INDEX sheets.uq_sheet_rows_top_name;
+
+        DELETE FROM sheets.sheet_rows WHERE parent_row_id IS NOT NULL;
 
         ALTER TABLE sheets.sheet_rows
             ADD CONSTRAINT uq_sheet_rows_sheet_item

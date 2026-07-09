@@ -50,12 +50,18 @@ class RowUpsertRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_sub_item_requirements(self) -> "RowUpsertRequest":
-        # 子物品路径：parent_row_id 非空时，registry_id 必填 + qty_per_unit > 0
-        if self.parent_row_id is not None:
+        # 子物品路径：
+        # - 新建（无 row_id）+ parent_row_id 非空：registry_id 必填 + qty_per_unit > 0
+        # - 更新（有 row_id）+ parent_row_id 非空：registry_id 已落库不重判，
+        #   仅当显式传了 qty_per_unit 才校验 > 0（防 PATCH reparent/改 need 因缺
+        #   registry_id 被 422——issue #19 D6）
+        if self.parent_row_id is not None and self.row_id is None:
             if self.registry_id is None:
                 raise ValueError("子物品（parent_row_id 非空）必须提供 registry_id")
             if self.qty_per_unit is None or self.qty_per_unit <= 0:
                 raise ValueError("子物品（parent_row_id 非空）qty_per_unit 必须 > 0")
+        if self.qty_per_unit is not None and self.qty_per_unit <= 0:
+            raise ValueError("qty_per_unit 必须 > 0")
         return self
 
 
