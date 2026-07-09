@@ -301,8 +301,10 @@ async function onSaveRow(row: RowDetail): Promise<void> {
   }
   const regId = draft.registry_id.trim()
   try {
-    // registry_id 留空则不传（后端 None=不覆盖已有值，避免误擦匹配键）
+    // 带 row_id → 后端按主键更新（可改名，不再新建重复行，issue #20）；
+    // registry_id 留空则不传（后端 None=不覆盖已有值）
     await upsertRow(sheetId.value, {
+      row_id: row.id,
       item_name: itemName,
       need_qty: draft.need_qty,
       mode: draft.mode,

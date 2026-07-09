@@ -51,10 +51,11 @@ export interface SheetPatchRequest {
   title: string
 }
 
-// item_name 与 registry_id 至少传一个（后端 model_validator 校验，否则 422）：
-//   Web/投影解析：传中文 item_name（+ 可选 registry_id）；
-//   MCDR addhand：仅传 registry_id，后端用翻译表补默认中文名。
+// PUT /sheets/{sid}/rows 单端点按 row_id 分流（issue #20 改名重复修复）：
+//   带 row_id → 按主键更新（item_name 可改名，其余字段部分更新；修改以 id 为定位主轴）；
+//   不带 row_id → 按 item_name 新建（item_name 与 registry_id 至少传一个）。
 export interface RowUpsertRequest {
+  row_id?: number
   item_name?: string
   registry_id?: string
   need_qty?: number
