@@ -795,13 +795,17 @@ def _sheet_delrow(src, ctx):
     _do()
 
 
-def _sheet_addsub(src, ctx):
+def _sheet_addsub(src, ctx, *, mode=None):
     """子物品：在父行下建子行（issue #19）。
 
-    参数：sheet_id, parent_row_id, qty_per_unit(≥1), [mode], [sort]。
+    参数：sheet_id, parent_row_id, qty_per_unit(>0), [mode], [sort]。
     registry_id 取自手持物品（依赖 minecraft_data_api）。
     父 lock → 子强制 lock；父 progress → 子可 lock/progress（默认继承）。
     need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty）。
+
+    mode 由命令树分支闭包烘入（MCDR Literal 不入 ctx，见 _sheet_advance_* 注释；
+    S-1：https://docs.mcdreforged.com/en/latest/code_references/command.html §Literal）：
+    None=裸 addsub → mode 不下发，后端建子行时继承父行；1=progress；0=lock。
     """
     player_name = _require_player(src)
     if not player_name:
@@ -810,8 +814,9 @@ def _sheet_addsub(src, ctx):
     sheet_id = ctx["sheet_id"]
     parent_row_id = ctx["parent_row_id"]
     qty_per_unit = ctx["qty_per_unit"]
-    # mode 可选：字面量 lock/progress，默认继承父行（后端处理）
-    mode = 1 if ctx.get("mode") == "progress" else 0
+    if qty_per_unit is None or qty_per_unit <= 0:
+        server.tell(player_name, "§c倍数必须 > 0")
+        return
     sort = ctx.get("sort", 0)
 
     @new_thread('htcmc_sheet_addsub')
@@ -840,7 +845,8 @@ def _sheet_addsub(src, ctx):
         )
 
         def _show(data):
-            mode_label = "progress" if mode else "lock"
+            # 从后端返回取实际生效 mode（mode=None 继承父行时也能正确回显）；与 setsub 一致，None 安全
+            mode_label = "progress" if data.get("mode") == 1 else "lock"
             server.tell(player_name, "§a已建子行 [{reg}] ×{qty}/件（{mode}）".format(
                 reg=data.get("registry_id", registry_id),
                 qty=data.get("qty_per_unit", qty_per_unit),
@@ -881,10 +887,13 @@ def _sheet_delsub(src, ctx):
     _do()
 
 
-def _sheet_setsub(src, ctx):
+def _sheet_setsub(src, ctx, *, mode=None):
     """改子行：按 row_id 更新 qty_per_unit（mode/sort 可选）。
 
     子行更新可改 qty_per_unit/mode/sort；need_qty 被忽略（后端重算派生）。
+
+    mode 由命令树分支闭包烘入（MCDR Literal 不入 ctx，见 _sheet_advance_* 注释）：
+    None=裸 setsub → mode 不下发，后端不改 mode（避免误翻 contributors）；1=progress；0=lock。
     """
     player_name = _require_player(src)
     if not player_name:
@@ -893,8 +902,9 @@ def _sheet_setsub(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
     qty_per_unit = ctx["qty_per_unit"]
-    # mode 可选：字面量 lock/progress
-    mode = 1 if ctx.get("mode") == "progress" else 0
+    if qty_per_unit is None or qty_per_unit <= 0:
+        server.tell(player_name, "§c倍数必须 > 0")
+        return
     sort = ctx.get("sort")  # Integer 节点存入 ctx；缺省 None → 不改
 
     @new_thread('htcmc_sheet_setsub')

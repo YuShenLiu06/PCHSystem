@@ -200,14 +200,18 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         Integer("parent_row_id")
                         .then(
-                            Float("qty_per_unit").runs(_sheet_addsub)
+                            # mode 由分支闭包烘入（MCDR Literal 不入 ctx，S-1：
+                            # https://docs.mcdreforged.com/en/latest/code_references/command.html §Literal）
+                            # Float.at_min(0) 输入层挡负数；回调 guard 挡 0（业务要 > 0）
+                            Float("qty_per_unit").at_min(0)
+                            .runs(lambda s, c: _sheet_addsub(s, c, mode=None))
                             .then(
-                                Literal("lock").runs(_sheet_addsub)
-                                .then(Integer("sort").runs(_sheet_addsub))
+                                Literal("lock").runs(lambda s, c: _sheet_addsub(s, c, mode=0))
+                                .then(Integer("sort").runs(lambda s, c: _sheet_addsub(s, c, mode=0)))
                             )
                             .then(
-                                Literal("progress").runs(_sheet_addsub)
-                                .then(Integer("sort").runs(_sheet_addsub))
+                                Literal("progress").runs(lambda s, c: _sheet_addsub(s, c, mode=1))
+                                .then(Integer("sort").runs(lambda s, c: _sheet_addsub(s, c, mode=1)))
                             )
                         )
                     )
@@ -224,14 +228,16 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         Integer("row_id")
                         .then(
-                            Float("qty_per_unit").runs(_sheet_setsub)
+                            # mode 由分支闭包烘入（同 addsub）；setsub 裸分支 mode=None=不改 mode
+                            Float("qty_per_unit").at_min(0)
+                            .runs(lambda s, c: _sheet_setsub(s, c, mode=None))
                             .then(
-                                Literal("lock").runs(_sheet_setsub)
-                                .then(Integer("sort").runs(_sheet_setsub))
+                                Literal("lock").runs(lambda s, c: _sheet_setsub(s, c, mode=0))
+                                .then(Integer("sort").runs(lambda s, c: _sheet_setsub(s, c, mode=0)))
                             )
                             .then(
-                                Literal("progress").runs(_sheet_setsub)
-                                .then(Integer("sort").runs(_sheet_setsub))
+                                Literal("progress").runs(lambda s, c: _sheet_setsub(s, c, mode=1))
+                                .then(Integer("sort").runs(lambda s, c: _sheet_setsub(s, c, mode=1)))
                             )
                         )
                     )

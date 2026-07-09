@@ -115,10 +115,26 @@ def install_stubs() -> None:
     class Text(_Node):
         pass
 
-    class Integer(_Node):
+    class NumberNode(_Node):
+        """NumberNode stub：at_min/at_max/in_range 链式返回 self（占位，不做范围校验）。
+
+        MCDR 真实实现见 NumberNode（S-1）：
+        https://docs.mcdreforged.com/en/latest/code_references/command.html §NumberNode
+        """
+
+        def at_min(self, min_value):
+            return self
+
+        def at_max(self, max_value):
+            return self
+
+        def in_range(self, min_value, max_value):
+            return self
+
+    class Integer(NumberNode):
         pass
 
-    class Float(_Node):
+    class Float(NumberNode):
         pass
 
     class QuotableText(_Node):
