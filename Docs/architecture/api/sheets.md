@@ -1,6 +1,6 @@
 # sheets API 参考
 
-> 后端在线表格子服务的 HTTP API 权威参考（`Backend/app/api/sheets.py`）。
+> 后端在线表格子服务的 HTTP API 权威参考（`Backend/app/api/sheets/` 包，2026-07-09 由原 `sheets.py` 1215 行包化拆分而来）。
 > OpenAPI 工件：[`Backend/openapi.json`](../../../Backend/openapi.json)；schema：[`Backend/app/schemas/sheet.py`](../../../Backend/app/schemas/sheet.py)。
 > 玩法语义见 [`Docs/guied.md`](../../guied.md) §三「角色与权限」；协作设计见 [`Docs/superpowers/specs/2026-07-02-sheets-collaboration-design.md`](../../superpowers/specs/2026-07-02-sheets-collaboration-design.md)；MC 对等 + 通知见 [`Docs/superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md`](../../superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md)。
 
@@ -139,7 +139,7 @@ collecting ─────────────────────▶ co
 | POST | `/sheets` | JWT 或 service-token+UUID | `SheetCreateRequest{title}` | 201 `SheetDetail` | 建表，owner=self。MCDR 可经 service-token+`X-Player-UUID` 代玩家调用 |
 | POST | `/sheets/from-items` | JWT 或 service-token+UUID | `SheetFromItemsRequest{title, items[]}`（`items` 元素 = `SheetItemIn`：`item_name`/`registry_id` 均可选但至少一个、`need_qty`、`mode`、`sort_order`） | 201 `SheetDetail` | 一次性建表 + 批量行（`mode` 默认 lock、`items` ≤2000），用于「投影解析→生成表格」。现透传 `registry_id`（= 投影解析 `PreviewItem.item_id`），`item_name` 缺失时后端翻译补中文名。详见 [`parsing.md`](./parsing.md) |
 | GET | `/sheets` | JWT 或 service-token+UUID | `?owner=me`（只看自己）+ `?status=collecting\|constructing\|archived\|active`（`active`=collecting+constructing，前端默认） | 200 `[SheetSummary]` | 列所有表（含他人表可读），可按阶段过滤。**参与优先排序**：请求带玩家身份（JWT 或代玩家 UUID）时，该玩家参与过的表（owner / lock 行 claimant / progress 行 contributor 三源 UNION）置顶，组内按 id 升序，未参与表在后（`order_by id.in_(involved).desc(), id.asc()`）。MCDR 同上 |
-| GET | `/sheets/{sheet_id}` | JWT 或 service-token+UUID | `?format=csv` `?q=<关键词>` | 200 `SheetDetail` \| `text/csv` | 表详情。`?q=` 按 `item_name`/`registry_id` 大小写不敏感子串过滤行（`registry_id` 可空→NULL 不匹配，天然 null-safe）。**行序 = 玩家相关五档优先级**（JSON 路径，按请求者 UUID 排）：0=我认领的 lock / 1=我参与的 progress / 2=我未参与的 progress / 3=非我认领的 lock（open+他人认领）/ 4=done；同档内按还需数量(`need-delivered`) **降序**，末位 tiebreak `sort_order, id`。`format=csv` 用**自然序**(`sort_order, id`，与导出者无关)；`?q=` 对 JSON 与 CSV 均生效。**副作用**：JSON 详情路径（非 csv、非 404）成功返回前 best-effort 记录 `users.players.last_sheet_id = sheet_id`（供 `GET /me/last_sheet` 快速重开；写失败仅记日志，不影响返回）。MCDR 经 `X-Player-UUID` 代玩家→同样玩家相关排序；分页由 MCDR 客户端做（30 行/页，issue #17）。 |
+| GET | `/sheets/{sheet_id}` | JWT 或 service-token+UUID | `?format=csv` `?q=<关键词>` | 200 `SheetDetail` \| `text/csv` | 表详情。`?q=` 按 `item_name`/`registry_id` 大小写不敏感子串过滤行（`registry_id` 可空→NULL 不匹配，天然 null-safe；LIKE 通配符 `%`/`_`/`\` 已转义，搜 `oak_log` 不会误匹配 `oakXlog`）。**行序（JSON 路径）= 玩家相关五档优先级**（按请求者 UUID 排）：0=我认领的 lock / 1=我参与的 progress / 2=我未参与的 progress / 3=非我认领的 lock（open+他人认领）/ 4=done；同档内按还需数量(`need-delivered`) **降序**，末位 tiebreak `sort_order, id`。**仅顶层行参与主排序键**——每个顶层行排定后，其子行按 `(sort_order, id)` **紧跟父行**（子行不参与独立优先级，避免脱离父行甚至排到父行上方）。`format=csv` 用**自然序**（`list_rows` 的分组序：全部父行段在前、全部子行段在后，**子行不紧跟各自父行而是按 `parent_row_id` 分组相邻**，组内再 `sort_order, id`；与导出者身份无关）；`?q=` 对 JSON 与 CSV 均生效。**副作用**：JSON 详情路径（非 csv、非 404）成功返回前 best-effort 记录 `users.players.last_sheet_id = sheet_id`（供 `GET /me/last_sheet` 快速重开；写失败仅记日志，不影响返回）。MCDR 经 `X-Player-UUID` 代玩家→同样玩家相关排序；分页由 MCDR 客户端做（30 行/页，issue #17）。 |
 | PATCH | `/sheets/{sheet_id}` | JWT·**owner** 或 service-token+UUID·owner | `SheetPatchRequest{title}` | 200 `SheetDetail` | 改标题。MCDR 同上 |
 | DELETE | `/sheets/{sheet_id}` | JWT·**owner** 或 service-token+UUID·owner | — | 204 | 删表（级联 rows + 认领）。MCDR 同上；**archived 态 → 409**（先 advance 不可逆，不能直接删） |
 
@@ -167,6 +167,8 @@ collecting ─────────────────────▶ co
 | POST | `/sheets/{sheet_id}/rows/{row_id}/release` | JWT·**认领人\|owner** 或 service-token+UUID | — | 200 `RowDetail` | lock：解除锁定（→open）。progress（仅 owner）：清 delivered + 贡献者列表 + status=open |
 | POST | `/sheets/{sheet_id}/rows/{row_id}/reject` | JWT·**认领人\|owner** 或 service-token+UUID | — | 200 `RowDetail` | **lock 专用**：打回（done→claimed；认领人自取消备齐 / 拥有者打回）。progress 行→409 |
 | PATCH | `/sheets/{sheet_id}/rows/{row_id}/progress` | JWT·**owner** 或 service-token+UUID·owner | `RowProgressRequest{delivered_qty}` | 200 `RowDetail` | **progress 专用**：拥有者/admin 直接覆写 `delivered_qty`（绝对值，可增可减）+ 按新值重算 status，**不动 contributors**（保留上交历史）。lock 行→409（请用 `/delivery`）。Web only（MCDR 未暴露） |
+
+> **子物品（迁移 0012）复用上述端点**：`PUT /rows` 携带 `parent_row_id` 即新建子行（须同时给 `registry_id` + `qty_per_unit`>0，`need_qty` 由后端 `ceil(qty_per_unit × 父行 need_qty)` 派生、请求值被忽略；`mode` 缺省继承父行）；claim / delivery / contribute / release / reject / progress 对子行**同样生效**——传子行 `row_id` 即可，子行按自身 `mode`/`status` 参与协作（其 `mode` 由父行继承、`need_qty` 派生）。不变量（单层 / 模式继承 / 级联重算 / 删父 CASCADE）见 §3。
 
 ### 5.4 导出
 
@@ -229,7 +231,7 @@ class RowDetail(BaseModel):
     claimant_uuid: UUID | None    # lock: 认领人；progress: 恒 null
     claimant_name: str | None     # lock: 认领人名；progress: 恒 null
     delivered_qty: int
-    contributors: list[RowContributor]  # progress: 贡献者聚合（非空）；lock: 空数组
+    contributors: list[RowContributor] = []  # progress: 贡献者聚合（status=open 时为空，有人上交后非空）；lock: 恒空数组
     sort_order: int
     updated_at: datetime
     parent_row_id: int | None  # 子物品父行 id（迁移 0012）；null = 顶层行
@@ -286,7 +288,7 @@ class SheetDetail(SheetSummary):
 | 401 | 缺/错 Bearer JWT；全量导出缺/错 service token |
 | 403 | 权限不足（非 owner 改表/行；非认领人 delivery；非 owner reject/release 他人锁；**非 owner/admin advance**） |
 | 404 | 表/行不存在；`GET /archive` 未归档或归档文件缺失；`GET /archive/assets/{filename}` 文件名非法（路径穿越/非白名单）或缺失 |
-| 409 | 状态非法转移（对 done 行 claim；对 open 行 reject；upsert 并发同名 insert 命中 UNIQUE；**模式不匹配**：progress 行 claim/delivery/reject，lock 行 contribute）；**项目级**：`SheetArchived`（archived 终态只读——任何写操作含 advance/行级写/删表）、`?to==当前状态` 幂等拒绝、`constructing→collecting` 等非法阶段转移 |
+| 409 | 状态非法转移（对 done 行 claim；对 open 行 reject；upsert 并发同名 insert 命中 UNIQUE；**模式不匹配**：progress 行 claim/delivery/reject，lock 行 contribute）；**项目级**：`SheetArchived`（archived 终态只读——行 upsert/删行/删表返中文文案「项目已归档，只读」；`advance` 路径返「sheet is archived, read-only」；repo 层 `_assert_writable` 统一守卫）、`?to==当前状态` 幂等拒绝、`constructing→collecting` 等非法阶段转移 |
 | 422 | 请求体校验失败（如 `mode` 非 0/1、`need_qty<0`、`title` 空） |
 | 503 | `to=archived` 但后端 `ARCHIVE_ROOT` 未配置（`ArchiveNotConfigured`） |
 
@@ -424,4 +426,6 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 
 ---
 
-*最后更新：2026-07-09（子物品嵌套行 + sheets.py 包化重构：迁移 0012 + `parent_row_id`/`qty_per_unit` + 单层/模式继承/级联重算；sheets/ 包结构 + translation.py 公共翻译 + 通知 helper；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑）*
+*最后更新：2026-07-10（文档审计对齐实现：§5 顶栏引用改 `sheets/` 包；§5.1 GET 详情行序补「子行紧跟父行」(JSON) 与「父行段/子行段分两段」(CSV 自然序) + `?q=` LIKE 通配符转义说明；§5.3 补子物品复用协作端点说明；§8 archived 409 补实际文案「项目已归档，只读」/ advance「sheet is archived, read-only」；§6 RowDetail.contributors 修正 status=open 时为空）*
+
+*2026-07-09（子物品嵌套行 + sheets.py 包化重构：迁移 0012 + `parent_row_id`/`qty_per_unit` + 单层/模式继承/级联重算；sheets/ 包结构 + translation.py 公共翻译 + 通知 helper；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑）*

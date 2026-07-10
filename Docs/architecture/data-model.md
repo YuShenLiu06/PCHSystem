@@ -273,6 +273,16 @@ erDiagram
 
 > MVP 第一阶段新增（不在原架构 6 schema 内），权威定义见 [`../../Plans/MVP-第一阶段计划.md`](../../Plans/MVP-第一阶段计划.md) §3.2，落地迁移 `0004_sheets`。与 `projects.material_lists`（投影解析、强制 registry id）是**两套体系**：sheets 是玩家自建、自由文本、Web + 游戏内双向可编辑的轻量协作表。
 
+```mermaid
+erDiagram
+    players ||--o{ sheets : "owner_uuid"
+    players ||--o{ sheet_rows : "claimant_uuid (null)"
+    sheets ||--o{ sheet_rows : "sheet_id ON DELETE CASCADE"
+    sheet_rows ||--o{ sheet_rows : "parent_row_id 自引用 ON DELETE CASCADE"
+    sheet_rows ||--o{ sheet_row_contributors : "row_id ON DELETE CASCADE"
+    players ||--o{ sheet_row_contributors : "player_uuid"
+```
+
 ### 10.1 `sheets`（表格主表）
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -304,6 +314,7 @@ erDiagram
 | `qty_per_unit` | numeric(10,2) | null（迁移 0012 加列 INTEGER，0013 改 numeric 支持小数）| **子物品单位用量（倍数）**：子行每个父行物品所需的子物品数量，∈(0,+∞) 支持小数（如 0.5）。仅子行非空且>0；need_qty = ceil(qty_per_unit × 父行 need_qty)（派生整数，向上取整，父行 need 变动时级联重算） |
 
 约束（迁移 0012）：
+- **外键** `fk_sheet_rows_parent_row`：`FOREIGN KEY (parent_row_id) REFERENCES sheet_rows(id) ON DELETE CASCADE`（自引用，删父行级联删子行）
 - **单层限制**：子行只能挂顶层行下（`parent_row_id IS NULL OR parent.parent_row_id IS NULL`，由 repo 层校验）
 - **部分唯一索引**（替换原 `UNIQUE(sheet_id, item_name)`）：
   - `uq_sheet_rows_top_name`：`UNIQUE(sheet_id, item_name) WHERE parent_row_id IS NULL`（顶层行按 sheet_id+item_name 唯一）
@@ -314,10 +325,10 @@ erDiagram
 
 **子物品不变量**（迁移 0012，issue #19）：
 - **单层**：子物品只能挂顶层行下，禁止多层嵌套（repo 层 `parent.parent_row_id IS NULL` 校验）
-- **模式继承**：父行 lock→子行只能 lock；父行 progress→子行可 lock/progress，默认继承父行模式
-- **单位用量级联**：子行 `need_qty = qty_per_unit × 父行 need_qty`（派生存储，非用户输入；父行 need/mode 变动时级联重算子行）
+- **模式继承**：父行 lock→子行只能 lock；父行 progress→子行可 lock/progress（默认继承父行 progress）。**级联只紧不松**：父行切 lock 时强制所有子行切 lock 并重置协作（repo `update_row` D7）；父行切 progress 时不反向放松子行（已 lock 子行保持，留待 owner 手动改）
+- **单位用量级联**：子行 `need_qty = ceil(qty_per_unit × 父行 need_qty)`（派生整数，向上取整，非用户输入）。触发重算三点：① 新建子行（`create_row`）；② 子行 `qty_per_unit` / `parent_row_id`（reparent）变更；③ **父行 need_qty 变更→级联所有子行重算**。repo 用 `Decimal(str(qty_per_unit)) × parent.need_qty` 精确取整，规避 float 直接相乘的 `ceil(0.07×100)=8` 偏差
 - **级联删除**：删父行自动删所有子行（ON DELETE CASCADE）
-- **状态机复用**：子行复用整条 `sheet_rows` 状态机（lock/progress、claim/deliver/contribute），传子 `row_id` 即可
+- **状态机复用**：子行复用整条 `sheet_rows` 状态机（lock/progress、claim/deliver/contribute），传子 `row_id` 即可。**认领/解除级联**：认领顶层 lock 父行 = 同事务认领其所有 open lock 子行（同 claimant）；解除顶层 lock 父行 = 同事务解除其所有 claimed/done lock 子行。**子行守卫**：父行=lock 时子行不得单独 claim/release（随父行，`SheetRowConflict` → 409）；父行=progress 时被改成 lock 的子行可单独认领/解除
 
 **双模式不变量**（迁移 0005 协作改进 + 0007 progress 多人贡献者，推翻原 spec D-4）：
 - **lock（mode=0）**：单认领人状态机 `open → claimed → done`（claim / delivery / release / reject）；`open ⇒ claimant IS NULL ∧ delivered=0`，`claimed ⇒ claimant NOT NULL`，`done ⇒ claimant NOT NULL ∧ delivered≥need`。

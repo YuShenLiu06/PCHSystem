@@ -20,7 +20,7 @@
 
 - **Added**：`GET /sheets/{id}` 详情行按查看玩家做**五档优先级排序**：我认领的 lock ＞ 我参与的 progress ＞ 我未参与的 progress ＞ 非我认领的 lock ＞ 已完成；同档内按还需数量（`need - delivered`）降序，末位 tiebreak `sort_order, id`。CSV 导出仍用自然序（与导出者身份无关）。排序逻辑抽到 `services/sheet_row_order.py` 纯函数（免 DB、可单测、不改入参）。
 - **Added**：`GET /sheets/{id}?q=<关键词>` 新增**行搜索**：按 `item_name` / `registry_id` 大小写不敏感子串过滤（`registry_id` 可空 → NULL 不匹配，天然 null-safe），对 JSON 与 CSV 均生效。
-- **Added**：**子物品嵌套行**（issue #19，迁移 0012）：`sheet_rows` 加 `parent_row_id`/`qty_per_unit`；部分唯一索引（顶层按 sheet_id+item_name、子行按 parent_row_id+registry_id）+ CHECK 约束（子行必须有 registry_id 且 qty_per_unit≥1）；**不变量**：单层（子只能挂顶层）、模式继承（父 lock→子只能 lock）、单位用量级联（子 need = qty_per_unit × 父 need，父 need 变时级联重算）。`RowUpsertRequest`/`RowDetail`/CSV 加 `parent_row_id`/`qty_per_unit`；子行复用既有 claim/deliver/contribute 命令（传子 row_id）。
+- **Added**：**子物品嵌套行**（issue #19，迁移 0012/0013）：`sheet_rows` 加 `parent_row_id`/`qty_per_unit`；部分唯一索引（顶层按 sheet_id+item_name、子行按 parent_row_id+registry_id）+ CHECK 约束（子行必须有 registry_id 且 `qty_per_unit > 0`）；**不变量**：单层（子只能挂顶层）、模式继承（父 lock→子只能 lock）、单位用量级联（子 need = `ceil(Decimal(qty_per_unit) × 父 need)`，父 need/mode 变时级联重算；用 `Decimal` 而非 float 避免 `ceil(0.07×100)=8` 这类浮点误差）、认领级联（认领/解除顶层 lock 父行同事务级联其所有 open lock 子行，同 claimant）。迁移 0013 把 `qty_per_unit` 由 `INTEGER` 改为 `NUMERIC(10,2)` 支持小数（如 0.5），CHECK 由 `≥1` 放宽为 `>0`。`RowUpsertRequest`/`RowDetail`/CSV 加 `parent_row_id`/`qty_per_unit`；子行复用既有 claim/deliver/contribute 命令（传子 row_id）。
 - **Added**：**sheets.py 包化重构**：`Backend/app/api/sheets.py` 拆分为 `sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）；新增公共翻译 `app/services/translation.py`（`get_translator`/`resolve_item_name`）修正 sheets→parsing 反向依赖；通知 helper（`_row_payload`/`notify_owner_row_event`/`notify_uuids`/`_row_response`）。
 - **Fixed**：sheet 行改名不再重复建行（issue #20）。`PUT /sheets/{id}/rows` 改为单端点按 `row_id` 分流——带 `row_id` 按主键更新（可改名，字段部分更新），不带 `row_id` 严格新建。`item_name` 从 upsert 锁点降级为普通数据字段，修改操作统一以 `id` 为定位主轴。
 - **Fixed**：新建同名行不再静默覆盖旧行（严格 INSERT，撞 `UNIQUE(sheet_id, item_name)` → 409 中文提示「物品名重复」）。
@@ -30,6 +30,8 @@
 
 - **Added**：**子物品树状渲染**：`SheetEditor.vue` 按父行分组建树渲染（顶层 + 缩进子行）；子物品内联编辑（registry_id/qty_per_unit/mode[父 progress 时可选]/sort + 增删），保存走 `upsertRow`；子行复用现有 claim/deliver/contribute UI；按钮紧凑化（el-button icon + el-tooltip）；总量=子行 need_qty（后端派生），qty_per_unit 显示「每件 ×N」。
 - **Changed**：行编辑保存带 `row_id`（走按主键更新路径，改名生效且不再重复）；`RowUpsertRequest` 增可选 `row_id`/`parent_row_id`/`qty_per_unit`。
+- **Fixed**：SheetEditor 写操作 handler 与轮询统一走 `applyRefreshedSheet` 身份保留合并——复用未变行原对象引用（`rowEqual` 短路），避免 el-table 整表 tear down（176 行×~2000 组件每秒卡顿）；补新增行草稿 + 清已消失行残留草稿/子物品表单；`syncStructuralDrafts` 父行保存后级联子行 mode 等后端变更同步进草稿；子行认领守卫（`canClaimRow`/`canReleaseRow`，仅父=progress 时可单独操作，对齐后端级联语义）；树名列 flex 缩进修复（scoped CSS，owner 编辑态输入框不再吃掉缩进）；删可变 `nodeCache`/`cachedTree`，`treeRows` 改纯 computed（`19c7b15`）。
+- **Fixed**：添加子物品 popover 确认成功后关闭——新增受控 `subRowPopoverVisible` + `v-model:visible`，`onAddSubRow` 成功置 false、失败保持打开（`338b38a`，根因是 `19c7b15` 的 `applyRefreshedSheet` 移除了全表重渲染顺带销毁 popover 的副作用链）。
 
 ### htcmc_auth
 
@@ -40,6 +42,8 @@
 - **Changed**：分页 + 参数解析抽到 `view_args.py` 纯函数（仅依赖标准库、可单测），非法参数回显用法提示。
 - **Changed**：`!!PCH sheet set` 改为按行号（`row_id`）更新 need/排序，与 `delrow`/`claim` 等命令一致（id 主轴），不再按物品名 upsert。`setreg` 同改按 `row_id` 更新；`add` 保持按物品名严格新建（同名→回执报错）。
 - **Changed**：**数量显示统一换算**（#18）：sheet 各显示点的物品数量从原始整数改为「个/组/盒」友好单位（`>=1728` → 盒 / `>=64` → 组 / 否则个，去尾零），与后端 `core/qty.py`、前端 `utils/qty.ts` **三端对齐**；新增 `htcmc_auth/qty.py` 作为第三端（`format_qty` 逐字照抄 + `format_qty_safe` 兜底）。覆盖 sheet view 行、8 处命令回执、3 个通知模板共 11 处显示点；HTTP 写调用与 scanner 跳过诊断不换算（纯显示层，不入库不进 API）。
+- **Changed**：sheet view 行格式精简（`70d9841`）——移除 `[lock]`/`[progress]` 标签，progress 行显示 `{当前}/{需求}`（有「/」区分），lock 行仅显示 `{需求}`（单值，不显示当前数量）；子行格式与顶层统一（去掉「每件×倍数」「(需Y盒)」，仅留 `§8└` 缩进）；合并 `SHEET_ROW_LINE`/`SHEET_SUB_ROW_LINE` 为单模板（`{prefix}`），删死代码 `_MODE_LABEL`/`_fmt_mult`。
+- **Fixed**：`addsub`/`setsub` 的 mode 由命令树分支闭包烘入（`6df49c0`，修 v0.3.0 起 MCDR `Literal` 不入 ctx 致 `ctx.get("mode")` 恒 None→实际总建 lock 行的 bug，根 CLAUDE.md 待处理项；MCDR 仅 `ArgumentNode` 入 context，见 mcdr-api-cheatsheet §4）；`_sheet_addsub`/`_sheet_setsub` 改 `mode` kwarg（None=裸命令继承父行/不改、0=lock、1=progress），`qty_per_unit ≤ 0` 回执拦截 + `Float.at_min(0)` 输入层挡负数；新增 `test_sheet_sub_commands.py`（mode 烘入 + qty guard + delsub）。
 
 ---
 

@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|
 | POST | `/parsing/litematic` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.litematic`） | 200 `ParsedMaterialPreview` | 解析 Litematica 投影 + 翻译，返回方块组 + 容器组预览；不落库 |
 | POST | `/parsing/nbt` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.nbt`） | 200 `ParsedMaterialPreview` | 解析 Create 蓝图/structure .nbt + 翻译，返回方块组 + 容器组预览；不落库 |
-| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。**迁移 0012 起**：`SheetItemIn` schema 现接受可选 `parent_row_id`/`qty_per_unit`（子物品嵌套字段，投影解析流程不发送，仅手动录入时使用）。见 [`sheets.md`](./sheets.md) |
+| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。**迁移 0012 起**：`SheetItemIn` schema 现接受可选 `parent_row_id`/`qty_per_unit`（子物品嵌套字段，投影解析流程不发送，仅手动录入时使用）；每条均为新建，**禁止携带 `row_id`**（否则 422）。见 [`sheets.md`](./sheets.md) |
 
 - 上限：`.litematic` ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`.nbt` ≤ `NBT_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。
 - 解析为 CPU 密集，跑在 `asyncio.to_thread`（RS-7，不阻塞事件循环）。
@@ -80,6 +80,7 @@ POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id
 - `LitematicParser`（`parsers/litematic.py`）：基于 `litemapy` 解析 `.litematic`，遍历 region 体素计数 + 读 tile entity `Items`。
 - `NbtParser`（`parsers/nbt.py`）：基于 `nbtlib`（litemapy 同款 NBT 库，提升为直接依赖）解析 `.nbt`。NBT 二进制/gzip/tag 解码由 nbtlib 负责，本类只做 palette 查表 + 计数。
 - `ItemTranslator`（`translators/base.py`）：registry id → 中文。换数据源（远端 lang / 手维护映射 / Crowdin）新增子类。
+- **翻译器入口**（2026-07-09 重构）：路由层经 `app.services.translation.get_translator()` 取 `LangJsonTranslator.default()` 单例（共享模块，parsing 与 sheets 共用，消除 sheets→parsing 反向依赖）；`preview.py` 仍 re-export `get_default_translator` 向后兼容。
 - `preview.build_preview`（`preview.py`）：编排 parser + translator → 预览条目 + 未翻译列表。
 - 归一化：`normalize.py` 维护 `SKIP_BLOCKS`（air/水/岩浆/结构空）。R-6（剥离 BlockState properties）由 litemapy 的 `BlockState.id` 与 `.nbt` palette `Name` 天然满足。
 
@@ -123,7 +124,7 @@ Backend/app/services/parsing/
 ├── __init__.py
 ├── models.py                 # frozen dataclass：MaterialEntry / ParseMeta / ParsedMaterialList
 ├── normalize.py              # SKIP_BLOCKS / MERGE_RULES
-├── preview.py                # build_preview 编排 + get_default_translator
+├── preview.py                # build_preview 编排（get_default_translator 现为 app/services/translation.py 的 re-export）
 ├── parsers/
 │   ├── base.py               # MaterialParser ABC
 │   ├── litematic.py          # LitematicParser + LitematicParseError（litemapy）
@@ -142,4 +143,6 @@ Backend/app/services/parsing/
 
 ---
 
-*最后更新：2026-07-07（新增 POST /parsing/nbt：基于 nbtlib 解析 Create 蓝图/structure .nbt，复用 ParsedMaterialPreview + LangJsonTranslator；新增 NbtParser/NbtParseError 与 nbt_max_upload_bytes 配置；schemas/translator/preview 零改动）*
+*最后更新：2026-07-10（文档审计对齐实现：§2 `POST /sheets/from-items` 补「SheetItemIn 禁止携带 row_id」；§4/§7 标注翻译器入口迁至共享 `app/services/translation.py::get_translator()`，`preview.py` 的 `get_default_translator` 降级为 re-export——两解析端点行为不变）*
+
+*2026-07-07（新增 POST /parsing/nbt：基于 nbtlib 解析 Create 蓝图/structure .nbt，复用 ParsedMaterialPreview + LangJsonTranslator；新增 NbtParser/NbtParseError 与 nbt_max_upload_bytes 配置）*
