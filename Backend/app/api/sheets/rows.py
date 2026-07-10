@@ -144,7 +144,6 @@ async def _update_row_by_id(
         else []
     )
     item_name = body.item_name if body.item_name is not None else prev_row.item_name
-    new_need = body.need_qty if body.need_qty is not None else old_need
     row = await sheet_repo.update_row(
         session,
         sheet_id=sheet.id,
@@ -159,6 +158,9 @@ async def _update_row_by_id(
     )
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
+    # 读更新后的 need_qty：子行 qty_per_unit 变时 repo 派生重算出新 need，通知文案
+    # 与「need 是否变化」判定都必须基于实际值（HIGH-1：否则派生变化既不通知、文案也错）。
+    new_need = row.need_qty
     await _dispatch_row_edit_notifications(
         session,
         sheet=sheet,

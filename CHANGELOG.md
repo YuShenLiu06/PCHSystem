@@ -24,6 +24,7 @@
 - **Added**：**sheets.py 包化重构**：`Backend/app/api/sheets.py` 拆分为 `sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）；新增公共翻译 `app/services/translation.py`（`get_translator`/`resolve_item_name`）修正 sheets→parsing 反向依赖；通知 helper（`_row_payload`/`notify_owner_row_event`/`notify_uuids`/`_row_response`）。
 - **Fixed**：sheet 行改名不再重复建行（issue #20）。`PUT /sheets/{id}/rows` 改为单端点按 `row_id` 分流——带 `row_id` 按主键更新（可改名，字段部分更新），不带 `row_id` 严格新建。`item_name` 从 upsert 锁点降级为普通数据字段，修改操作统一以 `id` 为定位主轴。
 - **Fixed**：新建同名行不再静默覆盖旧行（严格 INSERT，撞 `UNIQUE(sheet_id, item_name)` → 409 中文提示「物品名重复」）。
+- **Fixed**：progress 子物品行调大 `qty_per_unit` 致派生 need 超过已交付量时，状态不再卡死在 done（应回退 claimed）。根因：`update_row` 的 need 变化判定 `need_qty is not None and …` 漏掉「`need_qty` 参数为 None、但 qty_per_unit/reparent 重算派生出新 need」这条路径 → `_recompute_after_edit` 不触发；改为基于 `row.need_qty` 实际值判定。同步修 `PUT /sheets/{id}/rows` 更新路径通知：`new_need` 改读更新后的 `row.need_qty`，否则派生 need 变化既不发通知、文案也错显示成「原值→原值」。
 - **Changed**：archived 终态写操作 409 文案改中文（「项目已归档，只读」）。
 
 ### Frontend

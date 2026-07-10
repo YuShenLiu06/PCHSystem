@@ -533,7 +533,9 @@ async def update_row(
         row.qty_per_unit = qty_per_unit
 
     mode_changed = mode is not None and row.mode != old_mode
-    need_changed = need_qty is not None and row.need_qty != old_need
+    # need 变化既含显式传 need_qty，也含子行 qty_per_unit/reparent 重算派生的新 need：
+    # 必须基于 row.need_qty 实际值判定，否则派生变化漏触发状态重算（done→claimed）。
+    need_changed = row.need_qty != old_need
 
     # mode/need 任一变化才重算
     if mode_changed or need_changed:

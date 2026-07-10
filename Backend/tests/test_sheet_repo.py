@@ -1609,6 +1609,35 @@ async def test_update_row_child_qty_per_unit_change_recomputes_need():
 
 
 @pytest.mark.asyncio
+async def test_update_row_child_qty_change_recomputes_status_when_need_exceeds_delivered():
+    """HIGH-1：progress 子行已备齐(done) → 调大 qty_per_unit 派生出新 need 超过已交付量，
+    状态须从 done 回退到 claimed。need 变化判定必须基于 row.need_qty 实际值，
+    否则派生变化（need_qty 参数为 None）漏触发 _recompute_after_edit → 卡死在 done。
+    """
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=1)  # progress 父
+    contributor = await _seed_player("bob")
+    child_rid = None
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=1, sort_order=0,  # progress 子行
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        child_rid = child.id
+        # 交满 → done（delivered=20 == need=2×10）
+        await sheet_repo.contribute_row(s, sid, child_rid, contributor, 20)
+        await s.commit()
+        assert child.delivered_qty == 20
+        assert child.status == "done"
+    # 调大 qty_per_unit → need 派生重算为 30（3×10），已交付 20 < 30 → 应回退 claimed
+    async with async_session_factory() as s:
+        updated_child = await sheet_repo.update_row(s, sid, child_rid, qty_per_unit=3)
+        await s.commit()
+        assert updated_child.need_qty == 30  # 3 × 10
+        assert updated_child.delivered_qty == 20  # 进度保留（mode 不变只重算状态）
+        assert updated_child.status == "claimed"  # done → claimed 回退（修复前卡 done）
+
+
+@pytest.mark.asyncio
 async def test_list_rows_groups_children_after_parent():
     """list_rows 分组排序：父行优先，子行紧跟父行，同组内按 sort_order。"""
     owner = await _seed_player()
