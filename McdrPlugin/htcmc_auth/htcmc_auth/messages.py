@@ -77,13 +77,11 @@ SHEET_DETAIL_TITLE = "§6§l#{id} {title}§r §7[owner: {owner}]"
 SHEET_DETAIL_EMPTY = "§7（无行）"
 SHEET_VIEW_NO_MATCH = "§7（无匹配行）"
 SHEET_VIEW_ARG_UNKNOWN = "§c未知参数: {token}§r\n§7用法: !!PCH sheet view <id> [-p 页码] [-s 关键词]"
-# mode 0=lock 1=progress；status open/claimed/done
-_MODE_LABEL = {0: "lock", 1: "progress"}
+# status open/claimed/done（mode 0=lock 1=progress 不再显示标签，由数量格式区分）
 _STATUS_COLOR = {"open": "§7", "claimed": "§e", "done": "§a"}
-# 顶层行格式：#{row_id} {item} [{mode}] {delivered}/{need} {claimant}
-SHEET_ROW_LINE = "{status_c}#{row_id} §f{item} §7[{mode}] §b{delivered}/{need} §7{claimant}"
-# 子行格式：└ #{row_id} {item} [{mode}] 每件×{qty_per_unit} (需{need}) {claimant}
-SHEET_SUB_ROW_LINE = "  §8└ {status_c}#{row_id} §f{item} §7[{mode}] §7每件×{qty_per_unit} §b(需{need}) §7{claimant}"
+# 统一行格式（顶层 + 子行共用，仅 {prefix} 不同）：
+#   progress → §b{当前}/{需求}（有「/」）；lock → §b{需求}（单值）。移除 [mode] 标签，以数量格式区分模式。
+SHEET_ROW_LINE = "{prefix}{status_c}#{row_id} §f{item} §b{qty} §7{claimant}"
 SHEET_OK_CREATED = "§a已建表 #{id} {title}"
 SHEET_OK_RENAMED = "§a已改标题 #{id} → {title}"
 SHEET_OK_DELETED = "§a已删表 #{id}"
@@ -160,42 +158,29 @@ def _format_contributors(contributors: list) -> str:
 def format_row_line(row: dict) -> str:
     """格式化单行（RowDetail）为游戏内一行文本。
 
-    progress 行：认领者列改显贡献者（按贡献量降序，至多 2 位 + 省略号）；无则「未认领」。
-    lock 行：显 claimant_name。
-
-    子行（parent_row_id 非空）：缩进 2 空格 + └ 前缀，显示每件×{qty_per_unit} (需{need})。
+    模式区分（移除 [lock]/[progress] 标签，改用数量格式）：
+      progress → §b{当前}/{需求}（有「/」，当前=贡献者累计上交）
+      lock     → §b{需求}（单值，不显示当前——认领/完成状态由认领者名 + 状态色 + 按钮体现）
+    子行（parent_row_id 非空）：等同顶层格式，仅在行首加「  §8└ 」缩进前缀。
+    need / delivered 均走 format_qty_safe 个/组/盒 换算（不得直接代入裸 int）。
     """
-    def _fmt_mult(v):
-        """去除浮点数尾零：2.0→2，1.5→1.5（避免「×2.0」）"""
-        return f"{float(v):g}" if v is not None else "1"
-
-    mode = _MODE_LABEL.get(int(row.get("mode", 0)), str(row.get("mode")))
     status = str(row.get("status", ""))
     parent_row_id = row.get("parent_row_id")
     if int(row.get("mode", 0)) == 1:
+        # progress：认领者列显贡献者（按贡献量降序，至多 2 位 + 省略号）；数量 = 当前/需求
         claimant = _format_contributors(row.get("contributors"))
+        qty = f"{format_qty_safe(row.get('delivered_qty', 0))}/{format_qty_safe(row.get('need_qty', 0))}"
     else:
+        # lock：认领者列显 claimant_name；数量 = 需求（单值，不显示当前）
         claimant = row.get("claimant_name") or "未认领"
-
-    if parent_row_id is not None:
-        # 子行格式：└ #{row_id} {item} [{mode}] 每件×{qty_per_unit} (需{need}) {claimant}
-        return SHEET_SUB_ROW_LINE.format(
-            status_c=_status_color(status),
-            row_id=row.get("id"),
-            item=row.get("item_name"),
-            mode=mode,
-            qty_per_unit=_fmt_mult(row.get("qty_per_unit", 1)),
-            need=row.get("need_qty", 0),
-            claimant=claimant,
-        )
-    # 顶层行格式
+        qty = format_qty_safe(row.get("need_qty", 0))
+    prefix = "  §8└ " if parent_row_id is not None else ""
     return SHEET_ROW_LINE.format(
+        prefix=prefix,
         status_c=_status_color(status),
         row_id=row.get("id"),
         item=row.get("item_name"),
-        mode=mode,
-        delivered=format_qty_safe(row.get("delivered_qty", 0)),
-        need=format_qty_safe(row.get("need_qty", 0)),
+        qty=qty,
         claimant=claimant,
     )
 

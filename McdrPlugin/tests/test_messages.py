@@ -97,7 +97,7 @@ class FormatRowLineTest(unittest.TestCase):
         row = {"id": 3, "item_name": "铁锭", "mode": 0, "status": "open", "need_qty": 64, "delivered_qty": 0, "claimant_name": None}
         s = format_row_line(row)
         self.assertIn("铁锭", s)
-        self.assertIn("lock", s)
+        self.assertIn("1组", s)        # lock 行数量=需求单值（need=64→1组），不再有 [lock] 标签
         self.assertIn("未认领", s)
         self.assertEqual(_status_color("open"), "§7")
 
@@ -105,7 +105,7 @@ class FormatRowLineTest(unittest.TestCase):
         # progress 行：认领者列显示贡献者名单（非 claimant_name）
         row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 64, "delivered_qty": 32, "claimant_name": None, "contributors": [{"player_uuid": "x", "player_name": "B"}]}
         s = format_row_line(row)
-        self.assertIn("progress", s)
+        self.assertIn("32个/1组", s)   # progress 数量=当前/需求（delivered=32→32个, need=64→1组）
         self.assertIn("B", s)  # 贡献者 B 渲染
         self.assertEqual(_status_color("claimed"), "§e")
 
@@ -127,6 +127,50 @@ class FormatRowLineTest(unittest.TestCase):
         row = {"id": 3, "item_name": "i", "mode": 0, "status": "done", "need_qty": 64, "delivered_qty": 64, "claimant_name": "B"}
         format_row_line(row)
         self.assertEqual(_status_color("done"), "§a")
+
+    def test_sub_row_need_converted_to_box_unit(self):
+        # 子行 mode=lock need_qty=7217 → 7217/1728=4.18 → 单值「4.18盒」，不得漏出裸 7217
+        # （子行格式已与顶层统一：无「每件×」「(需)」段，仅多 └ 缩进前缀）
+        row = {"id": 4174, "item_name": "石砖-泥土", "mode": 0, "status": "open",
+               "need_qty": 7217, "delivered_qty": 0, "claimant_name": None,
+               "parent_row_id": 3999, "qty_per_unit": 0.5}
+        s = format_row_line(row)
+        self.assertIn("└", s)               # 子行缩进前缀
+        self.assertIn("4.18盒", s)          # need=7217→4.18盒（lock 单值）
+        self.assertNotIn("7217", s)         # 回归点：裸 int 不得代入
+        self.assertNotIn("每件×", s)        # 子行不再渲染倍数
+        self.assertNotIn("需", s)           # 子行不再有「(需)」段
+
+    def test_sub_row_need_stack_tier(self):
+        # 子行 mode=lock need_qty=64 → 单值「1组」，覆盖「组」档换算路径
+        row = {"id": 4174, "item_name": "x", "mode": 0, "status": "open",
+               "need_qty": 64, "delivered_qty": 0, "claimant_name": None,
+               "parent_row_id": 3999, "qty_per_unit": 2}
+        s = format_row_line(row)
+        self.assertIn("1组", s)
+        self.assertNotIn("需", s)
+
+    def test_sub_row_progress_shows_delivered_over_need(self):
+        # 子行 progress：数量段与顶层一致（当前/需求），仅多 └ 缩进前缀，无「每件×」
+        row = {"id": 4175, "item_name": "石砖-test", "mode": 1, "status": "open",
+               "need_qty": 10368, "delivered_qty": 3456, "claimant_name": None,
+               "parent_row_id": 3999, "qty_per_unit": 1.5,
+               "contributors": [{"player_uuid": "u", "player_name": "A"}]}
+        s = format_row_line(row)
+        self.assertIn("└", s)              # 子行缩进前缀
+        self.assertIn("2盒/6盒", s)        # delivered=3456→2盒, need=10368→6盒
+        self.assertIn("A", s)              # progress 认领者列显贡献者
+        self.assertNotIn("每件×", s)       # 子行不再渲染倍数
+
+    def test_lock_row_hides_delivered_qty(self):
+        # lock 行只显需求单值，不显当前数量（即便 delivered_qty>0）；数量段无「/」
+        row = {"id": 4001, "item_name": "磨制深板岩", "mode": 0, "status": "claimed",
+               "need_qty": 7217, "delivered_qty": 5000, "claimant_name": "刘宇辰"}
+        s = format_row_line(row)
+        self.assertIn("4.18盒", s)         # need=7217→4.18盒（单值）
+        self.assertNotIn("2.89盒", s)      # delivered=5000→2.89盒 不得显示
+        self.assertNotIn("/", s)           # lock 数量段无「/」（进度模式才有）
+        self.assertIn("刘宇辰", s)
 
 
 class RTextButtonTest(unittest.TestCase):
