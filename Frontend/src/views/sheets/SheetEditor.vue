@@ -488,6 +488,8 @@ async function onAddSubRow(parentRow: RowDetail): Promise<void> {
       mode: MODE_LOCK,
       sort_order: 0,
     }
+    // 关闭 popover（成功后）：trigger=click 不会自动关，显式置 false
+    subRowPopoverVisible.value[parentId] = false
     ElMessage.success('已添加子物品')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -706,6 +708,10 @@ const treeRows = computed<TreeNode[]>(() => {
   const tops = byParent.get(null) ?? []
   return tops.map((row) => ({ ...row, children: byParent.get(row.id) ?? [] }))
 })
+
+// 添加子物品 popover 受控开关：onAddSubRow 成功后显式关闭
+// （trigger=click + applyRefreshedSheet 身份保留合并后，无全表重渲染副作用来附带关闭 popover）
+const subRowPopoverVisible = ref<Record<number, boolean>>({})
 
 // Popover 打开时展开父行
 function onSubRowPopoverShow(parentRow: RowDetail): void {
@@ -940,6 +946,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
                 <!-- 父行：添加子物品按钮（Popover） -->
                 <el-popover
                   v-if="!isSubRow(row)"
+                  v-model:visible="subRowPopoverVisible[row.id]"
                   placement="right"
                   width="400"
                   trigger="click"
