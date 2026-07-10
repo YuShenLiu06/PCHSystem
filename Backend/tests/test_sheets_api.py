@@ -423,6 +423,76 @@ async def test_delete_row_non_owner_forbidden(client):
     ).status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_delete_parent_row_notifies_child_stakeholders(client):
+    """MED-1：删父行级联删子行——子行的认领人（progress 父下的 lock 子）与 progress 贡献者
+    都须收到 sheet_row_deleted 通知（修复前只通知被删父行本身，子行利益相关方被漏掉）。
+    """
+    _, bearer = await _make_player("alice")  # 拥有者
+    bob_u, bearer_bob = await _make_player("bob")
+    carol_u, bearer_carol = await _make_player("carol")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # progress 顶层父行（need=10）；progress 父允许 lock/progress 混合子行
+    parent_id = (await _upsert_row(client, bearer, sid, "parent", 10, 1))["id"]
+    # 子1：lock 子（mode=0），bob 认领
+    child1 = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "item_name": "c1",
+            "registry_id": "minecraft:stone",
+            "parent_row_id": parent_id,
+            "qty_per_unit": 1,
+            "mode": 0,
+            "sort_order": 0,
+        },
+        headers=_auth(bearer),
+    )
+    assert child1.status_code == 200, child1.text
+    child1_id = child1.json()["id"]
+    claim_resp = await client.post(
+        f"/sheets/{sid}/rows/{child1_id}/claim", headers=_auth(bearer_bob)
+    )
+    assert claim_resp.status_code == 200, claim_resp.text
+    # 子2：progress 子（mode=1），carol 上交成为贡献者
+    child2 = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "item_name": "c2",
+            "registry_id": "minecraft:dirt",
+            "parent_row_id": parent_id,
+            "qty_per_unit": 1,
+            "mode": 1,
+            "sort_order": 0,
+        },
+        headers=_auth(bearer),
+    )
+    assert child2.status_code == 200, child2.text
+    child2_id = child2.json()["id"]
+    contrib_resp = await client.post(
+        f"/sheets/{sid}/rows/{child2_id}/contribute",
+        json={"qty": 5},
+        headers=_auth(bearer_carol),
+    )
+    assert contrib_resp.status_code == 200, contrib_resp.text
+    # 删父行（FK ON DELETE CASCADE 级联删两个子行）
+    del_resp = await client.delete(f"/sheets/{sid}/rows/{parent_id}", headers=_auth(bearer))
+    assert del_resp.status_code == 204, del_resp.text
+    # 断言：bob（认领子1）与 carol（贡献子2）各收到 sheet_row_deleted 通知
+    from app.core.db import async_session_factory
+    from app.models.notification import Notification
+    from sqlalchemy import select
+
+    async with async_session_factory() as s:
+        bob_notifs = (
+            await s.execute(select(Notification).where(Notification.recipient_uuid == bob_u))
+        ).scalars().all()
+        carol_notifs = (
+            await s.execute(select(Notification).where(Notification.recipient_uuid == carol_u))
+        ).scalars().all()
+    assert any(n.category == "sheet_row_deleted" for n in bob_notifs)
+    assert any(n.category == "sheet_row_deleted" for n in carol_notifs)
+
+
 # ---------- 行认领协作（spec §5.4） ----------
 @pytest.mark.asyncio
 async def test_claim_row_any_player_succeeds(client):

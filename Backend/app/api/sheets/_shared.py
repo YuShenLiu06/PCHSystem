@@ -117,6 +117,51 @@ async def notify_uuids(
         )
 
 
+async def notify_rows_deleted(
+    session: AsyncSession,
+    *,
+    sheet: Sheet,
+    actor: Player,
+    rows_with_names: list[tuple[SheetRow, str | None]],
+    contributors_map: dict[int, list[tuple[uuid.UUID, str]]] | None = None,
+) -> None:
+    """删行/删表后通知各行的认领人与 progress 贡献者（删行 + 删表共用，DRY）。
+
+    - 认领人（claimant_uuid 非空）：``sheet_row_deleted``，标题「认领的行已被删除」。
+    - progress 行贡献者（contributors_map 命中）：同 category，标题「贡献的行已被删除」。
+    actor==recipient 自动跳过（notify_uuids 内置）。
+    """
+    cmap = contributors_map or {}
+    for row, _name in rows_with_names:
+        item_name = row.item_name
+        if row.claimant_uuid is not None:
+            await notify_uuids(
+                session,
+                [row.claimant_uuid],
+                actor=actor,
+                category="sheet_row_deleted",
+                title="认领的行已被删除",
+                body=f"[{item_name}] 已被拥有者删除，认领取消",
+                sheet_id=sheet.id,
+                sheet_title=sheet.title,
+                row_id=row.id,
+                item_name=item_name,
+            )
+        for contrib_uuid, _contrib_name in cmap.get(row.id, []):
+            await notify_uuids(
+                session,
+                [contrib_uuid],
+                actor=actor,
+                category="sheet_row_deleted",
+                title="贡献的行已被删除",
+                body=f"[{item_name}] 已被拥有者删除，贡献取消",
+                sheet_id=sheet.id,
+                sheet_title=sheet.title,
+                row_id=row.id,
+                item_name=item_name,
+            )
+
+
 def _row_dict(
     row: SheetRow,
     claimant_name: str | None = None,

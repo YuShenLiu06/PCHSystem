@@ -12,6 +12,7 @@ from app.api.sheets._shared import (
     _load_sheet_or_404,
     _resolve_item_name,
     _row_dict,
+    notify_rows_deleted,
     notify_uuids,
 )
 from app.core.db import get_session
@@ -222,35 +223,25 @@ async def delete_row(
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
-    old_row = current[0]
-    if old_row.claimant_uuid is not None:
-        await notify_uuids(
-            session,
-            [old_row.claimant_uuid],
-            actor=player,
-            category="sheet_row_deleted",
-            title="认领的行已被删除",
-            body=f"[{old_row.item_name}] 已被拥有者删除，认领取消",
-            sheet_id=sheet_id,
-            sheet_title=sheet.title,
-            row_id=row_id,
-            item_name=old_row.item_name,
-        )
-    if old_row.mode == sheet_repo.MODE_PROGRESS:
-        contrib_map = await sheet_repo.list_contributors(session, [old_row.id])
-        for contrib_uuid, _name in contrib_map.get(old_row.id, []):
-            await notify_uuids(
-                session,
-                [contrib_uuid],
-                actor=player,
-                category="sheet_row_deleted",
-                title="贡献的行已被删除",
-                body=f"[{old_row.item_name}] 已被拥有者删除，贡献取消",
-                sheet_id=sheet_id,
-                sheet_title=sheet.title,
-                row_id=row_id,
-                item_name=old_row.item_name,
-            )
+    # 删行级联删子行（FK ON DELETE CASCADE）——通知须覆盖被删行及其所有直接子行
+    # 的认领人/progress 贡献者（子行随父行消失，其认领/贡献被一并抹掉，玩家需知晓）。
+    all_rows = await sheet_repo.list_rows(session, sheet_id)
+    affected = [
+        (r, name) for r, name in all_rows if r.id == row_id or r.parent_row_id == row_id
+    ]
+    progress_ids = [r.id for r, _ in affected if r.mode == sheet_repo.MODE_PROGRESS]
+    contributors_map = (
+        await sheet_repo.list_contributors(session, progress_ids)
+        if progress_ids
+        else {}
+    )
+    await notify_rows_deleted(
+        session,
+        sheet=sheet,
+        actor=player,
+        rows_with_names=affected,
+        contributors_map=contributors_map,
+    )
     try:
         count = await sheet_repo.delete_row(session, sheet_id, row_id)
         if count == 0:

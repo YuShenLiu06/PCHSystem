@@ -13,7 +13,7 @@ from app.api.sheets._shared import (
     _resolve_item_name,
     _to_detail,
     _to_summary,
-    notify_uuids,
+    notify_rows_deleted,
 )
 from app.core.db import get_session
 from app.models.user import Player
@@ -186,36 +186,13 @@ async def delete_sheet(
         if progress_row_ids
         else {}
     )
-    for old_row, _name in rows_with_names:
-        item_name = old_row.item_name
-        old_row_id = old_row.id
-        claimant = old_row.claimant_uuid
-        if claimant is not None:
-            await notify_uuids(
-                session,
-                [claimant],
-                actor=player,
-                category="sheet_row_deleted",
-                title="认领的行已被删除",
-                body=f"[{item_name}] 已被拥有者删除，认领取消",
-                sheet_id=sheet_id,
-                sheet_title=sheet.title,
-                row_id=old_row_id,
-                item_name=item_name,
-            )
-        for contrib_uuid, _contrib_name in contributors_map.get(old_row_id, []):
-            await notify_uuids(
-                session,
-                [contrib_uuid],
-                actor=player,
-                category="sheet_row_deleted",
-                title="贡献的行已被删除",
-                body=f"[{item_name}] 已被拥有者删除，贡献取消",
-                sheet_id=sheet_id,
-                sheet_title=sheet.title,
-                row_id=old_row_id,
-                item_name=item_name,
-            )
+    await notify_rows_deleted(
+        session,
+        sheet=sheet,
+        actor=player,
+        rows_with_names=rows_with_names,
+        contributors_map=contributors_map,
+    )
     try:
         await sheet_repo.delete_sheet(session, sheet_id)
         await session.commit()
