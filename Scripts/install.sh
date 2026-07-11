@@ -25,6 +25,7 @@ cd "$PCH_REPO_DIR"
 # ---------- 参数 ----------
 STRATEGY="tag"          # tag | edge
 NO_FRONTEND=0
+NO_WEB=0
 NO_MCDR=0
 NO_SYNC=0
 OVERWRITE_MCDR_CONFIG=0
@@ -44,6 +45,7 @@ PCHSystem install.sh —— 一键首次安装
   --mcdr-api-url URL     插件访问后端的 URL，等价 PCH_MCDR_API_URL
   --mcdr-overwrite-config  强制覆盖玩家已有的 htcmc_auth config.json
   --no-frontend          跳过前端构建
+  --no-web               不启用 web 服务（默认启用 nginx 托管前端；禁用后走非容器路径自管 nginx）
   --no-mcdr              跳过 MCDR 插件拷贝
   --no-sync              跳过版本同步（用当前工作树，开发/测试用）
   -h, --help             显示本帮助
@@ -61,6 +63,7 @@ parse_args() {
             --mcdr-api-url) MCDR_API_URL_OVERRIDE=$2; shift 2 ;;
             --mcdr-overwrite-config) OVERWRITE_MCDR_CONFIG=1; shift ;;
             --no-frontend) NO_FRONTEND=1; shift ;;
+            --no-web) NO_WEB=1; shift ;;
             --no-mcdr) NO_MCDR=1; shift ;;
             --no-sync) NO_SYNC=1; shift ;;
             -h|--help) usage; exit 0 ;;
@@ -140,6 +143,15 @@ ensure_env() {
     local web_default="http://localhost:5173"
     read_interactive WEB_BASE_URL "  WEB_BASE_URL（!!PCH login 回链前缀，默认本机前端）" "${WEB_BASE_URL:-$web_default}"
     sed -i "s|^WEB_BASE_URL=.*|WEB_BASE_URL=$WEB_BASE_URL|" .env
+    if [[ $NO_WEB -eq 1 ]]; then
+        sed -i 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=|' .env
+        log_info "已禁用 web 服务（--no-web）：.env COMPOSE_PROFILES 置空（web 服务不随 compose 起）"
+    fi
+    # 端口可配：若导出了 BACKEND_PORT/PG_PORT/WEB_PORT（如沙盒避让生产），写入 .env 持久化（供后续 update.sh 复用）
+    local _bp="${BACKEND_PORT:-}" _gp="${PG_PORT:-}" _wp="${WEB_PORT:-}"
+    [[ -n "$_bp" ]] && sed -i "s|^BACKEND_PORT=.*|BACKEND_PORT=$_bp|" .env
+    [[ -n "$_gp" ]] && sed -i "s|^PG_PORT=.*|PG_PORT=$_gp|" .env
+    [[ -n "$_wp" ]] && sed -i "s|^WEB_PORT=.*|WEB_PORT=$_wp|" .env
     chmod 600 .env
     log_info ".env 已生成（POSTGRES_PASSWORD / JWT_SECRET / MCDR_SERVICE_TOKEN 已填强随机值）"
 }
@@ -171,10 +183,15 @@ EOF
 start_stack() {
     log_step "构建 backend 镜像（自动透传 HTTPS_PROXY 加速 CJK 字体下载）"
     compose_build backend
-    log_step "启动 postgres + backend"
+    if web_profile_active; then
+        log_step "构建 web 镜像（前端，容器内 npm build；NPM_REGISTRY/代理经 build-arg 透传）"
+        compose_build web
+    fi
+    log_step "启动 postgres + backend$(web_profile_active && echo ' + web')"
     dcc up -d
     wait_healthy postgres 120
-    wait_http_ok http://127.0.0.1:8000/healthz 180 200
+    local _bp="${BACKEND_PORT:-$(env_get BACKEND_PORT)}"; _bp="${_bp:-8000}"
+    wait_http_ok "http://127.0.0.1:${_bp}/healthz" 180 200
 }
 
 run_migrations() {
@@ -206,7 +223,12 @@ check_node() {
 
 build_frontend() {
     [[ $NO_FRONTEND -eq 1 ]] && { log_info "跳过前端构建（--no-frontend）"; return 0; }
-    log_step "构建前端（best-effort）"
+    # web 服务启用 → 前端在镜像内构建（start_stack 已 compose_build web），跳过宿主 npm
+    if web_profile_active; then
+        log_info "web profile 启用：前端由 web 镜像构建，无需宿主 Node"
+        return 0
+    fi
+    log_step "构建前端（best-effort，非容器路径：宿主 npm run build 出 Frontend/dist）"
     if ! check_node; then
         log_warn "未检测到 Node 18+，跳过前端构建。装好后可运行: bash Scripts/update.sh --frontend"
         return 0
@@ -320,7 +342,12 @@ save_state_and_summary() {
     log_info "====================================== 安装完成 ======================================"
     log_info "后端健康:   curl http://127.0.0.1:8000/healthz   (期望 {\"status\":\"ok\"})"
     log_info "迁移版本:   $(dcc exec -T backend alembic current 2>/dev/null || echo unknown)"
-    [[ -d Frontend/dist ]] && log_info "前端产物:   Frontend/dist/（用 nginx 等托管，反代 /api 到 :8000）"
+    local web_port; web_port=$(env_get WEB_PORT); web_port=${web_port:-5173}
+    if web_profile_active; then
+        log_info "前端 Web:    http://<本机IP>:${web_port}（compose web 服务：托管 dist + 反代 /api 到 backend）"
+    elif [[ -d Frontend/dist ]]; then
+        log_info "前端产物:   Frontend/dist/（web 未启用，自管 nginx 托管 + 反代 /api 到 :8000，见 Scripts/README.md §10）"
+    fi
     [[ -n "${MCDR_DEPLOYED_ROOT:-}" ]] && {
         log_info "插件已部署: ${MCDR_DEPLOYED_ROOT}/plugins/htcmc_auth/"
         log_info "插件配置:   ${MCDR_DEPLOYED_ROOT}/config/htcmc_auth/config.json"
@@ -331,7 +358,7 @@ save_state_and_summary() {
     [[ -z "${MCDR_DEPLOYED_ROOT:-}" && $NO_MCDR -eq 0 ]] && log_warn "  - 部署 htcmc_auth 到你的 MCDR（或重跑 install.sh 带 --mcdr-root）"
     log_warn "  - 在游戏内执行: !!MCDR plugin reload htcmc_auth"
     log_warn "  - 确认依赖插件已装: uuid_api_remake + minecraft_data_api"
-    [[ -f .env ]] && log_warn "  - 检查 .env 的 WEB_BASE_URL 与密钥（已生成强随机值）"
+    [[ -f .env ]] && log_warn "  - 检查 .env：WEB_BASE_URL 需为玩家可访问的前端地址（单机 + web 默认 5173 已对齐；用域名/反代则改成真实 URL 后 docker compose restart backend）"
     log_info "======================================================================================"
 }
 

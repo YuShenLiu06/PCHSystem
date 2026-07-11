@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:${PG_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -33,12 +33,27 @@ services:
       WEB_BASE_URL: ${WEB_BASE_URL}
       ARCHIVE_ROOT: /app/archive
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       # 只挂载源码目录：改 .py 文件后 uvicorn --reload 自动重启，依赖变更（pyproject.toml）才需 rebuild
       - ./Backend/app:/app/app
       - ./Backend/alembic:/app/alembic
       - ./Archive:/app/archive   # 归档 markdown 落盘（持久化 + 未来 wiki 同步入口）
+
+  # 前端 web 服务（nginx 托管 Frontend/dist + 反代 /api 到 backend）。
+  # 默认启用：.env 的 COMPOSE_PROFILES=web；清空/删除该行即禁用（profile 不激活则本服务不启动）。
+  # 宿主端口默认 5173：免 root、对齐 WEB_BASE_URL 默认值（单机 !!PCH login 回链开箱即用）。
+  web:
+    build:
+      context: ./Frontend
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    profiles: ["web"]
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -553,3 +553,16 @@ compose_build() {
     args+=("$service")
     dcc "${args[@]}"
 }
+
+# ============================================================
+# Web 服务（前端 nginx）profile 判定
+# ============================================================
+# web_profile_active: .env 的 COMPOSE_PROFILES 是否激活 web profile。
+# compose 读 .env 的 COMPOSE_PROFILES（值可空格/逗号分隔）；含 web → web 服务随 up -d 起。
+# 被 install.sh / update.sh 复用，决定前端是「容器内镜像构建」还是「宿主 npm build」。
+web_profile_active() {
+    local profiles=""
+    [[ -f .env ]] && profiles=$(grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | head -1 | cut -d= -f2-)
+    # 同时容忍空格与逗号分隔：把空格统一成逗号，再前后加逗号做整词匹配
+    [[ ",${profiles// /,}," == *",web,"* ]]
+}

@@ -113,7 +113,7 @@ bash Scripts/update.sh [选项]
 |---|---|
 | **GitHub**（clone/fetch） | 直连探测失败时，依次试 `ghfast.top` / `ghproxy.com` / `kkgithub.com` / `gitclone.com` / `gh.zwy.one`（用 `git insteadOf` 重写） |
 | **Docker Hub** | `get.docker.com --mirror Aliyun` 装时走阿里云；运行时写 `/etc/docker/daemon.json` 的 `registry-mirrors`（`docker.nju.edu.cn` / `docker.1ms.run` / `docker.m.daocloud.io` / `mirror.baidubce.com`） |
-| **PyPI**（build 时） | `PIP_INDEX_URL` 透传清华源（注：当前 Dockerfile 未消费此 build-arg，主要靠代理透传 `HTTPS_PROXY` 助 CJK 字体 `wget`） |
+| **PyPI**（build 时） | `PIP_INDEX_URL` 透传清华源，`Backend/Dockerfile` 经 `ARG PIP_INDEX_URL` + `pip config set global.index-url` 消费（matplotlib/numpy 等大包加速）；`HTTPS_PROXY` 透传助 CJK 字体 `wget` |
 | **npm** | `npm config set registry https://registry.npmmirror.com` |
 
 > ⚠ **公共镜像 2024–2025 大批关停**（ustc、网易、中科大、阿里云部分等）。脚本里的候选以**探测结果为准**，可能随时失效。若全失败，回退直连（慢但通常最终能成），或自行挂代理后重跑。
@@ -161,7 +161,7 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 ```
 !!MCDR plugin reload htcmc_auth
 ```
-若 `mcdreforged.plugin.json`（version/dependencies）变更，update 会提示**需重启 MCDR**而非仅 reload。
+`mcdreforged.plugin.json` 任何字段变更（version/dependencies/name/...）**只需 `!!MCDR plugin reload`**，无需重启 MCDR——reload 会重读元数据并由 `DependencyWalker` 重校依赖（不满足则自动卸载插件）。
 
 ### docker 化 MCDR 的两种形态
 - **bind mount / volume 挂载点可见**（如 `/var/lib/docker/volumes/xxx/_data`）：`--mcdr-root` 指向该宿主路径，脚本直接 rsync。
@@ -200,64 +200,68 @@ docker compose restart backend
 
 ---
 
-## 10. 前端托管（dist 怎么用）
+## 10. 前端部署
 
-`install.sh` 第 8 步只 `npm run build` 出 `Frontend/dist/`，**不起任何 web 服务器**。要能访问，需自己起一个 HTTP 服务器托管它。
-
-### dist 不是"启动"的
-`dist/` 是纯静态文件（`index.html` + `assets/*`），没有进程会自己跑、不监听端口。"启动前端" = **起一个 HTTP 服务器，把 `dist/` 作为文件根**。
-
-前端写死 `baseURL: '/api'`（`Frontend/src/utils/http.ts`），所以 SPA 完整工作需服务器同时做两件事：
-1. **提供静态文件**（`/`、`/assets/*`）—— 任何 HTTP 服务器都行；
-2. **反代 `/api` 到后端**（`/api/me` → `http://127.0.0.1:8000/me`，去 `/api` 前缀）—— 需 nginx / Caddy 这类能配 proxy 的。
+前端（Vue3 + Vite）构建产物 `Frontend/dist/` 是纯静态文件。**前端写死 `baseURL: '/api'`**（`Frontend/src/utils/http.ts`），且路由为 HTML5 history 模式 → 托管服务器必须同时做两件事：① 提供静态文件（`/`、`/assets/*`）；② 反代 `/api/` 到后端（`proxy_pass` 末尾 `/` 去前缀，对齐 vite dev 的 rewrite）。
 
 > 只做 ① 不做 ②（如 `python3 -m http.server`、GitHub Pages）→ 能看 UI 壳，但登录/数据全 404。
 
-### 生产：nginx 同域反代（推荐）
-```nginx
-server {
-    listen 80;
-    server_name your.domain.or.ip;
-    root /path/to/Frontend/dist;
-    index index.html;
+`install.sh` / `update.sh` 默认走**路径 A（容器内 web 服务）**；也可禁用后走**路径 B（宿主 nginx）**。
 
-    location / { try_files $uri $uri/ /index.html; }   # SPA 路由 fallback
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000/;             # 末尾 / 必带 → 去 /api 前缀
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
-}
-```
-> `proxy_pass` 末尾 `/` 是命门：带 `/` 才会去掉 `/api` 前缀（对齐 vite dev 的 rewrite）；漏了 → `/api/me` 变 `:8000/api/me` 后端 404。
+### 路径 A：容器内 web 服务（默认）
 
-### 临时验证（docker nginx 一行）
+`.env` 的 `COMPOSE_PROFILES=web`（默认开启）激活 compose 的 `web` 服务：多阶段镜像（`Frontend/Dockerfile`：node 构建 → nginx 托管）随 `docker compose up -d` 自动构建并启动，**零宿主 Node 依赖**。
+
+| 旋钮（`.env`） | 说明 |
+|---|---|
+| `COMPOSE_PROFILES` | 含 `web` → web 服务随 `up -d` 起；改空/注释 → 禁用 web（走路径 B） |
+| `WEB_PORT` | nginx 宿主端口（容器内固定 80）。默认 `5173`：免 root + 对齐 `WEB_BASE_URL` 默认值，单机 `!!PCH login` 回链开箱即用 |
+| `NPM_REGISTRY` | 镜像构建用 npm registry（留空默认；国内可设 `https://registry.npmmirror.com`），经 build-arg 透传 |
+
+反代目标为 compose 服务名 `backend:8000`（配置权威源 `Frontend/nginx.conf`）。更新时 `Frontend/` 有变更 → `update.sh` 自动重建 web 镜像（dist 烘焙进镜像，非 bind-mount）；`--frontend` 强制重建。
+
 ```bash
-cd Frontend
+docker compose up -d           # 默认即含 web；访问 http://<本机IP>:5173
+```
+
+**禁用 web**（你已有前置 nginx，或想走路径 B）：把 `COMPOSE_PROFILES` 改空再 `up -d`，web 不再启动：
+```bash
+sed -i 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=|' .env
+docker compose up -d
+```
+> 首次安装也可直接 `bash Scripts/install.sh --no-web`。
+
+### 路径 B：非容器（宿主 nginx）
+
+web 服务禁用时，脚本走宿主 `npm run build` 出 `Frontend/dist/`，你用自己的 nginx 托管。站点模板已入库：
+```bash
+cp Deploy/Nginx/pchsystem.host.conf.example /etc/nginx/sites-available/pchsystem
+$EDITOR /etc/nginx/sites-available/pchsystem   # 改 root（Frontend/dist 绝对路径）+ server_name
+ln -s /etc/nginx/sites-available/pchsystem /etc/nginx/sites-enabled/
+nginx -t && nginx -s reload
+```
+模板要点：`location / { try_files $uri $uri/ /index.html; }`（history 模式 fallback）；`location /api/ { proxy_pass http://127.0.0.1:8000/; }`（末尾 `/` 是命门，带 `/` 才去 `/api` 前缀；漏了 → `/api/me` 变 `:8000/api/me` 后端 404）。
+
+### 临时验证（一行 docker nginx，不影响 compose）
+```bash
 cat > /tmp/pch-preview.conf <<'EOF'
 server {
-    listen 8081;
-    root /usr/share/nginx/html;
+    listen 80;
     location / { try_files $uri $uri/ /index.html; }
     location /api/ { proxy_pass http://host.docker.internal:8000/; }
 }
 EOF
-docker run --rm -d --name pch-preview -p 8081:8081 \
+docker run --rm -d --name pch-preview -p 8082:80 \
   --add-host=host.docker.internal:host-gateway \
-  -v "$(pwd)/dist:/usr/share/nginx/html:ro" \
+  -v "$(pwd)/Frontend/dist:/usr/share/nginx/html:ro" \
   -v /tmp/pch-preview.conf:/etc/nginx/conf.d/default.conf:ro \
   nginx:alpine
-# 访问 http://localhost:8081 ；用完 docker stop pch-preview
+# 访问 http://localhost:8082 ；用完 docker stop pch-preview
 ```
+> 只瞄一眼 UI（不验数据）：`cd Frontend/dist && python3 -m http.server 8099`。
 
-### 只瞄一眼 UI（不看数据）
-```bash
-cd Frontend/dist && python3 -m http.server 8099   # 或 npx serve
-```
-
-### 部署后改 `WEB_BASE_URL`
-`.env` 的 `WEB_BASE_URL` 是 `!!PCH login` **二维码回链**（玩家扫码后浏览器打开的地址），默认 `http://localhost:5173`。前端上线后必须改成真实访问地址，否则玩家扫码打开不存在的 5173：
+### 部署后核对 `WEB_BASE_URL`
+`.env` 的 `WEB_BASE_URL` 是 `!!PCH login` **二维码回链**（玩家扫码后浏览器打开的地址），默认 `http://localhost:5173`。单机 + web 默认 5173 已对齐；若用域名/前置反代，必须改成真实访问地址：
 ```bash
 sed -i 's|^WEB_BASE_URL=.*|WEB_BASE_URL=http://your.domain|' .env
 docker compose restart backend
@@ -273,7 +277,7 @@ docker compose restart backend
 | backend `/healthz` 不通 | `docker compose logs --tail 80 backend`；postgres 未 healthy 也会拖住 backend（`depends_on`） |
 | alembic `Target database is not up to date` | 手动 `docker compose exec backend alembic upgrade head` |
 | 插件 `!!PCH` 命令不存在 | 确认依赖插件 `uuid_api_remake` + `minecraft_data_api` 已装；`docker logs <mcdr> \| grep htcmc_auth` 看加载日志 |
-| 插件 reload 后行为没变 | 确认拷贝目标是 MCDR 实际加载的 `plugins/htcmc_auth/`；元数据变更需重启 MCDR |
+| 插件 reload 后行为没变 | 确认拷贝目标是 MCDR 实际加载的 `plugins/htcmc_auth/`；version/dependencies 等元数据变更也只需 reload（reload 重读 `mcdreforged.plugin.json` + 重校依赖） |
 | `!!PCH login` 链接打不开 | 核对 `.env` 的 `WEB_BASE_URL`（login 回链前缀）与前端实际地址 |
 | token 401 | `.env` `MCDR_SERVICE_TOKEN` 与插件 config `service_token` 是否同值（见 §8） |
 | clone/pull 卡住 | 见 §5 镜像；或挂代理后 `HTTPS_PROXY=http://宿主:port bash Scripts/install.sh`（自动透传给 build 助 CJK 字体下载） |
@@ -283,7 +287,7 @@ docker compose restart backend
 ## 12. 不做的事（边界）
 
 - **不部署 MC 服务端**（Fabric + MCDR 由你持有）；不部署 TestServer 的 `mc-test` 容器。
-- **不托管前端**（只 build 出 `dist/`，托管方式见 §10）。
-- **不自动 reload/restart MCDR**（只提示命令）。
+- **默认托管前端**（compose `web` 服务：nginx 托管 dist + 反代 /api 到 backend），可经 `.env` 的 `COMPOSE_PROFILES` 禁用后走非容器自管 nginx（见 §10）。
+- **不自动 reload/restart MCDR**（只提示命令；插件任何变更只需 reload，无需重启）。
 - **不自动回滚**（迁移涉及数据，只给手动步骤）。
 - **不覆盖已有 `.env` / override**（保留你的改动）。

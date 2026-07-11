@@ -56,8 +56,8 @@
 |---|---|---|
 | **R-1** | **数据唯一拥有者**：所有业务数据集中在 PostgreSQL，由 **FastAPI 后端独占**读写。**MCDR 插件绝不直连数据库**，仅经 HTTP API 与后端交互。 | arch §2.1 |
 | **R-2** | **积分流水 append-only**：`score_ledger` **禁止 UPDATE/DELETE**（由权限/触发器保证）；任何积分变动记一条，含 `balance_after`，可审计重建。 | data-model §4.3 |
-| **R-3** | **清箱时序**：扫描 → 上报后端 → 后端事务成功 → **才**清箱。**失败绝不清箱**，玩家可重试。 | arch §7.2 |
-| **R-4** | **清空箱子用 `data merge block x y z {Items:[]}`**，**不是 `/clear`**（`/clear` 只清玩家背包）。 | mcdr-plugin §3.2 |
+| **R-3** | *插件不再提供清箱功能* |  |
+| **R-4** | *插件不再提供清箱功能* |  |
 | **R-5** | **身份主锚 = Web 绑定账号**；MC UUID 为子身份（离线模式 UUID 由玩家名确定性推导，改名即换身份）。 | arch §2.1 |
 | **R-6** | **物品 id 统一 registry id**（`namespace:path`），存储前剥离 BlockState properties；block→item 归一化集中在 project-service。 | data-model §0 |
 | **R-7** | **MCDR 是纯游戏内客户端**：只做命令交互、箱子/背包扫描、UUID 推导、称号下发、HTTP 上报；**不做积分计算、不持久化业务数据、不做 wiki 同步**。 | mcdr-plugin §1 |
@@ -205,8 +205,13 @@ PCHSystem/
 - [x] **Phase 1 重构**：`Backend/app/api/sheets.py`（1215 行）包化拆分 → `sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）；新增公共翻译 `app/services/translation.py`（`get_translator`/`resolve_item_name`）修正 sheets→parsing 反向依赖；通知 helper（`_row_payload`/`notify_owner_row_event`/`notify_uuids`/`_row_response`）；测试保持绿（行为不变）。
 - [x] **Phase 2 子物品（issue #19）**：迁移 0012（`sheet_rows` 加 `parent_row_id`/`qty_per_unit`；部分唯一索引 + CHECK；单层/模式继承/级联重算）；`RowUpsertRequest`/`RowDetail`/CSV 加两字段；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑。详见 [`Docs/architecture/data-model.md`](./Docs/architecture/data-model.md) §10.2 与 [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) §14。
 
+**已完成（2026-07-11，前端部署方案 + MCDR restart 误报修复）**：
+- [x] **容器内 web 服务（默认启用）**：`Frontend/Dockerfile`（多阶段 node 构建 → nginx:stable-alpine 托管 dist，烘焙 `Frontend/nginx.conf`：try_files history fallback + `/api/` 反代 compose 服务名 `backend:8000` + `/assets` 长缓存）+ `Frontend/.dockerignore`；compose 加 `web` 服务（`profiles:["web"]`、`${WEB_PORT:-5173}:80`、`depends_on: backend`）—— `.env` `COMPOSE_PROFILES=web` 默认启用、改空即禁用（满足「允许配置是否启用」）；**端口默认 5173**：免 root + 对齐 `WEB_BASE_URL` 默认值，单机 `!!PCH login` 回链开箱即用
+- [x] **非容器方案**：`Deploy/Nginx/pchsystem.host.conf.example`（root 占位 + `/api/` 反代 `127.0.0.1:8000/` + try_files + `/assets` 缓存）
+- [x] **Scripts 联动**：`common.sh::web_profile_active()` 判定；`install.sh`（`--no-web` 旗标、`ensure_env` 按 `--no-web` 置空 `COMPOSE_PROFILES`、`start_stack` 按 profile 构建 web、`build_frontend` web 激活则跳过宿主 npm、summary Web 行 + `WEB_BASE_URL` 提醒）；`update.sh`（`decide_rebuild` 增 web 镜像重建分支——`Frontend/` 变更且 web 激活则 `compose_build web`+`up -d web`、`update_frontend` web 激活则让位）；`.env.example` 加 `COMPOSE_PROFILES`/`WEB_PORT`/`NPM_REGISTRY`
+- [x] **修复 `update.sh` MCDR restart 误报**：`mcdreforged.plugin.json` 任何字段变更（version/dependencies/name/...）只需 `!!MCDR plugin reload`（reload = unload→load→`DependencyWalker` 重校依赖，源码 `plugin_manager.py`/`multi_file_plugin.py` 验证），折叠原 if/else 为统一 reload 消息
+- [x] 文档：`Scripts/README.md` §10 双方案 + §12 改「默认托管前端」+ §7/§11 reload 说明；`Docs/architecture/frontend.md` §5
+
 ---
 
-*最后更新：2026-07-09（子物品 issue #19 + sheets.py 包化重构：迁移 0012 + sheets/ 包结构 + translation.py + 子物品嵌套行 + MCDR addsub/delsub/setsub + 前端树状渲染）*
-
-*增量（2026-07-05）：sheet view tellraw 像素级美化——新增 `text_layout.py` 像素宽度估算模块 + `format_section_separator` 分节标题（`════ 物品列表 ════`）+ 行尾按钮右对齐 / 底栏按钮居中；`format_section_separator` 配色回归 §6 色板「重要/标题」`§6§l`（gold+bold）；MCDR 测试 113 绿。发现并记入待处理：worktree 工作树 `Frontend/vite.config.ts` 端口改 8002 属 worktree 本地污染，勿提交。*
+*最后更新：2026-07-11（前端部署方案：Frontend/Dockerfile + nginx.conf + compose web 服务 + Deploy/Nginx 模板 + Scripts 联动 + MCDR restart 误报修复）*
