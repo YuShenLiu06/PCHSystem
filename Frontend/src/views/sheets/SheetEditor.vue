@@ -29,8 +29,8 @@ import { usePolling } from '../../composables/usePolling'
 const MODE_LOCK = 0
 const MODE_PROGRESS = 1
 
-// 详情页轮询间隔：有认领/交付状态，需相对实时（后台/卸载自动暂停见 usePolling）
-const DETAIL_INTERVAL_MS = 1_000
+// 详情页轮询间隔：认领/交付有 2~3s 延迟可接受，3s 兼顾实时与稳态压力（后台/卸载自动暂停见 usePolling）
+const DETAIL_INTERVAL_MS = 3_000
 
 // status 取值：open / claimed / done（与后端契约对齐）
 type RowStatus = 'open' | 'claimed' | 'done'
@@ -79,6 +79,10 @@ const rowDrafts = ref<
     }
   >
 >({})
+
+// 当前正在编辑的行 id；null = 浏览态（所有行显 span，首渲只建少量组件）。
+// 单值锁：同一时刻最多一行切到 input 态（方案 A 惰性行编辑）。
+const editingRowId = ref<number | null>(null)
 
 const sheetId = computed(() => Number(route.params.id))
 
@@ -282,6 +286,7 @@ function applyRefreshedSheet(refreshed: SheetDetail): void {
   const refreshedIds = new Set(refreshed.rows.map((r) => r.id))
   for (const id of Object.keys(rowDrafts.value).map(Number)) {
     if (!refreshedIds.has(id)) {
+      if (editingRowId.value === id) editingRowId.value = null
       delete rowDrafts.value[id]
       delete newSubRow.value[id]
     }
@@ -375,6 +380,31 @@ async function onAddRow(): Promise<void> {
   }
 }
 
+// === 行内编辑态切换（方案 A 惰性行编辑）===
+// 进入/取消编辑前按 server 当前值重建草稿——轮询「已有草稿保留不动」会让草稿与
+// row（span 显示值）漂移；这里同步保证编辑态初值 = 浏览态 span 显示值，无 stale 闪烁。
+function resetDraftFromRow(row: RowDetail): void {
+  rowDrafts.value[row.id] = {
+    item_name: row.item_name,
+    registry_id: row.registry_id ?? '',
+    need_qty: row.need_qty,
+    mode: row.mode,
+    sort_order: row.sort_order,
+    parent_row_id: row.parent_row_id,
+    qty_per_unit: row.qty_per_unit,
+  }
+}
+
+function onStartEdit(row: RowDetail): void {
+  resetDraftFromRow(row)
+  editingRowId.value = row.id
+}
+
+function onCancelEdit(row: RowDetail): void {
+  resetDraftFromRow(row)
+  editingRowId.value = null
+}
+
 async function onSaveRow(row: RowDetail): Promise<void> {
   const draft = rowDrafts.value[row.id]
   if (!draft) return
@@ -399,6 +429,7 @@ async function onSaveRow(row: RowDetail): Promise<void> {
     applyRefreshedSheet(refreshed)
     const childIds = refreshed.rows.filter((r) => r.parent_row_id === row.id).map((r) => r.id)
     syncStructuralDrafts(refreshed.rows, [row.id, ...childIds])
+    editingRowId.value = null
     ElMessage.success('已保存')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -423,6 +454,7 @@ async function onDeleteRow(row: RowDetail): Promise<void> {
       sheet.value = { ...sheet.value, rows: remaining }
       // 清理已删行的草稿 / 「添加子物品」表单（含子行条目）
       for (const id of removedIds) {
+        if (editingRowId.value === id) editingRowId.value = null
         delete rowDrafts.value[id]
         delete newSubRow.value[id]
       }
@@ -525,6 +557,7 @@ async function onSaveSubRow(subRow: RowDetail): Promise<void> {
     const refreshed = await fetchSheet(sheetId.value)
     applyRefreshedSheet(refreshed)
     syncStructuralDrafts(refreshed.rows, [subRow.id])
+    editingRowId.value = null
     ElMessage.success('已保存子物品')
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e))
@@ -797,7 +830,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="物品名" min-width="180" class-name="tree-name-col">
           <template #default="{ row }">
             <el-input
-              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].item_name"
               maxlength="128"
             />
@@ -808,7 +841,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="注册名" min-width="180">
           <template #default="{ row }">
             <el-input
-              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].registry_id"
               placeholder="minecraft:stone"
               maxlength="128"
@@ -822,7 +855,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="需要数量" width="100">
           <template #default="{ row }">
             <el-input-number
-              v-if="canEdit && !isReadOnly && rowDrafts[row.id] && !isSubRow(row)"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id && !isSubRow(row)"
               v-model="rowDrafts[row.id].need_qty"
               :min="0"
               placeholder="数量"
@@ -837,7 +870,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
           <template #default="{ row }">
             <template v-if="isSubRow(row)">
               <el-input-number
-                v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+                v-if="canEdit && !isReadOnly && editingRowId === row.id"
                 v-model="rowDrafts[row.id].qty_per_unit"
                 :min="0.01"
                 :step="0.5"
@@ -861,7 +894,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="模式" width="80">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && !isReadOnly && rowDrafts[row.id] && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -924,7 +957,7 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
         <el-table-column label="排序" width="90">
           <template #default="{ row }">
             <el-input-number
-              v-if="canEdit && !isReadOnly && rowDrafts[row.id]"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].sort_order"
               :min="0"
               placeholder="排序"
@@ -941,8 +974,14 @@ usePolling(silentRefresh, { intervalMs: DETAIL_INTERVAL_MS })
             <template v-if="!isReadOnly">
               <!-- 拥有者操作 -->
               <template v-if="canEdit">
-                <el-button size="small" type="primary" @click="isSubRow(row) ? onSaveSubRow(row) : onSaveRow(row)">保存</el-button>
-                <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
+                <template v-if="editingRowId === row.id">
+                  <el-button size="small" type="primary" @click="isSubRow(row) ? onSaveSubRow(row) : onSaveRow(row)">保存</el-button>
+                  <el-button size="small" @click="onCancelEdit(row)">取消</el-button>
+                </template>
+                <template v-else>
+                  <el-button size="small" @click="onStartEdit(row)">编辑</el-button>
+                  <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
+                </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
                 <el-popover
                   v-if="!isSubRow(row)"
