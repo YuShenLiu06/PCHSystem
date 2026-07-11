@@ -196,6 +196,7 @@ def match_rows(rows: list, inventory: dict, player_uuid: str = "") -> list:
 
 # === skip 原因常量 ===
 REASON_NO_ITEM = "背包没有此物"
+REASON_READY = "已备齐"  # lock status=done / progress status=done 或 delivered>=need（复用此常量判定 skip_is_ready）
 
 
 def _skip_reason_lock(status, need: int, have: int, is_claimant: bool = False) -> str:
@@ -204,7 +205,7 @@ def _skip_reason_lock(status, need: int, have: int, is_claimant: bool = False) -
     if status == "claimed" and not is_claimant:
         return "已被他人认领"
     if status == "done":
-        return "已备齐"
+        return REASON_READY
     if need <= 0:
         return "无需求"
     return f"数量不足（{have}/{need}）"
@@ -214,7 +215,7 @@ def _skip_reason_progress(status, need: int, delivered: int, have: int) -> str:
     if need <= 0:
         return "无需求"
     if status == "done" or delivered >= need:
-        return "已备齐"
+        return REASON_READY
     if have <= 0:
         return REASON_NO_ITEM
     return "不满足上交条件"
@@ -232,3 +233,13 @@ def skip_is_noise(action: MatchAction) -> bool:
     if action.mode == 0:
         return not action.is_claimant
     return action.reason == REASON_NO_ITEM
+
+
+def skip_is_ready(action: MatchAction) -> bool:
+    """该跳过行是否已备齐/进度已满 → 一键提交回执折叠（不逐行展示）。
+
+    复用 _skip_reason_lock/_progress 产出的 REASON_READY：行已完成（lock status=done；
+    progress status=done 或 delivered>=need），玩家本次无可操作。判定锚定在 reason
+    字符串上，不重算 status/delivered/need，自然继承 lock/progress 与 need=0 既有语义。
+    """
+    return action.action == "skip" and action.reason == REASON_READY

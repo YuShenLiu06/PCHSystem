@@ -83,6 +83,7 @@ from .messages import (
     SHEET_SUBMIT_DONE_HEAD,
     SHEET_SUBMIT_SKIP_HEAD,
     SHEET_SUBMIT_FOLDED_LINE,
+    SHEET_SUBMIT_READY_FOLDED_LINE,
     SHEET_SUBMIT_FAIL,
 )
 
@@ -1178,7 +1179,8 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
 
     纯申报语义（RS-4 衍生）：只读背包 + HTTP 上报，绝不清背包、不 data merge / clear。
     单行失败不阻断其他行；汇总回执一次 tell（绿色 done/累计 + 黄色跳过原因）。
-    复用 scanner.skip_is_noise 折叠与本人无关的跳过行（他人认领的 lock 行、progress 未携带项）。
+    复用 scanner.skip_is_ready 折叠已备齐/进度已满的跳过行（玩家本次无可操作），
+    scanner.skip_is_noise 折叠与本人无关的跳过行（他人认领的 lock 行、progress 未携带项）。
     """
     api = server.get_plugin_instance("minecraft_data_api")
     if api is None:
@@ -1194,6 +1196,7 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
 
     done_lines: list = []
     shown_skips: list = []
+    ready_folded = 0  # 折叠计数（已备齐/进度已满，玩家本次无可操作）
     folded = 0  # 折叠计数（与本人无关的跳过行）
 
     for action in actions:
@@ -1219,15 +1222,17 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
                 shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
                     item=action.item_name, reason="上交失败（状态变化）")))
         else:  # skip
-            # 折叠与本人无关的跳过行（scanner.skip_is_noise）
-            if scanner.skip_is_noise(action):
+            # 已备齐/进度已满优先归「备齐」桶（更准确），其次与本人无关折叠，其余逐行
+            if scanner.skip_is_ready(action):
+                ready_folded += 1
+            elif scanner.skip_is_noise(action):
                 folded += 1
             else:
                 shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
                     item=action.item_name, reason=action.reason)))
 
     # 汇总回执（一次 tell，避免刷屏）
-    if not done_lines and not shown_skips and folded == 0:
+    if not done_lines and not shown_skips and ready_folded == 0 and folded == 0:
         server.tell(player_name, RTextList(RText(SHEET_SUBMIT_HEAD), RText(SHEET_SUBMIT_NO_ROWS)))
         return
     parts: list = [RText(SHEET_SUBMIT_HEAD), RText("\n")]
@@ -1241,6 +1246,8 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
         for ln in shown_skips:
             parts.append(ln)
             parts.append(RText("\n"))
+    if ready_folded > 0:
+        parts.append(RText(SHEET_SUBMIT_READY_FOLDED_LINE.format(n=ready_folded)))
     if folded > 0:
         parts.append(RText(SHEET_SUBMIT_FOLDED_LINE.format(n=folded)))
     server.tell(player_name, RTextList(*parts))

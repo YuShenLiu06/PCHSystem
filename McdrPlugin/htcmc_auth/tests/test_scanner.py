@@ -21,7 +21,9 @@ scan_inventory = scanner.scan_inventory
 read_held_item = scanner.read_held_item
 match_rows = scanner.match_rows
 skip_is_noise = scanner.skip_is_noise
+skip_is_ready = scanner.skip_is_ready
 REASON_NO_ITEM = scanner.REASON_NO_ITEM
+REASON_READY = scanner.REASON_READY
 
 
 # ---- 1.20.4- NBT 路径（TestServer 1.20.1 真机走此路径）----
@@ -379,6 +381,91 @@ class TestSkipIsNoise:
         a5 = _by_row(match_rows(ROWS, {"minecraft:cobblestone": 64}), 5)
         assert a5.action == "contribute"
         assert skip_is_noise(a5) is False
+
+
+class TestSkipIsReady:
+    """skip_is_ready 已备齐/进度已满折叠判定测试。"""
+
+    def test_progress_已备齐_is_ready(self):
+        """progress 行已备齐（delivered>=need）→ ready 折叠。"""
+        a6 = _by_row(match_rows(ROWS, {"minecraft:dirt": 99}), 6)
+        assert a6.action == "skip"
+        assert a6.reason == REASON_READY
+        assert skip_is_ready(a6) is True
+
+    def test_progress_状态done_is_ready(self):
+        """progress 行 status=done（即便 delivered<need）→ ready。"""
+        rows = [{"id": 9, "item_name": "x", "registry_id": "minecraft:stone",
+                 "need_qty": 100, "delivered_qty": 5, "mode": 1, "status": "done"}]
+        a = _by_row(match_rows(rows, {"minecraft:stone": 99}), 9)
+        assert a.action == "skip"
+        assert a.reason == REASON_READY
+        assert skip_is_ready(a) is True
+
+    def test_lock_本人认领且done_is_ready(self):
+        """lock 行本人认领且 status=done → ready（不再逐行展示备齐）。"""
+        rows = [{"id": 10, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot",
+                 "need_qty": 32, "mode": 0, "status": "done", "claimant_uuid": "uuid-A"}]
+        a = _by_row(match_rows(rows, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 10)
+        assert a.action == "skip"
+        assert a.is_claimant is True
+        assert a.reason == REASON_READY
+        assert skip_is_ready(a) is True
+
+    def test_lock_他人认领且done_is_ready(self):
+        """lock 行他人认领且 done → ready（reason 命中，与归属无关；同时亦为 noise，ready 优先）。"""
+        rows = [{"id": 11, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot",
+                 "need_qty": 32, "mode": 0, "status": "done", "claimant_uuid": "uuid-A"}]
+        a = _by_row(match_rows(rows, {"minecraft:iron_ingot": 99}, player_uuid="uuid-B"), 11)
+        assert a.action == "skip"
+        assert a.reason == REASON_READY
+        assert skip_is_ready(a) is True
+        # 归属上仍属 noise，但归桶时 ready 优先（_sheet_submit_impl 先判 ready）
+        assert skip_is_noise(a) is True
+
+    def test_progress_无需求_not_ready(self):
+        """progress 行无需求（need=0）→ 非 ready（属其它展示类）。"""
+        rows = [{"id": 12, "item_name": "x", "registry_id": "minecraft:stone",
+                 "need_qty": 0, "delivered_qty": 0, "mode": 1, "status": "open"}]
+        a = _by_row(match_rows(rows, {}), 12)
+        assert a.action == "skip"
+        assert a.reason == "无需求"
+        assert skip_is_ready(a) is False
+
+    def test_progress_未携带_not_ready(self):
+        """progress 行未携带（REASON_NO_ITEM）→ 非 ready（属 noise）。"""
+        rows = [{"id": 13, "item_name": "金锭", "registry_id": "minecraft:gold_ingot",
+                 "need_qty": 10, "delivered_qty": 0, "mode": 1, "status": "open"}]
+        a = _by_row(match_rows(rows, {}), 13)
+        assert a.action == "skip"
+        assert a.reason == REASON_NO_ITEM
+        assert skip_is_ready(a) is False
+
+    def test_lock_本人认领数量不足_not_ready(self):
+        """lock 行本人认领但数量不足（未 done）→ 非 ready。"""
+        a3 = _by_row(match_rows(ROWS, {"minecraft:oak_planks": 64}, player_uuid="uuid-A"), 3)
+        assert a3.action == "skip"
+        assert a3.is_claimant is True
+        assert "不足" in a3.reason
+        assert skip_is_ready(a3) is False
+
+    def test_非skip_action_not_ready(self):
+        """deliver / contribute action → 非 ready。"""
+        # deliver
+        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 2)
+        assert a2.action == "deliver"
+        assert skip_is_ready(a2) is False
+        # contribute
+        a5 = _by_row(match_rows(ROWS, {"minecraft:cobblestone": 64}), 5)
+        assert a5.action == "contribute"
+        assert skip_is_ready(a5) is False
+
+    def test_reason常量值向后兼容(self):
+        """REASON_READY 仍为 '已备齐'（_skip_reason_* 返回值不变）。"""
+        assert REASON_READY == "已备齐"
+        # progress done 行的 reason 即此常量
+        a6 = _by_row(match_rows(ROWS, {"minecraft:dirt": 99}), 6)
+        assert a6.reason == "已备齐"
 
 
 class TestMatchRowsIsClaimant:
