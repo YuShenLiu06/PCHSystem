@@ -112,6 +112,7 @@ SHEET_SUBMIT_SKIP_LINE = "§e  {item}：{reason}"
 SHEET_SUBMIT_DONE_HEAD = "§a已标记 {n} 行：\n"
 SHEET_SUBMIT_SKIP_HEAD = "§e跳过 {n} 行：\n"
 SHEET_SUBMIT_FOLDED_LINE = "§7（另有 {n} 行与您无关已折叠：他人认领或背包未携带）"
+SHEET_SUBMIT_FAIL = "§c一键提交处理失败：{err}（详见服务器日志，请稍后重试）"
 
 # === 项目三阶段生命周期（collecting → constructing → archived）===
 # 阶段标签：collecting 收集中(§b) / constructing 施工中(§e) / archived 已归档(§a)

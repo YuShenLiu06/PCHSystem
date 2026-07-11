@@ -83,6 +83,7 @@ from .messages import (
     SHEET_SUBMIT_DONE_HEAD,
     SHEET_SUBMIT_SKIP_HEAD,
     SHEET_SUBMIT_FOLDED_LINE,
+    SHEET_SUBMIT_FAIL,
 )
 
 # 由 __init__.py 在 on_load 中注入
@@ -1245,6 +1246,21 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
     server.tell(player_name, RTextList(*parts))
 
 
+def _submit_safe(server, player_name, player_uuid, sheet_id):
+    """``_sheet_submit_impl`` 的异常兜底（RS-6 失败回执）。
+
+    ``_sheet_submit_impl`` 跑在 ``@new_thread`` 内，未捕获异常会被 MCDR 静默吞掉
+    （仅后台日志、玩家零回执）——这正是历史上漏 import 导致 NameError 时
+    「一点提交信息都没有」的同根 failure mode。本 wrapper 确保任何意外异常
+    都给玩家一条失败回执并记完整堆栈，绝不静默。
+    """
+    try:
+        _sheet_submit_impl(server, player_name, player_uuid, sheet_id)
+    except Exception as e:
+        server.tell(player_name, SHEET_SUBMIT_FAIL.format(err=e))
+        server.logger.exception("_sheet_submit_impl failed")
+
+
 def _sheet_submit_oneclick(src, ctx):
     """!!PCH sheet submit <id> / !!submit <id> —— 指定表格一键提交。"""
     player_name = _require_player(src)
@@ -1260,7 +1276,7 @@ def _sheet_submit_oneclick(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        _sheet_submit_impl(server, player_name, player_uuid, sheet_id)
+        _submit_safe(server, player_name, player_uuid, sheet_id)
 
     _do()
 
@@ -1286,7 +1302,7 @@ def _submit_quick(src, ctx):
             if sheet_id is None:
                 server.tell(player_name, SHEET_LAST_EMPTY)
                 return
-            _sheet_submit_impl(server, player_name, player_uuid, sheet_id)
+            _submit_safe(server, player_name, player_uuid, sheet_id)
 
         _resolve(server, player_name, outcome, on_success=_on_last)
 
