@@ -16,6 +16,18 @@
 > 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
 > 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
+### 前端
+
+#### Changed
+- **Sheet 详情页首渲性能**：惰性行编辑（浏览态只渲染 span，编辑才切 input）+ 详情轮询降频 1s→3s；惰性 popover（内容首次打开才挂载，消除每行全量预渲染）。实测 prod `/sheets/4661`（175 顶层行）LCP 2588ms→1173ms（-54%），DOM 18905→7705 元素（-59%）。
+- **Sheet 详情 SWR 缓存**：新增 `stores/sheet.ts`，二次进入同项目命中缓存立显 + 后台 `silentRefresh` revalidate；写操作/轮询统一经 `applyRefreshedSheet→setDetail` 自动刷新，删表 `removeDetail`。
+
+#### Fixed
+- el-table 拖拽列宽刷新/轮询后重置：列宽外置为 Vue 权威态 + localStorage 持久化（`pch_sheet_col_widths`）。
+
+#### Refactor
+- `SheetEditor.vue`（1090→409 行）拆分：抽 `sheetHelpers.ts`（纯函数/类型）+ `composables/useSheetDetail.ts`（状态/编排）+ `SheetArchiveDialog.vue`（归档预览子组件）+ `utils/error.ts`（共享 axios 错误抽取）。新增 sheetHelpers / sheet store 单测。
+
 ---
 
 ## [htcmc_auth-v0.6.0] - 2026-07-11
