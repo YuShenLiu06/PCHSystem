@@ -66,6 +66,32 @@ const {
 // 归档文档预览（子组件拥有加载/blob 生命周期）
 const archiveVisible = ref(false)
 
+// 用户拖拽过的列宽（key=列 label）——外置为 Vue 权威态。
+// 根因：el-table 在 :data 变化（treeRows 每轮新引用）时重算 min-width 列，覆盖内部拖拽态，
+// 导致用户拖拽的列宽刷新/轮询后丢失。把列宽外置 + localStorage 持久化后，刷新/轮询均回填。
+const COLUMN_WIDTHS_KEY = 'pch_sheet_col_widths'
+
+function loadSavedColumnWidths(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(COLUMN_WIDTHS_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {}
+  } catch {
+    return {}
+  }
+}
+
+const columnWidths = ref<Record<string, number>>(loadSavedColumnWidths())
+
+function onHeaderDragEnd(newWidth: number, _oldWidth: number, column: { label?: string }): void {
+  if (!column?.label) return
+  columnWidths.value = { ...columnWidths.value, [column.label]: Math.round(newWidth) }
+  try {
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths.value))
+  } catch {
+    // localStorage 不可用（隐私模式等）→ 仅内存态，忽略
+  }
+}
+
 async function onDeleteSheet(): Promise<void> {
   try {
     await ElMessageBox.confirm(`确认删除项目「${sheet.value?.title ?? ''}」？此操作不可恢复。`, '删除确认', {
@@ -151,8 +177,9 @@ function back(): void {
         row-key="id"
         :indent="24"
         :tree-props="{ children: 'children' }"
+        @header-dragend="onHeaderDragEnd"
       >
-        <el-table-column label="物品名" min-width="180" class-name="tree-name-col">
+        <el-table-column label="物品名" min-width="180" class-name="tree-name-col" :width="columnWidths['物品名']">
           <template #default="{ row }">
             <el-input
               v-if="canEdit && !isReadOnly && editingRowId === row.id"
@@ -163,7 +190,7 @@ function back(): void {
           </template>
         </el-table-column>
 
-        <el-table-column label="注册名" min-width="180">
+        <el-table-column label="注册名" min-width="180" :width="columnWidths['注册名']">
           <template #default="{ row }">
             <el-input
               v-if="canEdit && !isReadOnly && editingRowId === row.id"
@@ -177,7 +204,7 @@ function back(): void {
           </template>
         </el-table-column>
 
-        <el-table-column label="需要数量" width="100">
+        <el-table-column label="需要数量" :width="columnWidths['需要数量'] ?? 100">
           <template #default="{ row }">
             <el-input-number
               v-if="canEdit && !isReadOnly && editingRowId === row.id && !isSubRow(row)"
@@ -191,7 +218,7 @@ function back(): void {
           </template>
         </el-table-column>
 
-        <el-table-column label="倍数" width="100">
+        <el-table-column label="倍数" :width="columnWidths['倍数'] ?? 100">
           <template #default="{ row }">
             <template v-if="isSubRow(row)">
               <el-input-number
@@ -209,14 +236,14 @@ function back(): void {
           </template>
         </el-table-column>
 
-        <el-table-column label="换算" width="80">
+        <el-table-column label="换算" :width="columnWidths['换算'] ?? 80">
           <template #default="{ row }">
             {{ formatQty(row.need_qty) }}
           </template>
         </el-table-column>
 
         <!-- 模式列：顶层行可切换；子行仅父=progress时可切换 -->
-        <el-table-column label="模式" width="80">
+        <el-table-column label="模式" :width="columnWidths['模式'] ?? 80">
           <template #default="{ row }">
             <el-select
               v-if="canEdit && !isReadOnly && editingRowId === row.id && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
@@ -231,7 +258,7 @@ function back(): void {
         </el-table-column>
 
         <!-- 认领者/贡献者列：lock 显单人 claimant_name；progress 显 contributors 多人 tag -->
-        <el-table-column label="认领者" width="140">
+        <el-table-column label="认领者" :width="columnWidths['认领者'] ?? 140">
           <template #default="{ row }">
             <template v-if="row.mode === MODE_PROGRESS">
               <template v-if="row.contributors && row.contributors.length">
@@ -254,7 +281,7 @@ function back(): void {
         </el-table-column>
 
         <!-- 状态列：el-tag，open 灰/claimed 蓝/done 绿 -->
-        <el-table-column label="状态" width="80" align="center">
+        <el-table-column label="状态" :width="columnWidths['状态'] ?? 80" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status as 'open' | 'claimed' | 'done')" size="small">
               {{ statusLabel(row.status as 'open' | 'claimed' | 'done') }}
@@ -263,7 +290,7 @@ function back(): void {
         </el-table-column>
 
         <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" width="120">
+        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 120">
           <template #default="{ row }">
             <template v-if="row.mode === MODE_PROGRESS">
               <span style="font-size: 12px;">{{ row.delivered_qty }}/{{ row.need_qty }}</span>
@@ -279,7 +306,7 @@ function back(): void {
         </el-table-column>
 
         <!-- 排序列：拥有者可编辑 -->
-        <el-table-column label="排序" width="90">
+        <el-table-column label="排序" :width="columnWidths['排序'] ?? 90">
           <template #default="{ row }">
             <el-input-number
               v-if="canEdit && !isReadOnly && editingRowId === row.id"
@@ -294,7 +321,7 @@ function back(): void {
         </el-table-column>
 
         <!-- 统一操作列：文字按钮 -->
-        <el-table-column label="操作" width="320" align="center">
+        <el-table-column label="操作" :width="columnWidths['操作'] ?? 320" align="center">
           <template #default="{ row }">
             <template v-if="!isReadOnly">
               <!-- 拥有者操作 -->
