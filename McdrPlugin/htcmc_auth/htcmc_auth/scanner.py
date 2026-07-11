@@ -135,6 +135,7 @@ class MatchAction:
     action: str
     qty: int = 0
     reason: str = ""
+    is_claimant: bool = False
 
 
 def _to_int(value, default: int = 0) -> int:
@@ -174,11 +175,12 @@ def match_rows(rows: list, inventory: dict, player_uuid: str = "") -> list:
                 and str(r.get("claimant_uuid") or "") == player_uuid
             )
             if is_claimant and status == "claimed" and need > 0 and have >= need:
-                actions.append(MatchAction(row_id, rid, item_name, mode, "deliver", need))
+                actions.append(MatchAction(row_id, rid, item_name, mode, "deliver", need, is_claimant=is_claimant))
             else:
                 actions.append(MatchAction(
                     row_id, rid, item_name, mode, "skip", 0,
                     _skip_reason_lock(status, need, have, is_claimant),
+                    is_claimant=is_claimant,
                 ))
         else:  # progress
             if need > 0 and status != "done" and delivered < need and have > 0:
@@ -190,6 +192,10 @@ def match_rows(rows: list, inventory: dict, player_uuid: str = "") -> list:
                     _skip_reason_progress(status, need, delivered, have),
                 ))
     return actions
+
+
+# === skip 原因常量 ===
+REASON_NO_ITEM = "背包没有此物"
 
 
 def _skip_reason_lock(status, need: int, have: int, is_claimant: bool = False) -> str:
@@ -210,5 +216,19 @@ def _skip_reason_progress(status, need: int, delivered: int, have: int) -> str:
     if status == "done" or delivered >= need:
         return "已备齐"
     if have <= 0:
-        return "背包没有此物"
+        return REASON_NO_ITEM
     return "不满足上交条件"
+
+
+def skip_is_noise(action: MatchAction) -> bool:
+    """该跳过行是否与本人当前无关 → 一键提交回执折叠（不逐行展示）。
+
+    - lock 行非本人认领（需先认领 / 已被他人认领 / 非己备齐）→ 折叠
+    - progress 行本人未携带（背包没有此物）→ 折叠
+    其余跳过（本人认领的 lock 未完成、progress 已备齐/无需求）逐行展示。
+    """
+    if action.action != "skip":
+        return False
+    if action.mode == 0:
+        return not action.is_claimant
+    return action.reason == REASON_NO_ITEM

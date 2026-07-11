@@ -14,6 +14,7 @@ from .sheet_commands import (
     _sheet_view,
     _sheet_view_args,
     _sheet_quick,
+    _submit_quick,
     _sheet_create,
     _sheet_rename,
     _sheet_delete,
@@ -332,3 +333,12 @@ def _register_commands(server: PluginServerInterface):
     )
     server.register_command(sheet_alias)
     server.register_help_message("!!sheet", "快速打开上次查看的表格；!!sheet <id> 直达")
+
+    # !!submit 快捷别名根（第三根：一键提交；S-1 多根注册已核实）
+    submit_alias = (
+        Literal("!!submit")
+        .runs(_submit_quick)                                     # !!submit → 重开上次并提交
+        .then(Integer("sheet_id").runs(_sheet_submit_oneclick))  # !!submit <id> → 指定表
+    )
+    server.register_command(submit_alias)
+    server.register_help_message("!!submit", "一键提交背包材料：!!submit 重开上次表格；!!submit <编号> 指定表格")

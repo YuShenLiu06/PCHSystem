@@ -184,9 +184,11 @@ def _do_claim(server, player, sheet_id, row_id):
 
 | 命令 | 流程 |
 |---|---|
-| `!!PCH sheet submit <sheet_id>` | 1) MinecraftDataAPI 取完整背包（含潜影盒嵌套：**1.20.4-** 走 `tag.BlockEntityTag.Items` / **1.20.5+** 走 `components."minecraft:container"`）；2) 按 `registry_id` 聚合可用量；3) 拉表 → 对每行按 `registry_id` **精确匹配**（无 `registry_id` 的行跳过）；4) lock 行 `open ∧ have≥need` → `claim` + `deliver(need)` → done；progress 行 `contribute`（增量封顶到 need）；5) **纯申报，不清背包**；6) 回执汇总（每行命中/未命中/不足） |
+| `!!PCH sheet submit <sheet_id>` | 1) MinecraftDataAPI 取完整背包（含潜影盒嵌套：**1.20.4-** 走 `tag.BlockEntityTag.Items` / **1.20.5+** 走 `components."minecraft:container"`）；2) 按 `registry_id` 聚合可用量；3) 拉表 → 对每行按 `registry_id` **精确匹配**（无 `registry_id` 的行跳过）；4) lock 行 `open ∧ have≥need` → `claim` + `deliver(need)` → done；progress 行 `contribute`（增量封顶到 need）；5) **纯申报，不清背包**；6) 回执汇总——与本人相关的行逐行展示（命中 / 本人认领的 lock 行未命中 / progress 已备齐或无需求），其余跳过行（他人认领的 lock 行、progress 未携带项）折叠为末尾一行计数（降噪，fix a619510） |
 | `!!PCH sheet addhand <sheet_id> <need> [lock\|progress] [sort]` | 取手持物品 `registry_id` → `PUT /sheets/{sheet_id}/rows`（带 `registry_id`，`item_name` 留空让后端翻译补中文名）新建行 |
 | `!!PCH sheet setreg <sheet_id> <row_id> <registry_id>` | owner 给已有行补 `registry_id`（保留原 `item_name`，让该行可被一键提交匹配） |
+
+> **命令入口**：除 `!!PCH sheet submit <sheet_id>` 外，另有 **`!!submit` 第三命令根**（feat a619510，镜像 `!!sheet` 多根注册）：`!!submit` 无参 = 重开上次查看的表格并直接提交（复用 `GET /me/last_sheet` 存储，后端零改动）；`!!submit <sheet_id>` 指定表格。两者与 `!!PCH sheet submit <id>` 共用 `_sheet_submit_impl` 实现，回执折叠规则同上。详见 [`api/sheets.md`](../api/sheets.md) §11。
 
 > **匹配键**：一键提交只按 `registry_id` 精确匹配，不看 `item_name`（自由文本不可靠）。**block id ≠ item id**（如 `minecraft:wall_torch` vs `minecraft:torch`），v1 不做归一化，多数建材不受影响（见 §6）。
 
