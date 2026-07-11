@@ -167,7 +167,7 @@ decide_rebuild() {
     local changes
     changes=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
 
-    local rebuild=0 backend_changed=0 compose_changed=0
+    local rebuild=0 backend_changed=0 compose_changed=0 web_changed=0
     if printf '%s\n' "$changes" | grep -qE '^Backend/(Dockerfile|pyproject\.toml)$'; then
         rebuild=1; backend_changed=1
     fi
@@ -176,6 +176,9 @@ decide_rebuild() {
     fi
     if printf '%s\n' "$changes" | grep -qE '^(docker-compose\.yml|docker-compose\.override\.yml)$'; then
         compose_changed=1
+    fi
+    if printf '%s\n' "$changes" | grep -qE '^Frontend/'; then
+        web_changed=1
     fi
 
     if (( rebuild )); then
@@ -189,7 +192,15 @@ decide_rebuild() {
         log_step "compose 配置变更 → up -d（自动 recreate）"
         dcc up -d
     else
-        log_info "无 Backend / compose 变更，跳过容器操作"
+        log_info "无 Backend / compose 变更，跳过后端容器操作"
+    fi
+
+    # web 镜像：前端 dist 烘焙进镜像（非 bind-mount），任何 Frontend/ 变更都需重建。
+    # 仅 web profile 激活时；--frontend 强制重建。web 未激活则由 update_frontend() 走宿主 npm build。
+    if web_profile_active && { (( web_changed )) || [[ $FORCE_FRONTEND -eq 1 ]]; }; then
+        log_step "Frontend 变更（容器路径）→ 重建 web 镜像"
+        compose_build web
+        dcc up -d web
     fi
 }
 
@@ -221,6 +232,11 @@ check_node() {
 }
 
 update_frontend() {
+    # web 服务启用：前端构建在镜像内（decide_rebuild 的 web 分支已处理），跳过宿主 build
+    if web_profile_active; then
+        log_info "web profile 启用：前端由 web 镜像构建，跳过宿主 npm run build"
+        return 0
+    fi
     local changes
     changes=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
     if [[ $FORCE_FRONTEND -eq 1 ]] || printf '%s\n' "$changes" | grep -qE '^Frontend/(package\.json|package-lock\.json)$'; then
@@ -262,11 +278,11 @@ update_mcdr() {
             find "$mcdr_root/plugins/htcmc_auth" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
         fi
         log_info "插件已增量同步: $mcdr_root/plugins/htcmc_auth/"
-        if printf '%s\n' "$changes" | grep -q '^McdrPlugin/htcmc_auth/mcdreforged\.plugin\.json$'; then
-            log_warn "mcdreforged.plugin.json 变更（version/dependencies）→ 需【重启 MCDR】而非仅 reload；并复核依赖插件 uuid_api_remake / minecraft_data_api 版本"
-        else
-            log_warn "请在游戏内执行: !!MCDR plugin reload htcmc_auth"
-        fi
+        # mcdreforged.plugin.json 的任何字段（version/dependencies/name/description/author/link/entrypoint）
+        # 都随 !!MCDR plugin reload 一并重新读取，并由 DependencyWalker 重校 dependencies
+        # —— 无需重启 MCDR（reload = unload→load→重校依赖）。仅当 dependencies 收紧到不满足时，
+        # reload 会自动卸载插件（重启也救不了，需先满足依赖）。源码（.py）变更同理只需 reload。
+        log_warn "请在游戏内执行: !!MCDR plugin reload htcmc_auth"
     else
         log_info "无 htcmc_auth 插件变更"
     fi
@@ -289,7 +305,8 @@ update_mcdr() {
 
 verify_and_summary() {
     log_step "健康验证"
-    if ! wait_http_ok http://127.0.0.1:8000/healthz 60 200; then
+    local _bp="${BACKEND_PORT:-$(env_get BACKEND_PORT)}"; _bp="${_bp:-8000}"
+    if ! wait_http_ok "http://127.0.0.1:${_bp}/healthz" 60 200; then
         cat >&2 <<EOF
 $(log_error "健康检查失败")。手动回滚步骤（脚本不自动回滚，避免迁移数据风险）：
   git checkout ${OLD_REF#tag:}

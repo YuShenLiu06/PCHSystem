@@ -107,8 +107,12 @@ instance.interceptors.response.use(r => r, err => {
 
 ## 5. 构建与部署
 
-- **开发**：`vite dev`，代理 `/api` → `http://localhost:8000`。
-- **生产**：`vite build` 产出静态文件，由 FastAPI 静态托管 或 Nginx 反代，与后端同源避免 CORS。
+- **开发**：`vite dev`（默认 :5173），代理 `/api` → `http://localhost:8000`（去 `/api` 前缀）。
+- **生产**：`vite build` 产出 `Frontend/dist/` 纯静态文件，与后端同源避免 CORS（无 `VITE_*` 环境变量，同一份 dist 任意环境通用）。两条托管路径：
+  - **容器内 web 服务（默认）**：compose `web` 服务（多阶段 `Frontend/Dockerfile`：node 构建 → nginx 托管）；`.env` 的 `COMPOSE_PROFILES=web` 激活、`WEB_PORT`（默认 5173，免 root + 对齐 `WEB_BASE_URL`）；nginx 反代 `/api/` → compose 服务名 `backend:8000`（配置权威源 `Frontend/nginx.conf`）。
+  - **非容器**：宿主 nginx 托管 `Frontend/dist/` + 反代 `/api/` → `127.0.0.1:8000`（模板 `Deploy/Nginx/pchsystem.host.conf.example`）。
+- history 路由模式需 nginx `try_files $uri $uri/ /index.html`；`proxy_pass` 末尾 `/` 必带以去 `/api` 前缀。
+- `Frontend/` 变更时 `Scripts/update.sh` 自动重建 web 镜像（dist 烘焙进镜像，非 bind-mount）；web 禁用则走宿主 `npm run build`。
 - 与 wiki.js（:3000）独立域名/端口，通过链接跳转。
 
 ## 6. 风险与待确认

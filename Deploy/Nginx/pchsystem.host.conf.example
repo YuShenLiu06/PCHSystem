@@ -1,0 +1,37 @@
+# PCHSystem 前端 —— 非容器方案 nginx 站点配置模板（宿主 nginx 托管 dist + 反代 /api）
+#
+# 用法：
+#   1. npm run build（在 Frontend/ 内）产出 Frontend/dist/
+#   2. cp Deploy/Nginx/pchsystem.host.conf.example /etc/nginx/sites-available/pchsystem
+#   3. 编辑该文件：把 root 改成你的 Frontend/dist 绝对路径；server_name 改成你的域名/IP
+#   4. nginx -t && nginx -s reload（或 systemctl reload nginx）
+#
+# 与容器方案（Frontend/nginx.conf）同构，差别仅在：
+#   - root 指向宿主 Frontend/dist 绝对路径（而非镜像内 /usr/share/nginx/html）
+#   - proxy_pass 目标是 127.0.0.1:8000（后端 host 端口，而非 compose 服务名 backend:8000）
+server {
+    listen 80;
+    server_name your.domain.or.ip;            # ← 改成你的域名或 IP
+
+    root /path/to/PCHSystem/Frontend/dist;    # ← 改成你的 Frontend/dist 绝对路径
+    index index.html;
+
+    # SPA history 模式 fallback（createWebHistory 必须，否则刷新 /sheets/3 → 404）
+    location / { try_files $uri $uri/ /index.html; }
+
+    # /api 反代到后端：末尾 / 必带 → 去掉 /api 前缀（对齐 vite dev 的 rewrite）
+    # 浏览器 /api/me → 后端收到 /me。漏了末尾 / → /api/me 变 :8000/api/me 后端 404。
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 内容哈希静态资源：长缓存
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}

@@ -1,0 +1,11 @@
+# 构建上下文排除：镜像内只信 stage1 产出的 dist，不带宿主 node_modules/旧 dist
+node_modules
+dist
+*.local
+
+# 测试 / 编辑器缓存
+tests
+*.log
+.vscode
+.idea
+.DS_Store
