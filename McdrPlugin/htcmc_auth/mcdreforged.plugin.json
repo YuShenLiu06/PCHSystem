@@ -1,6 +1,6 @@
 {
   "id": "htcmc_auth",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "name": "HTCMC Auth",
   "description": "材料协作收集与项目进度管理，联动 Web 后台",
   "author": "YuShen",
