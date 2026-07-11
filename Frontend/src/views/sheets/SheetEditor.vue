@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteSheet } from '../../api/sheets'
 import { formatQty } from '../../utils/qty'
 import { useAuthStore } from '../../stores/auth'
+import { useSheetStore } from '../../stores/sheet'
 import { useSheetDetail } from '../../composables/useSheetDetail'
 import {
   MODE_LOCK,
@@ -20,6 +21,7 @@ import SheetArchiveDialog from './SheetArchiveDialog.vue'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const sheetStore = useSheetStore()
 
 const sheetId = computed(() => Number(route.params.id))
 // 表格 ref：模板拥有，作依赖传入 composable（控制展开）
@@ -66,6 +68,11 @@ const {
 // 归档文档预览（子组件拥有加载/blob 生命周期）
 const archiveVisible = ref(false)
 
+// 添加子物品 popover 内容**惰性挂载**：EP el-popover 默认把默认 slot 内容（每行 6 个表单组件）
+// 预渲染进 el-popper-container，即使未展开。实测 175 顶层行 → popper 容器 176 子节点、DOM 1.8 万
+// 元素、prod LCP 2.6s。仅在首次 @show 后挂载内容 → 首渲只建真正打开过的行的实例（通常 0 个）。
+const popoverMounted = ref<Record<number, boolean>>({})
+
 // 用户拖拽过的列宽（key=列 label）——外置为 Vue 权威态。
 // 根因：el-table 在 :data 变化（treeRows 每轮新引用）时重算 min-width 列，覆盖内部拖拽态，
 // 导致用户拖拽的列宽刷新/轮询后丢失。把列宽外置 + localStorage 持久化后，刷新/轮询均回填。
@@ -104,6 +111,7 @@ async function onDeleteSheet(): Promise<void> {
   }
   try {
     await deleteSheet(sheetId.value)
+    sheetStore.removeDetail(sheetId.value) // 清 SWR 缓存，避免回到列表再进残留已删项目
     ElMessage.success('项目已删除')
     router.push('/sheets')
   } catch (e: unknown) {
@@ -341,14 +349,15 @@ function back(): void {
                   placement="right"
                   width="400"
                   trigger="click"
-                  @show="() => onSubRowPopoverShow(row)"
+                  @show="() => { onSubRowPopoverShow(row); popoverMounted[row.id] = true }"
                 >
                   <template #reference>
                     <el-button size="small">添加子物品</el-button>
                   </template>
-                  <!-- v-if 守卫：popover 内容随表格预渲染，newSubRow[row.id] 缺失时跳过整块，
-                       避免下方 v-model="newSubRow[row.id].X" 访问 undefined 抛错（数据层已预初始化，此处为防御兜底） -->
-                  <div v-if="newSubRow[row.id]" style="display: flex; flex-direction: column; gap: 8px;">
+                  <!-- 惰性挂载：内容仅在首次 @show 后渲染（popoverMounted[row.id]）。
+                       未展开时不建 6 个表单组件实例——首渲 DOM/渲染时间大幅下降。
+                       newSubRow[row.id] 仍作防御守卫（onSubRowPopoverShow 已预初始化，此处双保险防 undefined）。 -->
+                  <div v-if="newSubRow[row.id] && popoverMounted[row.id]" style="display: flex; flex-direction: column; gap: 8px;">
                     <div style="font-weight: 600;">新增子物品</div>
                     <el-input
                       v-model="newSubRow[row.id].item_name"

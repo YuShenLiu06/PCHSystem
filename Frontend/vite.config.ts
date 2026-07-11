@@ -16,6 +16,16 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    // `vite preview` 不继承 server.proxy；为本地验证 prod 构建复刻同一代理。
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api/, ''),
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
   },

@@ -18,6 +18,7 @@ import {
   type RowDetail,
 } from '../api/sheets'
 import { useAuthStore } from '../stores/auth'
+import { useSheetStore } from '../stores/sheet'
 import { usePolling } from './usePolling'
 import {
   MODE_LOCK,
@@ -101,6 +102,8 @@ export interface UseSheetDetailHandle {
  */
 export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandle {
   const { sheetId, auth, sheetTableRef } = opts
+  // 详情客户端缓存（SWR）：命中立显 + 后台 revalidate；写操作/轮询统一经 applyRefreshedSheet 刷新
+  const sheetStore = useSheetStore()
 
   const sheet = ref<SheetDetail | null>(null)
   const loading = ref(false)
@@ -190,6 +193,16 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
   }
 
   async function load(): Promise<void> {
+    // SWR：命中缓存则立即渲染（loading 不亮）+ 后台 silentRefresh revalidate。
+    // 二次进入同表秒开，规避每进必 fetch 的往返（"后面都快"）。
+    const cached = sheetStore.details[sheetId.value]
+    if (cached) {
+      errorMsg.value = ''
+      applyRefreshedSheet(cached)
+      titleDraft.value = cached.title
+      void silentRefresh()
+      return
+    }
     loading.value = true
     errorMsg.value = ''
     try {
@@ -208,6 +221,7 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
           newSubRow.value[r.id] = newSubRowDraft(r.mode)
         }
       }
+      sheetStore.setDetail(data) // 回填缓存
     } catch (e: unknown) {
       errorMsg.value = sheetErrorMessage(e)
     } finally {
@@ -246,6 +260,7 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
         return prev && rowEqual(prev, r) ? prev : r
       }),
     }
+    sheetStore.setDetail(sheet.value) // SWR：写操作 + 轮询统一刷新缓存，无需额外失效
   }
 
   // 同步结构字段到草稿（父行保存后级联子行 mode 等后端变更，避免草稿过期）
@@ -401,6 +416,7 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
           delete rowDrafts.value[id]
           delete newSubRow.value[id]
         }
+        sheetStore.setDetail(sheet.value) // 乐观删除同步缓存
       }
       ElMessage.success('已删除')
     } catch (e: unknown) {
