@@ -280,12 +280,15 @@ deploy_mcdr_plugin() {
     if command -v rsync >/dev/null 2>&1; then
         rsync -a --delete \
             --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' --exclude='.pytest_cache' \
-            McdrPlugin/pch_system/ "$mcdr_root/plugins/pch_system/"
+            --exclude='CLAUDE.md' --exclude='docs' \
+            McdrPlugin/ "$mcdr_root/plugins/pch_system/"
     else
         rm -rf "$mcdr_root/plugins/pch_system"
-        cp -r McdrPlugin/pch_system "$mcdr_root/plugins/pch_system"
+        cp -r McdrPlugin "$mcdr_root/plugins/pch_system"
         find "$mcdr_root/plugins/pch_system" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
         find "$mcdr_root/plugins/pch_system" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$mcdr_root/plugins/pch_system" -type d -name docs -prune -exec rm -rf {} + 2>/dev/null || true
+        rm -f "$mcdr_root/plugins/pch_system/CLAUDE.md" 2>/dev/null || true
         log_warn "无 rsync，已用 cp -r（可能残留 __pycache__）"
     fi
     log_info "插件已拷贝: $mcdr_root/plugins/pch_system/"
@@ -308,11 +311,11 @@ deploy_mcdr_plugin() {
         if command -v jq >/dev/null 2>&1; then
             jq --arg api "$api_url" --arg tok "$svc_token" \
                 '. + {api_url:$api, service_token:$tok}' \
-                McdrPlugin/pch_system/config.json.example > "$cfg"
+                McdrPlugin/config.json.example > "$cfg"
         else
             python3 -c "
 import json,sys
-d=json.load(open('McdrPlugin/pch_system/config.json.example'))
+d=json.load(open('McdrPlugin/config.json.example'))
 d['api_url']=sys.argv[1]; d['service_token']=sys.argv[2]
 json.dump(d,open('$cfg','w'),ensure_ascii=False,indent=2)
 " "$api_url" "$svc_token"

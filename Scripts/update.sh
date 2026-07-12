@@ -267,17 +267,21 @@ update_mcdr() {
 
     local changes
     changes=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
-    if printf '%s\n' "$changes" | grep -qE '^McdrPlugin/pch_system/'; then
+    if printf '%s\n' "$changes" | grep -qE '^McdrPlugin/(pch_system/|mcdreforged\.plugin\.json|requirements\.txt|config\.json\.example)'; then
         log_step "增量更新 pch_system 插件（保守，不删玩家手改）"
         # 旧版插件 id 为 htcmc_auth → 先迁移（搬 config + 删旧目录，避免与新 pch_system 双注册 !!PCH）
         migrate_legacy_plugin_name "$mcdr_root"
         if command -v rsync >/dev/null 2>&1; then
             rsync -a \
                 --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' --exclude='.pytest_cache' \
-                McdrPlugin/pch_system/ "$mcdr_root/plugins/pch_system/"
+                --exclude='CLAUDE.md' --exclude='docs' \
+                McdrPlugin/ "$mcdr_root/plugins/pch_system/"
         else
-            cp -r McdrPlugin/pch_system/* "$mcdr_root/plugins/pch_system/" 2>/dev/null || true
+            cp -r McdrPlugin/* "$mcdr_root/plugins/pch_system/" 2>/dev/null || true
             find "$mcdr_root/plugins/pch_system" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+            find "$mcdr_root/plugins/pch_system" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
+            find "$mcdr_root/plugins/pch_system" -type d -name docs -prune -exec rm -rf {} + 2>/dev/null || true
+            rm -f "$mcdr_root/plugins/pch_system/CLAUDE.md" 2>/dev/null || true
         fi
         log_info "插件已增量同步: $mcdr_root/plugins/pch_system/"
         # mcdreforged.plugin.json 的任何字段（version/dependencies/name/description/author/link/entrypoint）

@@ -17,7 +17,7 @@ import tests  # noqa: F401,E402  -- 触发 __init__ 安装 mcdreforged 替身 + 
 from pch_system.config import PchSystemConfig  # noqa: E402
 
 _EXAMPLE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "pch_system", "config.json.example"
+    os.path.dirname(__file__), "..", "config.json.example"
 )
 
 # 必须与代码默认一致的「行为参数」字段；新增行为参数时同步登记于此。

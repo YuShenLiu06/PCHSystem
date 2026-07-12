@@ -22,7 +22,7 @@ COPY TestServer/config/mcdr_config.yml /mcdr/config.yml
 COPY TestServer/plugins/uuid_api_remake.mcdr /mcdr/plugins/uuid_api_remake.mcdr
 # pch_system 运行时依赖的 MCDR 插件（之前漏 COPY，靠 docker cp 进可写层维持，recreate 即丢）
 COPY TestServer/plugins/MinecraftDataAPI-v1.6.1.mcdr /mcdr/plugins/MinecraftDataAPI-v1.6.1.mcdr
-COPY McdrPlugin/pch_system /mcdr/plugins/pch_system
+COPY McdrPlugin /mcdr/plugins/pch_system
 # pch_system 配置：load_config_simple("config.json") 默认从 <MCDR>/config/<plugin_id>/config.json 加载
 COPY TestServer/config/pch_system_config.json /mcdr/config/pch_system/config.json
 

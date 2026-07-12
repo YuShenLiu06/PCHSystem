@@ -1,7 +1,7 @@
 services:
   mc-test:
     build:
-      context: ..           # 项目根，让 Dockerfile 能 COPY McdrPlugin/pch_system
+      context: ..           # 项目根，让 Dockerfile 能 COPY McdrPlugin
       dockerfile: TestServer/Dockerfile
     image: pchsystem-mc-test
     container_name: pchsystem-mc-test-1
@@ -13,7 +13,7 @@ services:
       - mc-test-data:/mcdr/server
       # 开发模式：插件源码挂载（context=项目根，所以路径相对 TestServer/ 要 ../）
       # 改完代码用游戏内 !!MCDR plugin reload pch_system 秒级热重载
-      - ../McdrPlugin/pch_system:/mcdr/plugins/pch_system
+      - ../McdrPlugin:/mcdr/plugins/pch_system
     networks:
       # 加入后端所在网络，容器内可用 http://pchsystem-backend-1:8000 访问后端
       - pchsystem_default

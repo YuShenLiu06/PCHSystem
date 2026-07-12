@@ -30,7 +30,7 @@ TestServer/
 └── server/                       # 持久化卷（fabric jar + world + libraries，gitignored）
 ```
 
-`pch_system` 源码目录通过 docker volume 直接挂载（`../McdrPlugin/pch_system`），改插件源码后 `!!MCDR plugin reload pch_system` 即可热更新，**无需重建镜像**。
+`pch_system` 源码目录通过 docker volume 直接挂载（`../McdrPlugin`），改插件源码后 `!!MCDR plugin reload pch_system` 即可热更新，**无需重建镜像**。
 
 ## 启动
 
@@ -65,7 +65,7 @@ docker attach pchsystem-mc-test-1
 docker exec -i pchsystem-mc-test-1 rcon-cli 'say hello'  # 需装 rcon-cli，本镜像未装
 docker exec pchsystem-mc-test-1 bash
 
-# 热重载 pch_system（改完 ../McdrPlugin/pch_system/ 下源码后）
+# 热重载 pch_system（改完 ../McdrPlugin/ 下源码后）
 docker exec -i pchsystem-mc-test-1 bash -c "echo '!!MCDR plugin reload pch_system' | mcdreforged start --no-server-stop" 2>/dev/null \
   || echo "改用 attach 进入控制台输入 !!MCDR plugin reload pch_system"
 

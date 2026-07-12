@@ -51,7 +51,7 @@ jobs:
       - name: 校验 tag
         run: |
           tag="${GITHUB_REF_NAME}"
-          id=$(python3 -c "import json;print(json.load(open('McdrPlugin/pch_system/mcdreforged.plugin.json'))['id'])")
+          id=$(python3 -c "import json;print(json.load(open('McdrPlugin/mcdreforged.plugin.json'))['id'])")
           if [[ ! "$tag" =~ ^${id}-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
             echo "::error::tag '$tag' 不匹配 <id>-v<semver>（id=$id）。合法形如 ${id}-v1.2.3 或 ${id}-v1.2.3-rc.1" >&2
             exit 1
@@ -90,9 +90,9 @@ jobs:
         run: |
           pip install mcdreforged
           rm -f *.mcdr
-          # --ignore-patterns 显式过滤 __pycache__/.pyc（pytest 检测会产生缓存；
-          # .gitignore 的 __pycache__/ 对包内子目录不总是生效，故显式声明）
-          mcdreforged pack -i McdrPlugin/pch_system --ignore-patterns '__pycache__' '*.pyc'
+          # mcdreforged pack 只收入插件自有文件（plugin.json + requirements.txt + id 包 + lang/），
+          # 故 McdrPlugin/ 根的 README/CLAUDE/tests/docs 不会进包；--ignore-patterns 仅额外剔 pytest 产生的 __pycache__。
+          mcdreforged pack -i McdrPlugin --ignore-patterns '__pycache__' '*.pyc'
           sha256sum *.mcdr | tee SHA256.txt
           echo "产物列表:"; ls -la *.mcdr SHA256.txt
 

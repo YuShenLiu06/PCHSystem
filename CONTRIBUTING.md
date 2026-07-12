@@ -81,7 +81,7 @@ refactor(backend)!: 重命名 players 主键字段
 **Release 流程**：
 
 **MCDR 插件（`pch_system`，tag 驱动半自动，已自动化）**：
-1. 更新 [`mcdreforged.plugin.json`](./McdrPlugin/pch_system/mcdreforged.plugin.json) 的 `version`，并在 `CHANGELOG.md` 固化 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段
+1. 更新 [`mcdreforged.plugin.json`](./McdrPlugin/mcdreforged.plugin.json) 的 `version`，并在 `CHANGELOG.md` 固化 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段
 2. 打 tag 并推：`git tag pch_system-vX.Y.Z && git push origin pch_system-vX.Y.Z`
 3. [`.github/workflows/release.yml`](./.github/workflows/release.yml) 自动跑：校验 tag（动态读 plugin id）→ 三端检测（backend 活 PG 集成测试 / frontend 类型检查+构建+单测 / mcdr 单测）→ `mcdreforged pack` 构建 `.mcdr` → 创建该 tag 的**草稿 Release**（含 `.mcdr` + `SHA256.txt` + 自动从 CHANGELOG 抽取的 notes）
 4. 所有者在 Releases 页完善 notes、检验 `.mcdr`，手动 **Publish** → 正式发布（catalogue 此时可探测到）
