@@ -52,7 +52,10 @@ describe('parsing API client', () => {
       expect(url).toBe('/parsing/litematic')
       expect(body).toBeInstanceOf(FormData)
       expect((body as FormData).get('file')).toBe(file)
-      expect(config).toEqual({ headers: { 'Content-Type': 'multipart/form-data' } })
+      expect(config).toEqual({
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      })
       expect(result).toEqual(preview)
     })
   })
@@ -77,7 +80,10 @@ describe('parsing API client', () => {
       expect(url).toBe('/parsing/nbt')
       expect(body).toBeInstanceOf(FormData)
       expect((body as FormData).get('file')).toBe(file)
-      expect(config).toEqual({ headers: { 'Content-Type': 'multipart/form-data' } })
+      expect(config).toEqual({
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      })
       expect(result).toEqual(preview)
     })
   })
