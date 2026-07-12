@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.jwt import create_access_token, create_refresh_token, decode_token
 from app.api.deps import get_current_player, require_service_token
+from app.core.web_probe import probe_web
 from app.models.user import Player
 from app.repositories.auth_token_repo import exchange as exchange_token, issue
 from app.repositories.player_repo import get_or_create, get_last_sheet
@@ -50,6 +51,8 @@ async def post_token(
         login_url=url,
         expires_in=_settings.auth_token_ttl_seconds,
         previous_tokens_revoked=revoked_count,
+        # 需求 4：!!PCH login 时后端顺便探前端，挂了则插件回执明确提示「前端未启用」
+        frontend_online=(await probe_web(_settings.web_probe_url)).online,
     )
 
 

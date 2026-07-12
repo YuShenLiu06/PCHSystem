@@ -31,6 +31,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       MCDR_SERVICE_TOKEN: ${MCDR_SERVICE_TOKEN}
       WEB_BASE_URL: ${WEB_BASE_URL}
+      WEB_PROBE_URL: ${WEB_PROBE_URL:-}
       ARCHIVE_ROOT: /app/archive
     ports:
       - "${BACKEND_PORT:-8000}:8000"
