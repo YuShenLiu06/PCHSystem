@@ -1,6 +1,6 @@
 {
   "id": "pch_system",
-  "version": "0.6.1",
+  "version": "0.7.0-rc.1",
   "name": "PCH System",
   "description": "材料协作收集与项目进度管理，联动 Web 后台",
   "author": "YuShen",

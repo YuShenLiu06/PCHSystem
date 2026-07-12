@@ -16,9 +16,20 @@
 > 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
 > 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
 
+---
+
+
+## [pch_system-v0.7.0-rc.1] - 2026-07-12
+
+首个以 `pch_system` 为 id 发布的版本（原 `htcmc_auth`）。插件功能与 v0.6.1 一致，主要变更为 **id 改名**与**发布流程自动化**。这是发布流程的候选版本（rc），用于验证 CI / 打包 / 草稿 Release 全链路，通过后发正式 `0.7.0`。
+
+### Changed
+
+- **插件 id 改名 `htcmc_auth` → `pch_system`**：与项目名 PCHSystem 一致——插件不止登录鉴权，还含材料协作 / 一键提交 / 通知 / 规划中的积分与称号。文件夹、内部 Python 包、配置目录随之改名。**已部署实例需迁移**：删旧 `plugins/htcmc_auth/`（否则与新插件双注册 `!!PCH` 冲突），`config/htcmc_auth/` 搬到 `config/pch_system/`；运行仓库自带 `Scripts/update.sh` 会自动处理。
+
 ### Added
 
-- （运维）**MCDR 端 tag 驱动半自动发布**：新增 [`.github/workflows/release.yml`](./.github/workflows/release.yml)——push `pch_system-v*` tag 后自动跑三端检测（backend 活 PG 集成测试 / frontend 类型检查+构建+单测 / mcdr 单测）+ `mcdreforged pack` 构建 `.mcdr`，创建该 tag 的**草稿 Release**（含 `.mcdr` + `SHA256.txt` + 自动从 CHANGELOG 抽取的 notes），所有者完善后手动 Publish 转正式；检测失败则不建草稿。配套 `.github/scripts/changelog_section.py`（CHANGELOG section 抽取）+ `Docs/release-notes/pch_system.template.md`（notes 头部模板）。`mcdreforged.plugin.json` 加 `archive_name`（产物名稳定）；散落打包根的 `test_scanner.py` / `test_view_args.py` 移到 `McdrPlugin/tests/`（避免打入 `.mcdr`）。
+- （运维）**tag 驱动半自动发布**：从本版起，push `pch_system-v*` tag 后 CI 自动跑三端检测 + 构建 `.mcdr` + 创建**草稿 Release**（含 `.mcdr` + `SHA256.txt` + 自动从 CHANGELOG 抽取的 notes），所有者检验后手动发布。
 - （运维）**前端默认由容器托管**：`docker compose up` 后自动起一个 nginx web 服务（镜像内 npm 构建 + 托管前端 dist + 反代 `/api` 到后端），单机开箱即用、不再需要自备 HTTP 服务器。`.env` 的 `COMPOSE_PROFILES=web` 默认启用，置空即禁用、改走非容器路径（附 `Deploy/Nginx/pchsystem.host.conf.example` 模板）；`WEB_PORT` 默认 5173（免 root + 对齐 `WEB_BASE_URL` 默认值，`!!PCH login` 回链开箱即用）。
 - （运维）**端口可配 + 国内镜像加速**：backend / postgres / web 宿主端口经 `BACKEND_PORT` / `PG_PORT` / `WEB_PORT` 可调（多栈共存避让）；Backend 镜像 pip 走清华源、CJK 字体多源链下载（ghfast.top → ghproxy → 直连 → apt 兜底），容器内前端构建经 `NPM_REGISTRY` 换源——国内首次构建显著提速。
 - （运维）**update 智能重建 web 镜像**：`Frontend/` 有变更且 web 启用时，`update.sh` 自动重建 web 镜像（dist 烘焙进镜像，非挂载）；web 禁用时回退宿主 `npm run build`。
