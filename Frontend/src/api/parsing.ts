@@ -27,6 +27,8 @@ export async function previewLitematic(file: File): Promise<ParsedMaterialPrevie
   form.append('file', file)
   const { data } = await http.post<ParsedMaterialPreview>('/parsing/litematic', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    // 大文件上传 + litemapy 解析可能 >30s，调用级 timeout 覆盖全局（http.ts 默认 30s）
+    timeout: 120000,
   })
   return data
 }
@@ -37,6 +39,7 @@ export async function previewNbt(file: File): Promise<ParsedMaterialPreview> {
   form.append('file', file)
   const { data } = await http.post<ParsedMaterialPreview>('/parsing/nbt', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
   })
   return data
 }

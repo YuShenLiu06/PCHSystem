@@ -4,6 +4,7 @@ import uuid_api_remake  # 红线 S-1 / RS-8：get_uuid(name)->str
 from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
+from . import health
 from .client import request_login_url, LoginResult
 from .config import HtcmcAuthConfig
 from .messages import (
@@ -31,7 +32,7 @@ def _pch_root(src, ctx):
         return
     # 命令名列宽：ASCII 命令名按列宽补空格 → 描述起列对齐（MC 字体下 ASCII 等宽）。
     # 色板见 McdrPlugin/CLAUDE.md §6：标题 gold+bold、分组/命令名 aqua、描述 gray。
-    name_w = len("!!PCH login")  # 11，!!PCH login / !!PCH sheet 等长
+    name_w = len("!!PCH status")  # 12，按最长命令名对齐（MC 字体下 ASCII 等宽）
 
     def _line(name, desc, suggest, hover):
         return RTextList(
@@ -51,6 +52,10 @@ def _pch_root(src, ctx):
         _line(
             "!!PCH sheet", "在线表格协作", "!!PCH sheet ",
             "查看 list / view / create / claim / deliver 等子命令",
+        ),
+        _line(
+            "!!PCH status", "前后端连接自检", "!!PCH status",
+            "嗅探后端 / 前端可达性，分档回显可点击文档与 release 链接",
         ),
         RText("开发中：bind / submit / project / score / rank / title / info\n", color=RColor.gray),
         RText("输入 !!help 查看所有命令；sheet 子命令详见 !!PCH sheet", color=RColor.gray),
@@ -95,9 +100,36 @@ def _login(src, ctx):
         parts = []
         if result.previous_tokens_revoked > 0:
             parts.append(RText("§c上一个登录链接已失效§r\n"))
+        # 需求 4：!!PCH login 时后端探了前端；前端挂 → 明确提示（链接可能打不开）
+        if result.frontend_online is False:
+            parts.append(RText(
+                "§c⚠ 前端服务未启用：登录链接可能无法打开。"
+                "可游戏内 !!PCH status 排查前后端状态§r\n"
+            ))
         parts.append(RText("§7收到登录请求，请："))
         parts.append(rtext_link(result.login_url))
         parts.append(RText(f"§7（有效期 {result.expires_in // 60} 分钟）"))
         server.tell(player_name, RTextList(*parts))
 
     _do()  # @new_thread 装饰后，调用即派生 daemon 线程、立即返回，不阻塞主循环
+
+
+def _status(src, ctx):
+    """``!!PCH status``：前后端连接自检（运维/玩家均可，控制台亦可执行）。
+
+    HTTP 探针放 ``@new_thread``（RS-6，镜像 ``_login``）；``src.reply`` 线程安全
+    （ConsoleSource / PlayerSource 通用，同 ``_login`` 的 ``server.tell`` 机制；
+    S-1 MCDR CommandSource.reply）。复用 ``health.classify`` + ``format_game_report``
+    （插件版本 + 后端/令牌/前端状态 + 可点击链接 + 作者页脚）。
+    """
+    @new_thread('htcmc_auth status')
+    def _do():
+        try:
+            server = src.get_server()
+            meta = health.resolve_plugin_meta(server)
+            findings = health.classify(CONFIG, meta)
+            src.reply(health.format_game_report(findings, meta))
+        except Exception as e:
+            src.reply(RText(f"§c状态检查失败: {e}§r"))
+
+    _do()

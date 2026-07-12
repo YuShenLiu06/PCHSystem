@@ -14,6 +14,8 @@ class LoginResult:
     login_url: str
     expires_in: int
     previous_tokens_revoked: int
+    # 需求 4：后端 /auth/token 探前端上报；None=后端未探/旧版，True/False=已探
+    frontend_online: Optional[bool] = None
 
 
 # 联合返回类型：LoginResult 成功 / 哨兵字符串 / None（网络失败）
@@ -35,6 +37,7 @@ def request_login_url(cfg: HtcmcAuthConfig, player_name: str, player_uuid: str) 
                     login_url=data["login_url"],
                     expires_in=int(data.get("expires_in", 600)),
                     previous_tokens_revoked=int(data.get("previous_tokens_revoked", 0)),
+                    frontend_online=data.get("frontend_online"),
                 )
             if resp.status_code == 429:
                 _log.warning("login rate limited for %s", player_name)

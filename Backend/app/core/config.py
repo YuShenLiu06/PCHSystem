@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     mcdr_service_token: str = ""
     web_base_url: str = "http://localhost:5173"
+    # web 可达性探测地址：后端与 web 同 compose 网络时探服务名（如 http://web）最可靠——
+    # web_base_url 是面向玩家浏览器的地址（常含 localhost），后端/插件在容器内探它会命中
+    # 容器自身（误报不可达）。空 = 不探，/info 的 web_online=null，插件回退自探 web_base_url。
+    web_probe_url: str = ""
 
     # 投影解析：上传字节上限（默认 50MB）
     litematic_max_upload_bytes: int = 50 * 1024 * 1024
