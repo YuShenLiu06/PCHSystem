@@ -8,7 +8,7 @@ from pathlib import Path
 
 _SPEC = importlib.util.spec_from_file_location(
     "_view_args_under_test",
-    Path(__file__).resolve().parent.parent / "pch_system" / "view_args.py",
+    Path(__file__).resolve().parent.parent / "pch_system" / "pch_system" / "view_args.py",
 )
 view_args = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(view_args)

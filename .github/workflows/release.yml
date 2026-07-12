@@ -1,0 +1,120 @@
+name: Release
+
+# tag 驱动半自动发布：
+#   push pch_system-v* tag → 三端检测 + 构建包 → 创建该 tag 的【草稿 Release】
+#   → 仓库所有者完善 notes / 检验 .mcdr → 手动 Publish → 正式发布
+# 检测失败则整 job 失败 → 不建草稿（打 tag 后问题立即暴露）
+
+on:
+  push:
+    tags:
+      - 'pch_system-v*'
+  workflow_dispatch: # 允许从指定 tag 手动重跑
+
+permissions:
+  contents: write # 创建 release 必需
+
+jobs:
+  build-and-draft:
+    runs-on: ubuntu-latest
+    services:
+      postgres: # backend 集成测试需要（conftest autouse TRUNCATE 业务表）
+        image: postgres:16
+        env:
+          POSTGRES_USER: pch
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: pchsystem
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pch -d pchsystem"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # backend settings 在 import 时 get_settings() 读 POSTGRES_*；先 alembic 建表
+      POSTGRES_USER: pch
+      POSTGRES_PASSWORD: ci
+      POSTGRES_DB: pchsystem
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: '5432'
+      JWT_SECRET: ci_jwt_secret_for_testing_only
+      MCDR_SERVICE_TOKEN: ci_svc_token_for_testing_only
+      ARCHIVE_ROOT: /tmp/archive
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. 校验 tag：动态读 mcdreforged.plugin.json 的 id，要求 tag 匹配 <id>-v<semver>
+      - name: 校验 tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          id=$(python3 -c "import json;print(json.load(open('McdrPlugin/pch_system/mcdreforged.plugin.json'))['id'])")
+          if [[ ! "$tag" =~ ^${id}-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::tag '$tag' 不匹配 <id>-v<semver>（id=$id）。合法形如 ${id}-v1.2.3 或 ${id}-v1.2.3-rc.1" >&2
+            exit 1
+          fi
+          echo "tag 校验通过: $tag (id=$id)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 2a. backend 检测：集成测试（活 PG）；先 alembic 建表供 conftest TRUNCATE
+      - name: backend 检测
+        run: |
+          pip install -e "./Backend[dev]"
+          (cd Backend && alembic upgrade head && pytest -q)
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      # 2b. frontend 检测：vue-tsc 类型检查 + vite 构建 + vitest 单测
+      - name: frontend 检测
+        run: |
+          (cd Frontend && npm ci && npm run build && npm run test:run)
+
+      # 2c. mcdr 检测：纯单测（_stubs 替身 MCDR 运行时，无需真 MCDR）
+      - name: mcdr 检测
+        run: |
+          pip install -r McdrPlugin/requirements.txt
+          PYTHONPATH=McdrPlugin pytest McdrPlugin/tests -q
+
+      # 3. 构建包（三端检测全过后）
+      - name: 构建 .mcdr
+        run: |
+          pip install mcdreforged
+          rm -f *.mcdr
+          # --ignore-patterns 显式过滤 __pycache__/.pyc（pytest 检测会产生缓存；
+          # .gitignore 的 __pycache__/ 对包内子目录不总是生效，故显式声明）
+          mcdreforged pack -i McdrPlugin/pch_system --ignore-patterns '__pycache__' '*.pyc'
+          sha256sum *.mcdr | tee SHA256.txt
+          echo "产物列表:"; ls -la *.mcdr SHA256.txt
+
+      # 4. 草稿 notes（模板头部 + CHANGELOG 对应 section）
+      - name: 准备 release notes
+        run: |
+          {
+            cat Docs/release-notes/pch_system.template.md
+            echo
+            python3 .github/scripts/changelog_section.py "${GITHUB_REF_NAME}"
+          } > release-notes.md
+          echo "===== notes 预览 ====="; cat release-notes.md
+
+      # 5. 创建草稿 Release（draft:true，不自动 publish，等所有者完善后手动发布）
+      - name: 创建草稿 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          body_path: release-notes.md
+          files: |
+            *.mcdr
+            SHA256.txt

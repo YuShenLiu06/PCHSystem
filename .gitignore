@@ -7,6 +7,9 @@ build/
 dist/
 .pytest_cache/
 
+# MCDR 打包产物（mcdreforged pack 本地产物，不入库；CI/release 在远端产出）
+*.mcdr
+
 # Node
 node_modules/
 .vite/

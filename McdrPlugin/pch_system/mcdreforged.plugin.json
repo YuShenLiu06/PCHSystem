@@ -5,6 +5,7 @@
   "description": "材料协作收集与项目进度管理，联动 Web 后台",
   "author": "YuShen",
   "link": "https://github.com/YuShenLiu06/PCHSystem",
+  "archive_name": "pch_system-v{version}",
   "dependencies": {
     "mcdreforged": ">=2.14.0",
     "uuid_api_remake": "*",

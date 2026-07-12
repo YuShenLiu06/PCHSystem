@@ -79,10 +79,19 @@ refactor(backend)!: 重命名 players 主键字段
 | 预发布 | 后缀 | `1.0.0-alpha` / `1.0.0-rc.1`（MCDR 示例：`1.8.9-rc.8`、`1.2.3-beta.4`） |
 
 **Release 流程**：
-1. 更新对应组件的版本号文件
-2. 打 tag：`git tag pch_system-v1.2.0` —— **必须正确打 tag**（MCDR catalogue 靠 tag 取版本）
-3. 创建 GitHub Release，附变更说明（关联 PR / Issue）
-4. **MCDR 插件额外**：上传 `.mcdr` 打包产物作为 release asset
+
+**MCDR 插件（`pch_system`，tag 驱动半自动，已自动化）**：
+1. 更新 [`mcdreforged.plugin.json`](./McdrPlugin/pch_system/mcdreforged.plugin.json) 的 `version`，并在 `CHANGELOG.md` 固化 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段
+2. 打 tag 并推：`git tag pch_system-vX.Y.Z && git push origin pch_system-vX.Y.Z`
+3. [`.github/workflows/release.yml`](./.github/workflows/release.yml) 自动跑：校验 tag（动态读 plugin id）→ 三端检测（backend 活 PG 集成测试 / frontend 类型检查+构建+单测 / mcdr 单测）→ `mcdreforged pack` 构建 `.mcdr` → 创建该 tag 的**草稿 Release**（含 `.mcdr` + `SHA256.txt` + 自动从 CHANGELOG 抽取的 notes）
+4. 所有者在 Releases 页完善 notes、检验 `.mcdr`，手动 **Publish** → 正式发布（catalogue 此时可探测到）
+
+> 检测失败则 CI 整 job 失败、**不建草稿**（打 tag 后问题立即暴露；修后删 tag 重打重跑）。`-rc` 后缀（如 `pch_system-v1.0.0-rc.1`）自动标记为 pre-release。
+
+**Backend / Frontend（暂未自动化）**：
+1. 更新版本号文件（`Backend/pyproject.toml` / `Frontend/package.json`）+ `CHANGELOG.md` 固化段
+2. `git tag backend-vX.Y.Z` / `frontend-vX.Y.Z` 并推
+3. 手工在 Releases 页创建 Release、附变更说明（部署从源码 compose build，无需二进制 asset）
 
 > **MCDR tag 改名（2026-07-06）**：`mcdr-vX.Y.Z` → `htcmc_auth-vX.Y.Z`，符合 [MCDR PluginCatalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html#release) 的合法 tag 格式（`<plugin_id>-<version>`，四选一）。历史 `mcdr-v0.3.0` 前向兼容保留、不重打。背景与决策见 [`Docs/Reports/mcdr-publishing-strategy.md`](./Docs/Reports/mcdr-publishing-strategy.md)。
 >

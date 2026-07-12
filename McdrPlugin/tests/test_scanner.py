@@ -10,7 +10,7 @@ from pathlib import Path
 # 按文件路径加载 scanner.py 为独立模块
 _SPEC = importlib.util.spec_from_file_location(
     "_scanner_under_test",
-    Path(__file__).resolve().parent.parent / "pch_system" / "scanner.py",
+    Path(__file__).resolve().parent.parent / "pch_system" / "pch_system" / "scanner.py",
 )
 scanner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(scanner)
