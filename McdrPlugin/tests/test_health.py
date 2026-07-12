@@ -186,7 +186,8 @@ class ClassifyTest(unittest.TestCase):
             findings = health.classify(_cfg(token="change_me_service_token"))
         b = self._backend(findings)
         self.assertEqual(b.severity, "error")
-        self.assertIn("仓库/部署", {l for l, _ in b.links})
+        self.assertIn("部署", {l for l, _ in b.links})
+        self.assertIn(health.BACKEND_DOC_URL, {u for _, u in b.links})
         # 后端离线 → 不探前端（不产生 frontend finding）
         self.assertEqual([f for f in findings if f.component == "frontend"], [])
 
