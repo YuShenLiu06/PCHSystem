@@ -13,31 +13,41 @@
 
 ## [Unreleased]
 
-> 下一版本待归档。新增条目按组件 × Added/Changed/Fixed/Security 分类补在此处。
-> 发版时浓缩为面向使用者的自然语言，固化为 `## [<组件>-vX.Y.Z] - YYYY-MM-DD` 段并重置本段（详见底部「版本化策略」）。
+> 响应 MCDR PluginCatalogue 审核反馈：项目结构 / 文档 / 打包链路整理。对应 commit 见 `git log`。
+
+### Changed
+
+- **MCDR 插件结构拍平**（`refactor(mcdr)`，2a5dff8）：去掉 `McdrPlugin/pch_system/` 外层包装，`McdrPlugin/` 直接作插件根（`mcdreforged.plugin.json` / `requirements.txt` / `config.json.example` 上移，包 `pch_system/` 位于 `McdrPlugin/` 下），对齐 [MCDReforged/PluginTemplate](https://github.com/MCDReforged/PluginTemplate) 官方平铺结构。连动更新 release.yml / TestServer / install.sh / update.sh / tests / CONTRIBUTING / .gitignore。
+- **AI 过程文档归拢**（`docs`，c3027ae）：`Docs/Plans/`、`Docs/superpowers/` 移入 `.claude/docs/`，仓库门面只留人读文档。
+- **README 精简**（`docs`，ab1e44f）：删去项目定位 / 三端职责 / 技术栈 / 巨型文档导航等架构自夸篇幅，架构仅留一段 + 图；补「功能特性」骨架。
+
+### Fixed
+
+- **`.mcdr` 打包漏带 `requirements.txt`**：requirements.txt 此前位于插件根上一级，`mcdreforged pack` 不收入 → 玩家 `!!MCDR plugin install` 不会自动装 Python 依赖。拍平后位于插件根，pack 正确收入（mcdreforged 2.15.7 实测 `.mcdr` 含 plugin.json + requirements.txt + pch_system/ 包，dev 文件自动排除）。
+
+### Removed
+
+- **删除 `McdrPlugin/plugin_info.json`**：PluginCatalogue 提交用的元数据，不属于插件 repo 本身；后续向 catalogue 提交时在 fork 仓 `plugins/pch_system/` 新建即可。
 
 ---
 
 
 ## [pch_system-v0.7.0] - 2026-07-12
 
-插件 id 由 `htcmc_auth` 改为 `pch_system`（与项目名一致），并落地发布流程自动化与部署体验改进。首个以 `pch_system` 为 id 发布的正式版本。
+插件 id 由 `htcmc_auth` 改为 `pch_system`（与项目名一致），首个以新 id 发布的正式版本；同步改进项目部署与发布流程。
 
 ### Changed
 
-- **插件 id 改名 `htcmc_auth` → `pch_system`**：与项目名 PCHSystem 一致——插件不止登录鉴权，还含材料协作 / 一键提交 / 通知 / 规划中的积分与称号。文件夹、内部 Python 包、配置目录随之改名。**已部署实例需迁移**：删旧 `plugins/htcmc_auth/`（否则与新插件双注册 `!!PCH` 冲突），`config/htcmc_auth/` 搬到 `config/pch_system/`；运行仓库自带 `Scripts/update.sh` 会自动处理。
+- **插件 id 改名 `htcmc_auth` → `pch_system`**：插件不止登录鉴权，还含材料协作 / 一键提交 / 通知。**已部署实例需迁移**：删旧 `plugins/htcmc_auth/`（否则双注册 `!!PCH` 冲突），`config/htcmc_auth/` 搬到 `config/pch_system/`；`Scripts/update.sh` 自动处理。
 
 ### Added
 
-- （运维）**tag 驱动半自动发布**：从本版起，push `pch_system-v*` tag 后 CI 自动跑三端检测 + 构建 `.mcdr` + 创建**草稿 Release**（含 `.mcdr` + `SHA256.txt` + 自动从 CHANGELOG 抽取的 notes），所有者检验后手动发布。
-- （运维）**前端默认由容器托管**：`docker compose up` 后自动起一个 nginx web 服务（镜像内 npm 构建 + 托管前端 dist + 反代 `/api` 到后端），单机开箱即用、不再需要自备 HTTP 服务器。`.env` 的 `COMPOSE_PROFILES=web` 默认启用，置空即禁用、改走非容器路径（附 `Deploy/Nginx/pchsystem.host.conf.example` 模板）；`WEB_PORT` 默认 5173（免 root + 对齐 `WEB_BASE_URL` 默认值，`!!PCH login` 回链开箱即用）。
-- （运维）**端口可配 + 国内镜像加速**：backend / postgres / web 宿主端口经 `BACKEND_PORT` / `PG_PORT` / `WEB_PORT` 可调（多栈共存避让）；Backend 镜像 pip 走清华源、CJK 字体多源链下载（ghfast.top → ghproxy → 直连 → apt 兜底），容器内前端构建经 `NPM_REGISTRY` 换源——国内首次构建显著提速。
-- （运维）**update 智能重建 web 镜像**：`Frontend/` 有变更且 web 启用时，`update.sh` 自动重建 web 镜像（dist 烘焙进镜像，非挂载）；web 禁用时回退宿主 `npm run build`。
+- **部署与发布流程改进**：tag 驱动半自动发布（push `pch_system-v*` → CI 构建 `.mcdr` + 草稿 Release）；前端默认 `docker compose` 容器托管（nginx + `/api` 反代，`COMPOSE_PROFILES=web` 可关）；端口可配（`*_PORT`）+ 镜像构建走国内源加速；`update.sh` 按变更智能重建 web 镜像。
 
 ### Fixed
 
-- （运维）**`update.sh` 不再误报「需重启 MCDR」**：`mcdreforged.plugin.json` 任何字段（version / dependencies / name / …）变更统一提示 `!!MCDR plugin reload`（reload 会重读配置并由 `DependencyWalker` 重校依赖，**无需重启 MCDR**）。
-- **自检报告「部署」链接更精准**：`!!PCH status` 与控制台自检里，后端「尚未配置」提示的部署链接由仓库首页改为 RUNBOOK 运维手册，直接定位到部署步骤。
+- **`update.sh` 不再误报「需重启 MCDR」**：plugin.json 字段变更统一提示 `!!MCDR plugin reload`（reload 重校依赖，无需重启）。
+- **自检「部署」链接更精准**：`!!PCH status` 后端未配置提示改为指向 RUNBOOK 部署手册。
 
 ---
 
