@@ -10,8 +10,5 @@
     "mcdreforged": ">=2.14.0",
     "uuid_api_remake": "*",
     "minecraft_data_api": "*"
-  },
-  "introduction": {
-    "zh_cn": "McdrPlugin/README.md"
   }
 }
