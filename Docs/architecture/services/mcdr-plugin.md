@@ -96,7 +96,7 @@ def call_backend(server, path, payload):
     ).json()
 ```
 - 用 `requests`（或 `aiohttp`）。
-- **阻塞型 HTTP 必须放 `@new_thread('name')`**（如 `@new_thread('htcmc_auth sheet')`）—— 卸载到 daemon 线程，`server.tell` 线程安全。
+- **阻塞型 HTTP 必须放 `@new_thread('name')`**（如 `@new_thread('pch_system sheet')`）—— 卸载到 daemon 线程，`server.tell` 线程安全。
 - ⚠️ `server.schedule_task(...)` 的回调跑在 **TaskExecutor = 主线程**，**不可**用于卸载阻塞工作（RS-6）。它仅用于协程调度 / 延迟到主线程下一 tick / 从后台线程回主线程。误用会卡住整个 MCDR 主循环（命令/事件/控制台输出解析全停滞）。
 - 含超时（≤10s）+ 重试 + 失败回执给玩家。
 - 哨兵字符串必须回执玩家（RS-11）：`__RATE_LIMITED__`（限频）/`__REMOVED__`（玩家被移出白名单）/`None`（服务不可用）。
@@ -110,7 +110,7 @@ def call_backend(server, path, payload):
 ```python
 from mcdreforged.api.decorator import new_thread
 
-@new_thread('htcmc_auth sheet')
+@new_thread('pch_system sheet')
 def _do_claim(server, player, sheet_id, row_id):
     player_uuid = uuid_api_remake.get_uuid(player)          # RS-8：UUID 推导唯一来源
     resp = requests.post(
@@ -134,7 +134,7 @@ def _do_claim(server, player, sheet_id, row_id):
 
 - `!!PCH sheet deliver <qty>` 用**绝对值**（与后端/前端契约一致）；progress 模式玩家先 `view` 看当前 delivered 再决定。
 - 权限文案在 help 里说明；真实 RBAC 以后端 403/409 为准（R-9）。
-- 新增模块：`htcmc_auth/sheet_client.py`（HTTP + 哨兵）、`htcmc_auth/sheet_commands.py`（`@new_thread` + `server.tell` 回执）、`htcmc_auth/notifier.py`（通知轮询）。
+- 新增模块：`pch_system/sheet_client.py`（HTTP + 哨兵）、`pch_system/sheet_commands.py`（`@new_thread` + `server.tell` 回执）、`pch_system/notifier.py`（通知轮询）。
 
 ### 3.7.1 项目语义对齐设计（⚠️ 仅设计，本期不实现）
 
@@ -169,7 +169,7 @@ def _do_claim(server, player, sheet_id, row_id):
 | 阶段 | 实现 |
 |---|---|
 | 在线集合维护 | `on_player_joined(server, player, info)` 加入 / `on_player_left(server, player)` 移出；插件加载时若服务端已启动，用 `server.rcon_query('list')` 解析初始化（兜底，`get_online_players` 不在通用 API） |
-| 后台轮询 | `on_load` 启动 `@new_thread('htcmc_sheet_notifier')` 循环；`on_unload` 设停止位退出；每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll` |
+| 后台轮询 | `on_load` 启动 `@new_thread('pch_sheet_notifier')` 循环；`on_unload` 设停止位退出；每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll` |
 | 逐条投递 | `server.tell(player, format_notification(n))` |
 | ack | 投递成功后 `POST /notifications/ack {player_uuid, ids}`（幂等） |
 | 上线补推 | `on_player_joined` 立即为该玩家拉一次 pending（离线期间堆积的补推） |
@@ -197,7 +197,7 @@ def _do_claim(server, player, sheet_id, row_id):
 游戏内 sheet 各显示点的物品数量复用项目**三端统一换算规约 `format_qty`**，从「原始整数」改为「个/组/盒」友好单位：
 
 - **阈值**：`>=1728` → `X盒`（潜影盒 27×64）、`>=64` → `X组`、否则 → `X个`；`round(x,2):g` 去尾零（如 `64.5`、`2`）。
-- **三端对齐**：权威源 = 后端 `Backend/app/core/qty.py`；前端 `Frontend/src/utils/qty.ts` 已对齐；MCDR 端新增 `htcmc_auth/qty.py` 作为**第三端**（`STACK`/`SHULKER`/`format_qty` 逐字照抄后端，三端字节级一致），另加 `format_qty_safe` 守护显示点传入 `"?"`/缺失字段时回退原值。
+- **三端对齐**：权威源 = 后端 `Backend/app/core/qty.py`；前端 `Frontend/src/utils/qty.ts` 已对齐；MCDR 端新增 `pch_system/qty.py` 作为**第三端**（`STACK`/`SHULKER`/`format_qty` 逐字照抄后端，三端字节级一致），另加 `format_qty_safe` 守护显示点传入 `"?"`/缺失字段时回退原值。
 - **覆盖显示点（11 处）**：`format_row_line`（sheet view 全行）+ 8 处命令回执 `_show`（add/set/deliver/progress/done/addhand/submit）+ `format_notification` 3 个通知模板。
 - **不换算**：HTTP 写调用（`upsert_row`/`deliver_row` 等上报数量）保持原始数字，后端契约不变；`scanner.py` 一键提交的「数量不足（X/Y）」诊断亦保持原样——scanner 是纯模块，测试用 `importlib` 按文件路径加载绕过包 init，加相对导入会 ImportError，且诊断场景原始数字对玩家更有用。
 - **纯显示层**：不入库、不进 API（红线 R-1/R-7 不变）。

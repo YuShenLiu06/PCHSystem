@@ -242,7 +242,7 @@
 | 组件 | tag 约定 |
 |---|---|
 | 后端 | `backend-vX.Y.Z` |
-| 游戏端（MCDR 插件） | `htcmc_auth-vX.Y.Z`（v0.4.0 起改名，符合 MCDR PluginCatalogue 合法格式；历史 `mcdr-v0.3.0` 前向兼容保留） |
+| 游戏端（MCDR 插件） | `pch_system-vX.Y.Z`（plugin id 由 `htcmc_auth` 改为 `pch_system`，与 `mcdreforged.plugin.json` id / 文件夹 / 内部包名一致；历史 tag `htcmc_auth-v*` / `mcdr-v0.3.0` 保留不重打，均符合 MCDR PluginCatalogue 合法格式） |
 | 前端 | `frontend-vX.Y.Z` |
 
 发版流程：

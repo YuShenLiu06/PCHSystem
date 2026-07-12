@@ -1,6 +1,6 @@
 """config.json.example 与代码默认值的一致性守卫。
 
-防止 example 与 HtcmcAuthConfig 默认值静默漂移（曾发生：notify_poll_interval_seconds
+防止 example 与 PchSystemConfig 默认值静默漂移（曾发生：notify_poll_interval_seconds
 example 写成 15.0 而默认值 2.0，部署复制 example 后实际生效 15s，导致通知延迟 ~12s）。
 
 行为参数（影响运行时语义）必须在 example 与代码默认间保持一致；
@@ -14,10 +14,10 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 import tests  # noqa: F401,E402  -- 触发 __init__ 安装 mcdreforged 替身 + sys.path
 
-from htcmc_auth.config import HtcmcAuthConfig  # noqa: E402
+from pch_system.config import PchSystemConfig  # noqa: E402
 
 _EXAMPLE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "htcmc_auth", "config.json.example"
+    os.path.dirname(__file__), "..", "pch_system", "config.json.example"
 )
 
 # 必须与代码默认一致的「行为参数」字段；新增行为参数时同步登记于此。
@@ -34,7 +34,7 @@ class ExampleConsistencyTest(unittest.TestCase):
         # Arrange
         with open(_EXAMPLE_PATH, encoding="utf-8") as f:
             example = json.load(f)
-        defaults = HtcmcAuthConfig()
+        defaults = PchSystemConfig()
 
         # Assert：每个行为参数在 example 与代码默认间必须一致
         for field in _BEHAVIOR_FIELDS:

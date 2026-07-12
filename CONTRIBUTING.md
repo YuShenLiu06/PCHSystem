@@ -65,7 +65,7 @@ refactor(backend)!: 重命名 players 主键字段
 
 | 组件 | tag 约定 | 版本来源 |
 |---|---|---|
-| McdrPlugin | `htcmc_auth-vX.Y.Z` | [`mcdreforged.plugin.json`](https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/metadata.html) 的 `version` |
+| McdrPlugin | `pch_system-vX.Y.Z` | [`mcdreforged.plugin.json`](https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/metadata.html) 的 `version` |
 | Backend | `backend-vX.Y.Z` | `pyproject.toml` / `VERSION` |
 | Frontend | `frontend-vX.Y.Z` | `package.json` 的 `version` |
 
@@ -80,11 +80,13 @@ refactor(backend)!: 重命名 players 主键字段
 
 **Release 流程**：
 1. 更新对应组件的版本号文件
-2. 打 tag：`git tag htcmc_auth-v1.2.0` —— **必须正确打 tag**（MCDR catalogue 靠 tag 取版本）
+2. 打 tag：`git tag pch_system-v1.2.0` —— **必须正确打 tag**（MCDR catalogue 靠 tag 取版本）
 3. 创建 GitHub Release，附变更说明（关联 PR / Issue）
 4. **MCDR 插件额外**：上传 `.mcdr` 打包产物作为 release asset
 
 > **MCDR tag 改名（2026-07-06）**：`mcdr-vX.Y.Z` → `htcmc_auth-vX.Y.Z`，符合 [MCDR PluginCatalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html#release) 的合法 tag 格式（`<plugin_id>-<version>`，四选一）。历史 `mcdr-v0.3.0` 前向兼容保留、不重打。背景与决策见 [`Docs/Reports/mcdr-publishing-strategy.md`](./Docs/Reports/mcdr-publishing-strategy.md)。
+>
+> **MCDR plugin id 改名（2026-07-12）**：plugin id 由 `htcmc_auth` 改为 `pch_system`（与项目名 PCHSystem 一致，且不止 auth——含 sheets/submit/notify + 规划中 score/title），tag 前缀随之 `htcmc_auth-vX.Y.Z` → `pch_system-vX.Y.Z`。MCDR 硬性要求 `mcdreforged.plugin.json` 的 `id` = 文件夹名 = 内部包名（联网核实 catalogue/metadata 文档），故 `McdrPlugin/htcmc_auth/htcmc_auth/` 同步改名 `McdrPlugin/pch_system/pch_system/`，类 `HtcmcAuthConfig → PchSystemConfig`。**已部署实例需迁移**：旧 `plugins/htcmc_auth/` 删除（否则与新 `pch_system` 双注册 `!!PCH` 冲突）、`config/htcmc_auth/` 搬到 `config/pch_system/`（`Scripts/lib/common.sh::migrate_legacy_plugin_name()` 自动处理）。历史 `htcmc_auth-v*` / `mcdr-v*` tag 保留不重打。
 
 ---
 

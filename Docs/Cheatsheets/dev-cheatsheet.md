@@ -13,7 +13,7 @@
 docker attach pchsystem-mc-test-1
 ```
 
-进入 MCDR 交互控制台，可直接输入 `!!help`、`!!MCDR reload plugin htcmc_auth` 等命令。
+进入 MCDR 交互控制台，可直接输入 `!!help`、`!!MCDR reload plugin pch_system` 等命令。
 
 | 操作 | 按键 | 说明 |
 |---|---|---|

@@ -26,7 +26,7 @@ labels: bug
 ## 环境
 
 - **组件**：[ ] 后端　[ ] 游戏端（MCDR 插件）　[ ] 前端　[ ] 文档 / 部署
-- **版本 / tag**：<!-- 如 `backend-v0.4.0` / `htcmc_auth-v0.4.0` / `frontend-v0.4.0` -->
+- **版本 / tag**：<!-- 如 `backend-v0.4.0` / `pch_system-v0.4.0` / `frontend-v0.4.0` -->
 - **服务端**（涉及游戏端时）：MC 版本 + 模组加载器（Fabric / Create / Carpet 版本）
 - **浏览器**（涉及前端时）：
 

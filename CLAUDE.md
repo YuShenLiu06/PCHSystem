@@ -212,6 +212,10 @@ PCHSystem/
 - [x] **修复 `update.sh` MCDR restart 误报**：`mcdreforged.plugin.json` 任何字段变更（version/dependencies/name/...）只需 `!!MCDR plugin reload`（reload = unload→load→`DependencyWalker` 重校依赖，源码 `plugin_manager.py`/`multi_file_plugin.py` 验证），折叠原 if/else 为统一 reload 消息
 - [x] 文档：`Scripts/README.md` §10 双方案 + §12 改「默认托管前端」+ §7/§11 reload 说明；`Docs/architecture/frontend.md` §5
 
+**已完成（2026-07-12，MCDR 插件 id 改名 htcmc_auth → pch_system）**：
+- [x] **plugin id 统一为 `pch_system`**（与项目名 PCHSystem / `name: PCH System` 一致；插件不止 auth——含 sheets/submit/notify + 规划中 score/title）：`mcdreforged.plugin.json` 的 `id` 改 `pch_system`。MCDR 硬性要求 `id` = 文件夹名 = 内部包名（S-1 联网核实 [catalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html)「id 需与 plugin_info.json 所在目录同名」+ [metadata](https://docs.mcdreforged.com/en/latest/plugin_dev/metadata.html)「entrypoint 缺省 = id」），故 `git mv McdrPlugin/htcmc_auth → McdrPlugin/pch_system` + 内部包 `htcmc_auth → pch_system` + 类 `HtcmcAuthConfig → PchSystemConfig`；全仓 import / 路径 / logger 名 / 线程名（`htcmc_sheet_*→pch_sheet_*`、`htcmc_health_check→pch_health_check`）/ 脚本 / 编排（`TestServer` Dockerfile + compose + config 文件名）/ 活跃文档对齐。历史 `Docs/Plans/**`、`CHANGELOG`（`htcmc_auth-v*` tag）保留不动，仅声明新前缀 `pch_system-vX.Y.Z`（版本号不改）
+- [x] **已部署实例迁移**：`Scripts/lib/common.sh::migrate_legacy_plugin_name()`——旧 `plugins/htcmc_auth/` 删除（避免与新 `pch_system` 双注册 `!!PCH` 冲突）、`config/htcmc_auth/` 搬到 `config/pch_system/`（保留玩家 `api_url` + `service_token`）；`install.sh` / `update.sh` 部署新插件前调用，幂等
+
 ---
 
-*最后更新：2026-07-11（前端部署方案：Frontend/Dockerfile + nginx.conf + compose web 服务 + Deploy/Nginx 模板 + Scripts 联动 + MCDR restart 误报修复）*
+*最后更新：2026-07-12（MCDR 插件 id 改名 htcmc_auth → pch_system：文件夹/内部包/类/脚本/编排/活跃文档全量对齐 + 已部署迁移 helper；版本号不变，仅 tag 前缀改 pch_system-v*）*

@@ -6,7 +6,7 @@ from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle, RAction
 
 from . import health
 from .client import request_login_url, LoginResult
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 from .messages import (
     rtext_link,
     LOGIN_RATE_LIMITED,
@@ -18,10 +18,10 @@ from .messages import (
 )
 
 # 由 __init__.py 在 on_load 中注入
-CONFIG: HtcmcAuthConfig = HtcmcAuthConfig()
+CONFIG: PchSystemConfig = PchSystemConfig()
 
 
-def configure(cfg: HtcmcAuthConfig) -> None:
+def configure(cfg: PchSystemConfig) -> None:
     global CONFIG
     CONFIG = cfg
 
@@ -79,7 +79,7 @@ def _login(src, ctx):
     # R-12 / RS-6：阻塞式 HTTP 调用必须放后台线程，不能放 schedule_task
     # （schedule_task 的同步回调跑在 task executor = MCDR 主线程，会卡住主循环）。
     # server.tell() 线程安全，可在后台线程直接调用（S-1：MCDR 官方 PluginServerInterface 文档）。
-    @new_thread('htcmc_auth login')
+    @new_thread('pch_system login')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -122,7 +122,7 @@ def _status(src, ctx):
     S-1 MCDR CommandSource.reply）。复用 ``health.classify`` + ``format_game_report``
     （插件版本 + 后端/令牌/前端状态 + 可点击链接 + 作者页脚）。
     """
-    @new_thread('htcmc_auth status')
+    @new_thread('pch_system status')
     def _do():
         try:
             server = src.get_server()

@@ -18,10 +18,10 @@ import uuid_api_remake  # RS-8
 from mcdreforged.api.decorator import new_thread
 
 from . import sheet_client
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 from .messages import format_notification
 
-_log = logging.getLogger("htcmc_auth.notifier")
+_log = logging.getLogger("pch_system.notifier")
 
 # 模块级在线玩家字典：name -> uuid（由事件维护 + rcon 初始化）
 _online_players: dict = {}
@@ -98,7 +98,7 @@ def on_player_joined(server, player, info) -> None:
     _spawn_join_push(server, player, uuid_)
 
 
-@new_thread('htcmc_sheet_join_push')
+@new_thread('pch_sheet_join_push')
 def _spawn_join_push(server, player_name: str, player_uuid: str) -> None:
     """上线补推后台线程：拉一次 pending → tell → ack。"""
     try:
@@ -113,15 +113,15 @@ def on_player_left(server, player) -> None:
 
 
 # === 当前配置注入（由 __init__.py on_load 设置）===
-_CURRENT_CFG: HtcmcAuthConfig = HtcmcAuthConfig()
+_CURRENT_CFG: PchSystemConfig = PchSystemConfig()
 
 
-def configure(cfg: HtcmcAuthConfig) -> None:
+def configure(cfg: PchSystemConfig) -> None:
     global _CURRENT_CFG
     _CURRENT_CFG = cfg
 
 
-def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: HtcmcAuthConfig) -> None:
+def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: PchSystemConfig) -> None:
     """拉一次 pending，逐条 tell，成功后一次 ack。失败静默（避免刷屏）。"""
     outcome = sheet_client.pending_notifications(cfg, player_uuid, cfg.notify_max_per_poll)
     if not isinstance(outcome, list) or not outcome:
@@ -144,7 +144,7 @@ def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: HtcmcAu
             _log.warning("ack failed for %s (ids=%s): %r", player_name, ids, ack_outcome)
 
 
-def run(server, cfg: HtcmcAuthConfig, stop_event: threading.Event) -> None:
+def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
     """后台轮询循环（由 __init__.py 用 @new_thread 启动）。
 
     每 cfg.notify_poll_interval_seconds 秒：遍历在线 dict，拉 pending → tell → ack。

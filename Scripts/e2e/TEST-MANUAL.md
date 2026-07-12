@@ -8,7 +8,7 @@
 | 项 | 值 |
 |---|---|
 | 测试目录 | `/home/yushen/opt/pchsandbox`（独立 worktree，project=`pchsandbox`，**与生产 `pchsystem` 共存**） |
-| 假 MCDR | `/tmp/fake-mcdr`（空 `plugins/` + `config/htcmc_auth/`） |
+| 假 MCDR | `/tmp/fake-mcdr`（空 `plugins/` + `config/pch_system/`） |
 | 端口 | **8100（后端）/ 15433（pg，loopback）/ 6173（web）** —— 偏移避让生产 8000/5433/5173 |
 | 日志 | RUNBOOK 插件逐块自动捕获（不落本地文件） |
 | 前置 | pchsandbox 已由会话准备：worktree `sandbox-test` @ PR 快照 commit（含 web 部署 + 端口 env 化 + `Backend/Dockerfile` pip/字体镜像修复 + MCDR restart 误报修复） |
@@ -22,7 +22,7 @@
 ```bash
 # worktree 的 .git 是文件（gitdir 指针）非目录 → 用 -e（file/dir 均真），勿用 -d（worktree 恒假）。
 [[ -e /home/yushen/opt/pchsandbox/.git ]] && echo "✓ pchsandbox worktree 就绪" || echo "✗ 缺 pchsandbox（需先建 worktree + 落 PR 改动）"
-mkdir -p /tmp/fake-mcdr/{plugins,config/htcmc_auth}
+mkdir -p /tmp/fake-mcdr/{plugins,config/pch_system}
 echo "✓ 假 MCDR 就绪"
 ```
 
@@ -48,7 +48,7 @@ git reset --hard HEAD
 git clean -fdx
 
 # 重置假 MCDR
-rm -rf /tmp/fake-mcdr/plugins/htcmc_auth /tmp/fake-mcdr/config/htcmc_auth/config.json
+rm -rf /tmp/fake-mcdr/plugins/pch_system /tmp/fake-mcdr/config/pch_system/config.json
 
 # 端口确认（应空闲）
 ss -ltn | grep -E ':8100|:15433|:6173' && echo "⚠ 占用，先释放" || echo "✓ 端口空闲"
@@ -86,12 +86,12 @@ cd /home/yushen/opt/pchsandbox
   echo "=== [5] healthz（:8100）==="; curl -sS http://127.0.0.1:8100/healthz; echo
   echo "=== [6] alembic current ==="; docker compose -p pchsandbox exec -T backend alembic current
   echo "=== [7] web 镜像内 dist（web 启用时镜像内构建，host dist 可空）==="; docker compose -p pchsandbox exec -T web ls /usr/share/nginx/html/index.html
-  echo "=== [8] 插件目录（应无 __pycache__/tests）==="; ls /tmp/fake-mcdr/plugins/htcmc_auth/
+  echo "=== [8] 插件目录（应无 __pycache__/tests）==="; ls /tmp/fake-mcdr/plugins/pch_system/
   echo "=== [9] token 一致性 + api_url 指向 :8100 ==="
   env_tok=$(grep '^MCDR_SERVICE_TOKEN=' .env | cut -d= -f2-)
-  cfg_tok=$(python3 -c "import json;print(json.load(open('/tmp/fake-mcdr/config/htcmc_auth/config.json'))['service_token'])" 2>/dev/null)
+  cfg_tok=$(python3 -c "import json;print(json.load(open('/tmp/fake-mcdr/config/pch_system/config.json'))['service_token'])" 2>/dev/null)
   [ "$env_tok" = "$cfg_tok" ] && echo "✓ token 一致" || echo "✗ 不一致"
-  grep -o '"api_url": *"[^"]*"' /tmp/fake-mcdr/config/htcmc_auth/config.json
+  grep -o '"api_url": *"[^"]*"' /tmp/fake-mcdr/config/pch_system/config.json
   echo "=== [10] web 容器（COMPOSE_PROFILES=web 默认启用）==="; docker compose -p pchsandbox ps web 2>/dev/null | tail -1
   echo "=== [11] web / → 200（:6173）==="; curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:6173/
   echo "=== [12] web /api/healthz 反代（去 /api 前缀 → 容器内 backend:8000）==="; curl -sS http://127.0.0.1:6173/api/healthz; echo
@@ -206,7 +206,7 @@ cd /home/yushen/opt/pchsandbox
   echo "=== [1] 旧「需重启 MCDR」误报文案应 0 命中 ==="
   grep -rn '需【重启 MCDR】\|需\*\*重启 MCDR\*\*' Scripts/ McdrPlugin/ Docs/ && echo "✗ 仍有残留" || echo "✓ 已清除"
   echo "=== [2] update.sh 插件变更统一为 reload 文案（含 mcdreforged.plugin.json）==="
-  grep -q '请在游戏内执行: !!MCDR plugin reload htcmc_auth' Scripts/update.sh && echo "✓ 统一 reload"
+  grep -q '请在游戏内执行: !!MCDR plugin reload pch_system' Scripts/update.sh && echo "✓ 统一 reload"
   echo "=== [3] web_profile_active 整词不误判（website ≠ web）==="
   tmp=$(mktemp -d) && cd "$tmp"
   # shellcheck source=/dev/null

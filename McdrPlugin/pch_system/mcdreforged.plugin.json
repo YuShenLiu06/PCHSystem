@@ -1,7 +1,7 @@
 {
-  "id": "htcmc_auth",
+  "id": "pch_system",
   "version": "0.6.1",
-  "name": "HTCMC Auth",
+  "name": "PCH System",
   "description": "材料协作收集与项目进度管理，联动 Web 后台",
   "author": "YuShen",
   "link": "https://github.com/YuShenLiu06/PCHSystem",
@@ -9,5 +9,8 @@
     "mcdreforged": ">=2.14.0",
     "uuid_api_remake": "*",
     "minecraft_data_api": "*"
+  },
+  "introduction": {
+    "zh_cn": "McdrPlugin/README.md"
   }
 }

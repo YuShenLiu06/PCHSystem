@@ -10,7 +10,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 import tests  # noqa: F401,E402  触发 stubs 安装与 sys.path 配置
 
-from htcmc_auth.qty import STACK, SHULKER, format_qty, format_qty_safe  # noqa: E402
+from pch_system.qty import STACK, SHULKER, format_qty, format_qty_safe  # noqa: E402
 
 
 class FormatQtyTest(unittest.TestCase):

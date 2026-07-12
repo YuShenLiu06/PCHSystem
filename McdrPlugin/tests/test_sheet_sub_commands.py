@@ -20,7 +20,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(__file__))
 import tests  # noqa: F401,E402  触发 stubs 安装与 sys.path 配置
 
-import htcmc_auth.sheet_commands as sc  # noqa: E402
+import pch_system.sheet_commands as sc  # noqa: E402
 
 
 class _FakeServer:

@@ -1,6 +1,6 @@
 # Scripts —— PCHSystem 一键安装 / 更新
 
-面向玩家/服主，在自己 Linux 服务器上一键部署与更新 PCHSystem（FastAPI 后端 + PostgreSQL + htcmc_auth MCDR 插件 + 前端静态构建）。自动检测/安装 Docker、自适应国内网络（GitHub / Docker Hub / PyPI / npm 镜像）、智能判断是否需要重建镜像。
+面向玩家/服主，在自己 Linux 服务器上一键部署与更新 PCHSystem（FastAPI 后端 + PostgreSQL + pch_system MCDR 插件 + 前端静态构建）。自动检测/安装 Docker、自适应国内网络（GitHub / Docker Hub / PyPI / npm 镜像）、智能判断是否需要重建镜像。
 
 - `install.sh` —— 首次安装
 - `update.sh` —— 一键更新
@@ -38,7 +38,7 @@ bash Scripts/install.sh [选项]
 | `--yes` | 无人值守，全部用默认值（等价 `PCH_YES=1`） |
 | `--mcdr-root DIR` | MCDR 根目录（含 `plugins/` 和 `config/`），等价 `PCH_MCDR_ROOT` |
 | `--mcdr-api-url URL` | 插件访问后端的 URL，等价 `PCH_MCDR_API_URL` |
-| `--mcdr-overwrite-config` | 强制覆盖玩家已有的 `htcmc_auth/config.json` |
+| `--mcdr-overwrite-config` | 强制覆盖玩家已有的 `pch_system/config.json` |
 | `--no-frontend` | 跳过前端构建 |
 | `--no-mcdr` | 跳过 MCDR 插件拷贝 |
 | `--no-sync` | 跳过版本同步（用当前工作树，开发/测试用） |
@@ -55,7 +55,7 @@ bash Scripts/install.sh [选项]
 6. `docker compose up -d` → 等 postgres healthy → 起 backend → 等 `/healthz` 200
 7. `docker compose exec backend alembic upgrade head`（迁移前 `pg_dump` 快照）
 8. 前端 `npm run build` → `Frontend/dist/`（best-effort，失败不阻后端）
-9. 拷 `htcmc_auth` 到你的 MCDR `plugins/`，生成 `config/htcmc_auth/config.json`
+9. 拷 `pch_system` 到你的 MCDR `plugins/`，生成 `config/pch_system/config.json`
 10. 持久化部署状态到 `.pchsystem.deploy.env`
 11. 打印摘要 + 待办（`newgrp docker` / 装依赖插件 / 游戏内 reload / nginx 托管前端）
 
@@ -99,7 +99,7 @@ bash Scripts/update.sh [选项]
 
 ## 4. 版本来源策略
 
-- **默认最新发版 tag**：`git tag --list '*-v*'` 按 creatordate 倒序取首个 = 最近一次发版的完整仓库快照（三端独立 tag `backend-v*` / `htcmc_auth-v*` / `frontend-v*`，每个 tag 都含所有端代码）。
+- **默认最新发版 tag**：`git tag --list '*-v*'` 按 creatordate 倒序取首个 = 最近一次发版的完整仓库快照（三端独立 tag `backend-v*` / `pch_system-v*` / `frontend-v*`，每个 tag 都含所有端代码）。
 - **`--edge`**：拉 `main` 最新提交（尝鲜 / 联调）。
 - update 沿用 install 时记录的策略（`.pchsystem.deploy.env` 的 `PCH_DEPLOY_STRATEGY`），可用 `--edge` 临时覆盖。
 
@@ -137,19 +137,19 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 
 ---
 
-## 7. MCDR 插件（htcmc_auth）部署
+## 7. MCDR 插件（pch_system）部署
 
 脚本只负责**后端容器**（backend + postgres）。MC 服务端（Fabric + MCDReforged）由你自己持有。
 
 ### 前置依赖（必须）
-`htcmc_auth` 依赖另外两个 MCDR 插件，缺则加载失败：
+`pch_system` 依赖另外两个 MCDR 插件，缺则加载失败：
 - **`uuid_api_remake`** —— <https://github.com/gubaiovo/MCDR_uuid_api_remake>（离线 UUID 推导）
 - **`minecraft_data_api`** —— MCDR 插件市场的 `MinecraftDataAPI`
 
 `install.sh` / `update.sh` 会扫描你的 `plugins/` 并在缺失时 warn。
 
 ### config.json 的 api_url（关键）
-插件配置 `<MCDR>/config/htcmc_auth/config.json` 的 `api_url` 必须是**插件容器/进程能访问到后端的地址**：
+插件配置 `<MCDR>/config/pch_system/config.json` 的 `api_url` 必须是**插件容器/进程能访问到后端的地址**：
 - MCDR 与后端**同机**（裸进程/systemd）→ `http://127.0.0.1:8000`
 - MCDR 与 backend **同 docker 网络** → `http://pchsystem-backend-1:8000`（需把 MCDR 容器加入 `pchsystem_default` 网络）
 - 脚本按 `--mcdr-root` 路径形态推断默认（路径含 `/var/lib/docker/volumes/` 视为 docker 化），**务必核对**。
@@ -159,13 +159,13 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 ### 热重载
 脚本拷完插件后**不自动 reload**（MCDR 仅接受游戏内 / 控制台 stdin，宿主脚本无法可靠注入），请手动：
 ```
-!!MCDR plugin reload htcmc_auth
+!!MCDR plugin reload pch_system
 ```
 `mcdreforged.plugin.json` 任何字段变更（version/dependencies/name/...）**只需 `!!MCDR plugin reload`**，无需重启 MCDR——reload 会重读元数据并由 `DependencyWalker` 重校依赖（不满足则自动卸载插件）。
 
 ### docker 化 MCDR 的两种形态
 - **bind mount / volume 挂载点可见**（如 `/var/lib/docker/volumes/xxx/_data`）：`--mcdr-root` 指向该宿主路径，脚本直接 rsync。
-- **named volume 无挂载点**：脚本无法自动拷贝，请用 `docker cp McdrPlugin/htcmc_auth/. <mcdr容器>:/mcdr/plugins/htcmc_auth/` 手动拷贝。
+- **named volume 无挂载点**：脚本无法自动拷贝，请用 `docker cp McdrPlugin/pch_system/. <mcdr容器>:/mcdr/plugins/pch_system/` 手动拷贝。
 
 ---
 
@@ -180,10 +180,10 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 # 1. 改 .env
 $EDITOR .env  # 改 MCDR_SERVICE_TOKEN（及 POSTGRES_PASSWORD / JWT_SECRET 若也要轮换）
 # 2. 同步到插件 config
-$EDITOR <MCDR>/config/htcmc_auth/config.json  # service_token 改成同值
+$EDITOR <MCDR>/config/pch_system/config.json  # service_token 改成同值
 # 3. 重启后端 + reload 插件
 docker compose restart backend
-# 游戏内: !!MCDR plugin reload htcmc_auth
+# 游戏内: !!MCDR plugin reload pch_system
 ```
 > 轮换 `POSTGRES_PASSWORD` 还需更新 postgres 容器与 `pgdata`（改密码需 SQL `ALTER USER`，谨慎）。
 
@@ -276,8 +276,8 @@ docker compose restart backend
 | `docker compose` 不可用 | 装 Docker 后 `newgrp docker` 或重新登录；确认 `docker info` 正常 |
 | backend `/healthz` 不通 | `docker compose logs --tail 80 backend`；postgres 未 healthy 也会拖住 backend（`depends_on`） |
 | alembic `Target database is not up to date` | 手动 `docker compose exec backend alembic upgrade head` |
-| 插件 `!!PCH` 命令不存在 | 确认依赖插件 `uuid_api_remake` + `minecraft_data_api` 已装；`docker logs <mcdr> \| grep htcmc_auth` 看加载日志 |
-| 插件 reload 后行为没变 | 确认拷贝目标是 MCDR 实际加载的 `plugins/htcmc_auth/`；version/dependencies 等元数据变更也只需 reload（reload 重读 `mcdreforged.plugin.json` + 重校依赖） |
+| 插件 `!!PCH` 命令不存在 | 确认依赖插件 `uuid_api_remake` + `minecraft_data_api` 已装；`docker logs <mcdr> \| grep pch_system` 看加载日志 |
+| 插件 reload 后行为没变 | 确认拷贝目标是 MCDR 实际加载的 `plugins/pch_system/`；version/dependencies 等元数据变更也只需 reload（reload 重读 `mcdreforged.plugin.json` + 重校依赖） |
 | `!!PCH login` 链接打不开 | 核对 `.env` 的 `WEB_BASE_URL`（login 回链前缀）与前端实际地址 |
 | token 401 | `.env` `MCDR_SERVICE_TOKEN` 与插件 config `service_token` 是否同值（见 §8） |
 | clone/pull 卡住 | 见 §5 镜像；或挂代理后 `HTTPS_PROXY=http://宿主:port bash Scripts/install.sh`（自动透传给 build 助 CJK 字体下载） |

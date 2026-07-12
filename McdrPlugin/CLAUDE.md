@@ -39,13 +39,13 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | **RS-5** | **遵守 R-11：密钥不进代码库** | `service_token` / `api_url` / RCON 密码经 `config.json`（本地）或环境变量注入；`config.json` 已在 `.gitignore`。仓库只提交 `config.json.example`。 |
 | **RS-6** | **遵守 R-12：阻塞调用放 `@new_thread`** | 所有 HTTP 调用、RCON 查询、NBT 解析必须用 `@new_thread(...)`（`mcdreforged.api.decorator.new_thread`）卸载到后台线程；`schedule_task` 的同步回调跑在 task executor = 主线程，**禁止**用来卸载阻塞工作（曾导致 `!!PCH login` 卡顿——见 [`Docs/McdrPlugin/mcdr-api-cheatsheet.md`](../Docs/McdrPlugin/mcdr-api-cheatsheet.md) §8「常见误区」）；HTTP 必含超时（≤10s）+ 重试 + 失败回执给玩家（`server.tell` 线程安全，可在后台线程直接回执）。 |
 | **RS-7** | **SNBT 解析不自研** | 潜影盒 / 复杂 NBT 一律走 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)，不为 SNBT 写正则或手写解析器；写完用真实潜影盒样本测试。 |
-| **RS-8** | **离线 UUID 推导只依赖 `uuid_api_remake`** | 不要在插件内重写 `OfflinePlayer.nameUUIDFromBytes` —— 复用 `uuid_api_remake.get_uuid(name)`（已在 `htcmc_auth/__init__.py` 验证可用），保证与 `uuid_api_remake.mcdr` 全局一致。 |
+| **RS-8** | **离线 UUID 推导只依赖 `uuid_api_remake`** | 不要在插件内重写 `OfflinePlayer.nameUUIDFromBytes` —— 复用 `uuid_api_remake.get_uuid(name)`（已在 `pch_system/__init__.py` 验证可用），保证与 `uuid_api_remake.mcdr` 全局一致。 |
 | **RS-9** | **称号 scoreboard prefix 兼容性** | team prefix 会干扰 MCDR 玩家名解析；部署时必须配合 [Title Prefix Handler](https://mcdreforged.com/zh-CN/plugin/title_prefix_handler)，并在真机回归玩家名解析。Fabric + Carpet 下聊天/Tab 前缀渲染待真机验证。 |
 | **RS-10** | **RCON 串行 + 限频 + 熔断** | 多箱批量扫描必须串行执行，单次超时熔断；禁止并发刷 RCON，避免压垮服务端主线程。 |
 | **RS-11** | **`!!login` 限频与白名单状态** | 同玩家短时间内重复 `!!login` 触发 `__RATE_LIMITED__`；被移白名单返回 `__REMOVED__` —— 这些信号必须回执玩家，禁止静默丢弃。 |
-| **RS-12** | **插件包名规范** | Python 包用小写（`htcmc_auth/htcmc_auth/`），插件顶层目录用大驼峰（`McdrPlugin/`）；`mcdreforged.plugin.json` 的 `id` 与包名一致，遵循根 CLAUDE.md §1。 |
+| **RS-12** | **插件包名规范** | Python 包用小写（`pch_system/pch_system/`），插件顶层目录用大驼峰（`McdrPlugin/`）；`mcdreforged.plugin.json` 的 `id` 与包名一致，遵循根 CLAUDE.md §1。 |
 | **RS-13** | **sheets 代玩家写：service-token + `X-Player-UUID` 双头** | MCDR 不持有玩家 JWT。对需以玩家身份写的端点（`sheets` 全套写、未来认领/交付类），HTTP 头同时带 `X-Service-Token`（复用 `MCDR_SERVICE_TOKEN`）+ `X-Player-UUID`（由 `uuid_api_remake.get_uuid(name)` 推导，RS-8）；**无 `Authorization` 头**。后端 `get_current_player` 双通道：Bearer JWT 优先，否则 service-token+UUID 代玩家加载 Player 注入，复用现有 RBAC（与 JWT 写等价）。命令层**不做硬权限拦截**（R-9：真实权限以后端 403/409 为准），仅在 help 文案说明角色。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §2 鉴权表 / §11 命令映射表。 |
-| **RS-14** | **通知轮询全程 `@new_thread`，禁用 `schedule_task` 卸载** | `notifier.py` 后台循环必须用 `@new_thread('htcmc_sheet_notifier')` 启动（RS-6 的具体化）；`on_player_joined`/`on_player_left`（`mcdr.player_joined`/`mcdr.player_left`）维护在线 name→uuid 字典，插件加载时用 `server.rcon_query('list')` 兜底初始化；轮询每 `notify_poll_interval_seconds`（默认 2.0）拉 `GET /notifications/pending` → 逐条 `server.tell` → `POST /notifications/ack {player_uuid, ids}`；`on_player_joined` 立即拉一次（离线堆积补推）。网络失败**静默继续下次**（不 `tell` 玩家，避免刷屏）。端点契约见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §12、[`notification-service.md`](../Docs/architecture/services/notification-service.md)。 |
+| **RS-14** | **通知轮询全程 `@new_thread`，禁用 `schedule_task` 卸载** | `notifier.py` 后台循环必须用 `@new_thread('pch_sheet_notifier')` 启动（RS-6 的具体化）；`on_player_joined`/`on_player_left`（`mcdr.player_joined`/`mcdr.player_left`）维护在线 name→uuid 字典，插件加载时用 `server.rcon_query('list')` 兜底初始化；轮询每 `notify_poll_interval_seconds`（默认 2.0）拉 `GET /notifications/pending` → 逐条 `server.tell` → `POST /notifications/ack {player_uuid, ids}`；`on_player_joined` 立即拉一次（离线堆积补推）。网络失败**静默继续下次**（不 `tell` 玩家，避免刷屏）。端点契约见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §12、[`notification-service.md`](../Docs/architecture/services/notification-service.md)。 |
 
 ---
 
@@ -88,14 +88,14 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 
 ### 关键文件
 
-- 入口：`McdrPlugin/htcmc_auth/htcmc_auth/__init__.py`（`on_load` 注册命令树 + 事件监听 + 启动 notifier 线程，`on_unload` 停止）
-- 命令回调：`htcmc_auth/commands.py`（`_pch_root` / `_login` / `_not_impl`）
-- **sheets 命令回调**：`htcmc_auth/sheet_commands.py`（`@new_thread` + `server.tell` 回执 + 403/404/409 中文文案）
-- **通知轮询**：`htcmc_auth/notifier.py`（在线字典 + rcon 初始化 + 后台循环 + 离线补推）
-- 消息/色彩常量：`htcmc_auth/messages.py`（含 `format_notification` / `format_row_line`）
-- 元数据：`McdrPlugin/htcmc_auth/mcdreforged.plugin.json`
-- HTTP 客户端：`htcmc_auth/client.py`（`LoginResult` dataclass）、`htcmc_auth/sheet_client.py`（sheets + notifications HTTP，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）
-- 配置：`htcmc_auth/config.py`（含 `notify_poll_interval_seconds` / `notify_max_per_poll`）+ `config.json`（仓库只提交 `config.json.example`，RS-5）
+- 入口：`McdrPlugin/pch_system/pch_system/__init__.py`（`on_load` 注册命令树 + 事件监听 + 启动 notifier 线程，`on_unload` 停止）
+- 命令回调：`pch_system/commands.py`（`_pch_root` / `_login` / `_not_impl`）
+- **sheets 命令回调**：`pch_system/sheet_commands.py`（`@new_thread` + `server.tell` 回执 + 403/404/409 中文文案）
+- **通知轮询**：`pch_system/notifier.py`（在线字典 + rcon 初始化 + 后台循环 + 离线补推）
+- 消息/色彩常量：`pch_system/messages.py`（含 `format_notification` / `format_row_line`）
+- 元数据：`McdrPlugin/pch_system/mcdreforged.plugin.json`
+- HTTP 客户端：`pch_system/client.py`（`LoginResult` dataclass）、`pch_system/sheet_client.py`（sheets + notifications HTTP，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）
+- 配置：`pch_system/config.py`（含 `notify_poll_interval_seconds` / `notify_max_per_poll`）+ `config.json`（仓库只提交 `config.json.example`，RS-5）
 
 ---
 
@@ -175,24 +175,24 @@ src.reply(
 ## 7. 开发热重载工作流
 
 > 容器编排见 [`TestServer/docker-compose.yml`](../TestServer/docker-compose.yml)（mc-test 服务，加入 `pchsystem_default` 网络访问 backend）。
-> **mc-test 容器已挂载插件源码 `./McdrPlugin/htcmc_auth:/mcdr/plugins/htcmc_auth`，改 `.py` 后游戏内秒级热重载，无需 rebuild 镜像。**
+> **mc-test 容器已挂载插件源码 `./McdrPlugin/pch_system:/mcdr/plugins/pch_system`，改 `.py` 后游戏内秒级热重载，无需 rebuild 镜像。**
 
 | 改动类型 | 操作 | 生效方式 |
 |---|---|---|
-| 插件 `.py` 源码（`htcmc_auth/**/*.py`） | 保存后游戏内输入 `!!MCDR plugin reload htcmc_auth` | MCDR 内置热重载，秒级生效（依赖源码挂载） |
+| 插件 `.py` 源码（`pch_system/**/*.py`） | 保存后游戏内输入 `!!MCDR plugin reload pch_system` | MCDR 内置热重载，秒级生效（依赖源码挂载） |
 | `mcdreforged.plugin.json` 元数据 | `docker compose -f TestServer/docker-compose.yml build mc-test && docker compose -f TestServer/docker-compose.yml up -d mc-test` | rebuild 镜像（仅元数据/依赖变更才需要） |
 | 新增插件 Python 依赖 | 同上 rebuild（Dockerfile 里 `pip install`） | rebuild 镜像 |
-| `config/htcmc_auth/config.json` | 容器内 `/mcdr/config/htcmc_auth/config.json`，改后 `!!MCDR plugin reload htcmc_auth` | 热重载 |
+| `config/pch_system/config.json` | 容器内 `/mcdr/config/pch_system/config.json`，改后 `!!MCDR plugin reload pch_system` | 热重载 |
 
 ### 验证插件加载
 ```bash
-docker logs pchsystem-mc-test-1 2>&1 | grep htcmc_auth
+docker logs pchsystem-mc-test-1 2>&1 | grep pch_system
 # 应看到：registered command with root node Literal '!!PCH' + registered help message
 ```
 
 ### 常见排错
-- **改了代码 `!!MCDR plugin reload` 后行为没变**：确认 `pchsystem-mc-test-1` 容器挂载了插件源码（`docker inspect pchsystem-mc-test-1 \| grep -A2 plugins/htcmc_auth`）；若挂载点指向空目录（如误用 `./` 相对路径导致指向 `TestServer/McdrPlugin/`），插件会被空挂载覆盖消失
-- **`!!MCDR plugin reload` 报错**：通常是语法错误，先 `python -c "import ast; ast.parse(open('McdrPlugin/htcmc_auth/htcmc_auth/<file>.py').read())"` 本地校验
+- **改了代码 `!!MCDR plugin reload` 后行为没变**：确认 `pchsystem-mc-test-1` 容器挂载了插件源码（`docker inspect pchsystem-mc-test-1 \| grep -A2 plugins/pch_system`）；若挂载点指向空目录（如误用 `./` 相对路径导致指向 `TestServer/McdrPlugin/`），插件会被空挂载覆盖消失
+- **`!!MCDR plugin reload` 报错**：通常是语法错误，先 `python -c "import ast; ast.parse(open('McdrPlugin/pch_system/pch_system/<file>.py').read())"` 本地校验
 - **改了 backend 响应字段，MCDR 拿不到**：先确认 backend 容器跑的是新代码（见 [`Backend/CLAUDE.md`](../Backend/CLAUDE.md) §5），再确认 `client.py` 解析了新字段
 
 ### 配套：调 backend 联调时

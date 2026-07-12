@@ -1,6 +1,6 @@
 """scanner.py 单测（纯 Python，不依赖 MCDR 运行时）。
 
-通过 importlib 直接按文件路径加载 scanner.py，绕过 ``htcmc_auth/__init__.py``
+通过 importlib 直接按文件路径加载 scanner.py，绕过 ``pch_system/__init__.py``
 （后者会 import mcdreforged，测试环境无该依赖）。scanner 本身只依赖标准库。
 """
 import importlib.util
@@ -10,7 +10,7 @@ from pathlib import Path
 # 按文件路径加载 scanner.py 为独立模块
 _SPEC = importlib.util.spec_from_file_location(
     "_scanner_under_test",
-    Path(__file__).resolve().parent.parent / "htcmc_auth" / "scanner.py",
+    Path(__file__).resolve().parent.parent / "pch_system" / "scanner.py",
 )
 scanner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(scanner)

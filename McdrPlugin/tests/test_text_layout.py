@@ -8,9 +8,9 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-import tests  # noqa: F401,E402  触发 sys.path 配置（htcmc_auth 顶层入路径）
+import tests  # noqa: F401,E402  触发 sys.path 配置（pch_system 顶层入路径）
 
-from htcmc_auth.text_layout import (  # noqa: E402
+from pch_system.text_layout import (  # noqa: E402
     CHAT_LINE_PX,
     CJK_ADVANCE_PX,
     SPACE_ADVANCE_PX,

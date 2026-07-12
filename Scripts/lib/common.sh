@@ -566,3 +566,41 @@ web_profile_active() {
     # 同时容忍空格与逗号分隔：把空格统一成逗号，再前后加逗号做整词匹配
     [[ ",${profiles// /,}," == *",web,"* ]]
 }
+
+# ============================================================
+# 插件 id 迁移（2026-07-12 起 plugin id 由 htcmc_auth 改为 pch_system）
+# ============================================================
+# migrate_legacy_plugin_name <mcdr_root>：把旧部署的 htcmc_auth 迁到 pch_system。
+#   1) config 搬家：config/htcmc_auth/config.json → config/pch_system/config.json（保留玩家 api_url + service_token）
+#   2) 删旧插件目录 plugins/htcmc_auth（id 已改，旧插件若残留会与新 pch_system 双注册 !!PCH 冲突）
+#   幂等：无旧目录即跳过。install.sh / update.sh 在部署新 pch_system 之前调用。
+migrate_legacy_plugin_name() {
+    local mcdr_root=$1
+    [[ -n "$mcdr_root" ]] || return 0
+    local legacy_plugin="$mcdr_root/plugins/htcmc_auth"
+    local legacy_cfg="$mcdr_root/config/htcmc_auth"
+    local new_cfg_dir="$mcdr_root/config/pch_system"
+
+    [[ -e "$legacy_plugin" || -e "$legacy_cfg" ]] || return 0
+
+    log_step "迁移旧插件名 htcmc_auth → pch_system（plugin id 改名）"
+
+    # 1) config 搬家（保留玩家手改的 api_url / service_token）
+    if [[ -e "$legacy_cfg" ]]; then
+        mkdir -p "$new_cfg_dir"
+        if [[ -f "$legacy_cfg/config.json" ]]; then
+            cp -f "$legacy_cfg/config.json" "$new_cfg_dir/config.json"
+            log_info "已迁移配置: $legacy_cfg/config.json → $new_cfg_dir/config.json"
+        fi
+        rm -rf "$legacy_cfg"
+        log_info "已移除旧配置目录: $legacy_cfg"
+    fi
+
+    # 2) 删旧插件目录（避免与新 pch_system 双注册 !!PCH）
+    if [[ -e "$legacy_plugin" ]]; then
+        rm -rf "$legacy_plugin"
+        log_info "已移除旧插件目录: $legacy_plugin（否则与新 pch_system 双注册 !!PCH 冲突）"
+    fi
+
+    log_warn "迁移完成：MCDR 重启或游戏内 !!MCDR plugin reload pch_system 后生效"
+}

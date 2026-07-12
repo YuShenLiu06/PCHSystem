@@ -48,13 +48,13 @@ curl -sS http://localhost:8000/healthz            # → {"status":"ok"}
 | `Backend/pyproject.toml`（加依赖） | `docker compose up -d --build backend` |
 | 前端 `.vue`/`.ts` | Vite HMR |
 | `vite.config.ts` / `package.json` | Ctrl+C 重启 dev server |
-| MCDR 插件 `.py` | 游戏内 `!!MCDR plugin reload htcmc_auth`（源码已挂载） |
+| MCDR 插件 `.py` | 游戏内 `!!MCDR plugin reload pch_system`（源码已挂载） |
 
 ### 3.3 测试服（mc-test）
 
 ```bash
 docker compose -f TestServer/docker-compose.yml up -d   # 首次会下 ~300MB MC 文件
-docker logs pchsystem-mc-test-1 2>&1 | grep htcmc_auth  # 确认插件加载
+docker logs pchsystem-mc-test-1 2>&1 | grep pch_system  # 确认插件加载
 ```
 
 ---
@@ -66,7 +66,7 @@ docker logs pchsystem-mc-test-1 2>&1 | grep htcmc_auth  # 确认插件加载
 | backend 存活 | `curl -sS http://localhost:8000/healthz` | `{"status":"ok"}` |
 | backend 鉴权链路 | `curl -sS http://localhost:8000/me` | `401`（未带 JWT，证明路由在跑） |
 | 迁移版本 | `docker compose exec backend alembic current` | 与 `alembic/versions/` 最新一致（当前 `0006_notifications`） |
-| mc-test 插件 | `docker logs pchsystem-mc-test-1 2>&1 \| grep htcmc_auth` | 命令注册 + help message |
+| mc-test 插件 | `docker logs pchsystem-mc-test-1 2>&1 \| grep pch_system` | 命令注册 + help message |
 | 前端联调 | 浏览器开 `http://localhost:5173` | `/auth` 页可走 token 兑换 |
 
 ---
@@ -78,7 +78,7 @@ docker logs pchsystem-mc-test-1 2>&1 | grep htcmc_auth  # 确认插件加载
 | 改后端代码行为没变 | 容器跑旧镜像 / reload 未触发 | `docker logs pchsystem-backend-1 --tail 30` 看 reload 事件；必要时 `docker compose up -d backend --force-recreate` |
 | `Target database is not up to date` | 迁移落后 | `alembic current` → `alembic upgrade head` |
 | 前端所有请求 502 / ECONNREFUSED | backend 没起 | `curl :8000/healthz` 确认 backend 在跑 |
-| `!!MCDR plugin reload` 后行为没变 | 插件源码未挂载 / 挂载点指向空目录 | `docker inspect pchsystem-mc-test-1 \| grep -A2 plugins/htcmc_auth`；语法错先 `python -c "import ast; ast.parse(open('<file>').read())"` |
+| `!!MCDR plugin reload` 后行为没变 | 插件源码未挂载 / 挂载点指向空目录 | `docker inspect pchsystem-mc-test-1 \| grep -A2 plugins/pch_system`；语法错先 `python -c "import ast; ast.parse(open('<file>').read())"` |
 | `/auth` 兑换 401 | token 过期（TTL 10 分钟）或被新一次签发 revoke | 重新 `!!PCH login` 拿新 token |
 | 401 后未跳 `/auth` | axios 响应拦截器未装 | 检查 `Frontend/src/utils/http.ts`（RS-5） |
 | attach 测试服误按 `Ctrl+C` | 直接 SIGINT 杀服 | 只用 `Ctrl+P, Ctrl+Q` 脱离；重启 `docker compose -f TestServer/docker-compose.yml up -d` |
