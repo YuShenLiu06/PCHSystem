@@ -3,8 +3,8 @@ import threading
 from mcdreforged.api.all import PluginServerInterface
 from mcdreforged.api.command import Literal, Text, Integer, Float, QuotableText, GreedyText
 
-from . import notifier
-from .commands import configure, _pch_root, _not_impl, _login
+from . import health, notifier
+from .commands import configure, _pch_root, _not_impl, _login, _status
 from .config import HtcmcAuthConfig
 from .sheet_commands import (
     configure as sheet_configure,
@@ -65,6 +65,8 @@ def on_load(serv: PluginServerInterface, prev):
     # 每次用全新 Event，避免 reload 时老循环未退出与新循环双循环重复投递。
     _notifier_stop = threading.Event()
     _start_notifier(serv)
+    # 前后端可达性自检（RS-6：@new_thread 后台线程，best-effort 不阻塞 on_load）。
+    _start_health_check(serv)
     serv.logger.info("HTCMC Auth loaded (commands under !!PCH, sheets + notifier)")
     # 打印实际生效的轮询参数，便于部署后从日志确认（防 example/默认值漂移被静默吞掉）
     serv.logger.info(
@@ -89,6 +91,18 @@ def _start_notifier(serv: PluginServerInterface):
     _loop()
 
 
+def _start_health_check(serv: PluginServerInterface):
+    # 前后端可达性自检：@new_thread fire-and-forget，best-effort 不阻塞 on_load（RS-6）。
+    # 镜像 _start_notifier；探针吞所有异常，reload 不炸。
+    from mcdreforged.api.decorator import new_thread
+
+    @new_thread('htcmc_health_check')
+    def _check():
+        health.run_console_check(serv, CONFIG)
+
+    _check()
+
+
 def _register_commands(server: PluginServerInterface):
     # 命令树 API 已联网核实（MCDR 2.15.x）：
     # https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/command.html
@@ -97,6 +111,7 @@ def _register_commands(server: PluginServerInterface):
         Literal("!!PCH")
         .runs(_pch_root)
         .then(Literal("login").runs(_login))
+        .then(Literal("status").runs(_status))
         .then(Literal("bind").runs(_not_impl("bind")))
         .then(
             Literal("submit")
