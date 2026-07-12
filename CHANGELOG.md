@@ -19,20 +19,9 @@
 ---
 
 
-## [pch_system-v0.7.0-rc.2] - 2026-07-12
+## [pch_system-v0.7.0] - 2026-07-12
 
-继 rc.1 的第二个候选版本，含一处自检报告链接修正。若无问题将发正式 `0.7.0`。
-
-### Fixed
-
-- **自检报告「部署」链接更精准**：`!!PCH status` 与控制台自检里，后端「尚未配置」提示的部署链接由仓库首页改为 RUNBOOK 运维手册，直接定位到部署步骤。
-
----
-
-
-## [pch_system-v0.7.0-rc.1] - 2026-07-12
-
-首个以 `pch_system` 为 id 发布的版本（原 `htcmc_auth`）。插件功能与 v0.6.1 一致，主要变更为 **id 改名**与**发布流程自动化**。这是发布流程的候选版本（rc），用于验证 CI / 打包 / 草稿 Release 全链路，通过后发正式 `0.7.0`。
+插件 id 由 `htcmc_auth` 改为 `pch_system`（与项目名一致），并落地发布流程自动化与部署体验改进。首个以 `pch_system` 为 id 发布的正式版本。
 
 ### Changed
 
@@ -48,6 +37,7 @@
 ### Fixed
 
 - （运维）**`update.sh` 不再误报「需重启 MCDR」**：`mcdreforged.plugin.json` 任何字段（version / dependencies / name / …）变更统一提示 `!!MCDR plugin reload`（reload 会重读配置并由 `DependencyWalker` 重校依赖，**无需重启 MCDR**）。
+- **自检报告「部署」链接更精准**：`!!PCH status` 与控制台自检里，后端「尚未配置」提示的部署链接由仓库首页改为 RUNBOOK 运维手册，直接定位到部署步骤。
 
 ---
 
