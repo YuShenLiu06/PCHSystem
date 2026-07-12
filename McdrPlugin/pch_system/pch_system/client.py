@@ -4,9 +4,9 @@ from typing import Optional, Union
 
 import requests
 
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 
-_log = logging.getLogger("htcmc_auth")
+_log = logging.getLogger("pch_system")
 
 
 @dataclass
@@ -22,7 +22,7 @@ class LoginResult:
 LoginOutcome = Union[LoginResult, str, None]
 
 
-def request_login_url(cfg: HtcmcAuthConfig, player_name: str, player_uuid: str) -> LoginOutcome:
+def request_login_url(cfg: PchSystemConfig, player_name: str, player_uuid: str) -> LoginOutcome:
     """调后端 POST /auth/token，返回 LoginResult 或哨兵 '__RATE_LIMITED__' / '__REMOVED__' 或 None。"""
     url = f"{cfg.api_url.rstrip('/')}/auth/token"
     payload = {"uuid": player_uuid, "name": player_name}

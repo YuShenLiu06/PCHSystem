@@ -7,7 +7,7 @@
 #   bash Scripts/install.sh [--edge] [--yes] [--mcdr-root DIR] [--no-frontend] [--no-mcdr] ...
 #
 # 流程：docker 检测/安装 → 网络镜像自适应 → 同步到目标版本 → 生成 .env → 生产 override
-#       → 起容器 → alembic 迁移 → 前端构建 → 拷 htcmc_auth 插件 → 持久化 + 摘要
+#       → 起容器 → alembic 迁移 → 前端构建 → 拷 pch_system 插件 → 持久化 + 摘要
 #
 # 红线遵守：.env 已存在绝不覆盖；alembic 失败绝不自动 downgrade（score_ledger append-only）；
 #          插件 service_token 与 .env MCDR_SERVICE_TOKEN 强制同值。
@@ -43,7 +43,7 @@ PCHSystem install.sh —— 一键首次安装
   --yes                  无人值守，全部用默认值（等价 PCH_YES=1）
   --mcdr-root DIR        MCDR 根目录（含 plugins/ 和 config/），等价 PCH_MCDR_ROOT
   --mcdr-api-url URL     插件访问后端的 URL，等价 PCH_MCDR_API_URL
-  --mcdr-overwrite-config  强制覆盖玩家已有的 htcmc_auth config.json
+  --mcdr-overwrite-config  强制覆盖玩家已有的 pch_system config.json
   --no-frontend          跳过前端构建
   --no-web               不启用 web 服务（默认启用 nginx 托管前端；禁用后走非容器路径自管 nginx）
   --no-mcdr              跳过 MCDR 插件拷贝
@@ -242,7 +242,7 @@ build_frontend() {
 }
 
 check_mcdr_dep_plugins() {
-    # 补丁发现 A：htcmc_auth 依赖 uuid_api_remake 与 minecraft_data_api
+    # 补丁发现 A：pch_system 依赖 uuid_api_remake 与 minecraft_data_api
     local plugins_dir=$1
     local found_uuid=0 found_mda=0
     local f
@@ -255,16 +255,16 @@ check_mcdr_dep_plugins() {
         esac
     done
     if [[ $found_uuid -eq 0 ]]; then
-        log_warn "未找到依赖插件 uuid_api_remake（htcmc_auth 加载需要）→ https://github.com/gubaiovo/MCDR_uuid_api_remake"
+        log_warn "未找到依赖插件 uuid_api_remake（pch_system 加载需要）→ https://github.com/gubaiovo/MCDR_uuid_api_remake"
     fi
     if [[ $found_mda -eq 0 ]]; then
-        log_warn "未找到依赖插件 minecraft_data_api（htcmc_auth 加载需要）→ MCDR 插件市场 MinecraftDataAPI"
+        log_warn "未找到依赖插件 minecraft_data_api（pch_system 加载需要）→ MCDR 插件市场 MinecraftDataAPI"
     fi
 }
 
 deploy_mcdr_plugin() {
     [[ $NO_MCDR -eq 1 ]] && { log_info "跳过 MCDR 插件拷贝（--no-mcdr）"; return 0; }
-    log_step "部署 htcmc_auth 插件到 MCDR"
+    log_step "部署 pch_system 插件到 MCDR"
     local mcdr_root="${MCDR_ROOT_OVERRIDE:-${PCH_MCDR_ROOT:-}}"
     if [[ -z "$mcdr_root" ]]; then
         read_interactive mcdr_root "  MCDR 根目录绝对路径（含 plugins/ 和 config/）" "/opt/mcdr"
@@ -273,22 +273,25 @@ deploy_mcdr_plugin() {
         || die "MCDR 根目录无效（需含 plugins/ 与 config/ 子目录）: $mcdr_root"
     check_mcdr_dep_plugins "$mcdr_root/plugins"
 
+    # 旧版插件 id 为 htcmc_auth → 先迁移（搬 config + 删旧目录，避免与新 pch_system 双注册 !!PCH）
+    migrate_legacy_plugin_name "$mcdr_root"
+
     # 拷贝插件（install 用 --delete 清旧残留）
     if command -v rsync >/dev/null 2>&1; then
         rsync -a --delete \
             --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' --exclude='.pytest_cache' \
-            McdrPlugin/htcmc_auth/ "$mcdr_root/plugins/htcmc_auth/"
+            McdrPlugin/pch_system/ "$mcdr_root/plugins/pch_system/"
     else
-        rm -rf "$mcdr_root/plugins/htcmc_auth"
-        cp -r McdrPlugin/htcmc_auth "$mcdr_root/plugins/htcmc_auth"
-        find "$mcdr_root/plugins/htcmc_auth" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
-        find "$mcdr_root/plugins/htcmc_auth" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
+        rm -rf "$mcdr_root/plugins/pch_system"
+        cp -r McdrPlugin/pch_system "$mcdr_root/plugins/pch_system"
+        find "$mcdr_root/plugins/pch_system" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$mcdr_root/plugins/pch_system" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
         log_warn "无 rsync，已用 cp -r（可能残留 __pycache__）"
     fi
-    log_info "插件已拷贝: $mcdr_root/plugins/htcmc_auth/"
+    log_info "插件已拷贝: $mcdr_root/plugins/pch_system/"
 
-    # 写 config/htcmc_auth/config.json（api_url 按拓扑推断，token 强制复用 .env）
-    local cfg_dir="$mcdr_root/config/htcmc_auth"
+    # 写 config/pch_system/config.json（api_url 按拓扑推断，token 强制复用 .env）
+    local cfg_dir="$mcdr_root/config/pch_system"
     local cfg="$cfg_dir/config.json"
     mkdir -p "$cfg_dir"
     local api_url svc_token
@@ -305,11 +308,11 @@ deploy_mcdr_plugin() {
         if command -v jq >/dev/null 2>&1; then
             jq --arg api "$api_url" --arg tok "$svc_token" \
                 '. + {api_url:$api, service_token:$tok}' \
-                McdrPlugin/htcmc_auth/config.json.example > "$cfg"
+                McdrPlugin/pch_system/config.json.example > "$cfg"
         else
             python3 -c "
 import json,sys
-d=json.load(open('McdrPlugin/htcmc_auth/config.json.example'))
+d=json.load(open('McdrPlugin/pch_system/config.json.example'))
 d['api_url']=sys.argv[1]; d['service_token']=sys.argv[2]
 json.dump(d,open('$cfg','w'),ensure_ascii=False,indent=2)
 " "$api_url" "$svc_token"
@@ -319,7 +322,7 @@ json.dump(d,open('$cfg','w'),ensure_ascii=False,indent=2)
 
     cat >&2 <<EOF
 $(log_warn "请在游戏内/MCDR 控制台执行热重载（脚本无法可靠注入）:")
-    !!MCDR plugin reload htcmc_auth
+    !!MCDR plugin reload pch_system
 EOF
     MCDR_DEPLOYED_ROOT=$mcdr_root
     MCDR_DEPLOYED_API_URL=$api_url
@@ -349,14 +352,14 @@ save_state_and_summary() {
         log_info "前端产物:   Frontend/dist/（web 未启用，自管 nginx 托管 + 反代 /api 到 :8000，见 Scripts/README.md §10）"
     fi
     [[ -n "${MCDR_DEPLOYED_ROOT:-}" ]] && {
-        log_info "插件已部署: ${MCDR_DEPLOYED_ROOT}/plugins/htcmc_auth/"
-        log_info "插件配置:   ${MCDR_DEPLOYED_ROOT}/config/htcmc_auth/config.json"
+        log_info "插件已部署: ${MCDR_DEPLOYED_ROOT}/plugins/pch_system/"
+        log_info "插件配置:   ${MCDR_DEPLOYED_ROOT}/config/pch_system/config.json"
     }
     echo
     log_warn "待办："
     [[ $RELOGIN_REQUIRED -eq 1 ]] && log_warn "  - 运行 newgrp docker 或重新登录，才能免 sudo 使用 docker"
-    [[ -z "${MCDR_DEPLOYED_ROOT:-}" && $NO_MCDR -eq 0 ]] && log_warn "  - 部署 htcmc_auth 到你的 MCDR（或重跑 install.sh 带 --mcdr-root）"
-    log_warn "  - 在游戏内执行: !!MCDR plugin reload htcmc_auth"
+    [[ -z "${MCDR_DEPLOYED_ROOT:-}" && $NO_MCDR -eq 0 ]] && log_warn "  - 部署 pch_system 到你的 MCDR（或重跑 install.sh 带 --mcdr-root）"
+    log_warn "  - 在游戏内执行: !!MCDR plugin reload pch_system"
     log_warn "  - 确认依赖插件已装: uuid_api_remake + minecraft_data_api"
     [[ -f .env ]] && log_warn "  - 检查 .env：WEB_BASE_URL 需为玩家可访问的前端地址（单机 + web 默认 5173 已对齐；用域名/反代则改成真实 URL 后 docker compose restart backend）"
     log_info "======================================================================================"

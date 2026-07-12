@@ -33,7 +33,7 @@ def create_app() -> FastAPI:
 
     @app.get("/info")
     async def info() -> dict:
-        # 公开无鉴权（同 /healthz）。供 htcmc_auth 插件 on_load 自检嗅探后端可达性 +
+        # 公开无鉴权（同 /healthz）。供 pch_system 插件 on_load 自检嗅探后端可达性 +
         # 前端地址（web_base_url）+ 前端可达性（web_online）+ 前端版本（web_version）。
         # web_online/web_version 由后端探 web_probe_url/version.json（同 compose 网络探服务名）。
         web = await probe_web(settings.web_probe_url)

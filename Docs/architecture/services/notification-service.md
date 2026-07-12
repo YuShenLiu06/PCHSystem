@@ -243,7 +243,7 @@ class Notifier(Protocol):
 | 阶段 | 动作 |
 |---|---|
 | **在线集合维护** | `on_player_joined` 加入集合 / `on_player_left` 移出；插件加载时 `server.rcon_query('list')` 初始化兜底 |
-| **后台轮询** | `@new_thread('htcmc_sheet_notifier')` 循环，每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll`（默认 20） |
+| **后台轮询** | `@new_thread('pch_sheet_notifier')` 循环，每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll`（默认 20） |
 | **逐条投递** | `server.tell(player, format_notification(n))` |
 | **ack** | 投递成功后 `POST /notifications/ack {player_uuid, ids}` |
 | **上线补推** | `on_player_joined` 立即为该玩家拉一次 pending（离线期间堆积的补推） |

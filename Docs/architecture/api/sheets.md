@@ -332,7 +332,7 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 
 ## 11. MCDR `!!PCH sheet` 命令映射表
 
-> 命令树收敛到现有 `!!PCH` 前缀（与 `McdrPlugin/htcmc_auth/htcmc_auth/__init__.py` 一致）。每个命令回调内 `player_uuid = uuid_api_remake.get_uuid(player_name)`（RS-8）→ 作为 `X-Player-UUID` + `X-Service-Token` 头调后端。错误码 403/404/409 → 友好中文文本（`server.tell`）；哨兵（`__RATE_LIMITED__`/`__REMOVED__`/`None`）必须回执玩家（RS-11）。
+> 命令树收敛到现有 `!!PCH` 前缀（与 `McdrPlugin/pch_system/pch_system/__init__.py` 一致）。每个命令回调内 `player_uuid = uuid_api_remake.get_uuid(player_name)`（RS-8）→ 作为 `X-Player-UUID` + `X-Service-Token` 头调后端。错误码 403/404/409 → 友好中文文本（`server.tell`）；哨兵（`__RATE_LIMITED__`/`__REMOVED__`/`None`）必须回执玩家（RS-11）。
 
 | 命令 | 角色 | HTTP 端点 | 说明 |
 |---|---|---|---|

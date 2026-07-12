@@ -15,9 +15,9 @@ from typing import Optional, Union
 
 import requests
 
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 
-_log = logging.getLogger("htcmc_auth.sheet_client")
+_log = logging.getLogger("pch_system.sheet_client")
 
 # 哨兵字符串（与 client.py 一致，RS-11：必须回执玩家）
 RATE_LIMITED = "__RATE_LIMITED__"
@@ -36,7 +36,7 @@ class HttpError:
 SheetOutcome = Union[dict, list, str, HttpError, None]
 
 
-def _base_headers(cfg: HtcmcAuthConfig, player_uuid: str) -> dict:
+def _base_headers(cfg: PchSystemConfig, player_uuid: str) -> dict:
     """sheets 写通道鉴权头：service token + 代玩家 UUID（无 Authorization）。"""
     return {
         "X-Service-Token": cfg.service_token,
@@ -46,7 +46,7 @@ def _base_headers(cfg: HtcmcAuthConfig, player_uuid: str) -> dict:
 
 
 def _request(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     method: str,
     path: str,
     player_uuid: str,
@@ -93,7 +93,7 @@ def _request(
 
 # === sheets 表级 ===
 
-def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False, status: str | None = None) -> SheetOutcome:
+def list_sheets(cfg: PchSystemConfig, player_uuid: str, mine: bool = False, status: str | None = None) -> SheetOutcome:
     """GET /sheets[?owner=me][&status=...] → list[SheetSummary]。"""
     params = {}
     if mine:
@@ -103,34 +103,34 @@ def list_sheets(cfg: HtcmcAuthConfig, player_uuid: str, mine: bool = False, stat
     return _request(cfg, "GET", "/sheets", player_uuid, params=params or None)
 
 
-def view_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, search: str | None = None) -> SheetOutcome:
+def view_sheet(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, search: str | None = None) -> SheetOutcome:
     """GET /sheets/{sheet_id}[?q=<search>] → SheetDetail（含 rows，后端已按查看玩家排序 + 过滤）。"""
     params = {"q": search} if search else None
     return _request(cfg, "GET", f"/sheets/{sheet_id}", player_uuid, params=params)
 
 
-def get_last_sheet(cfg: HtcmcAuthConfig, player_uuid: str) -> SheetOutcome:
+def get_last_sheet(cfg: PchSystemConfig, player_uuid: str) -> SheetOutcome:
     """GET /me/last_sheet → {"sheet_id": int|null}。"""
     return _request(cfg, "GET", "/me/last_sheet", player_uuid)
 
 
-def create_sheet(cfg: HtcmcAuthConfig, player_uuid: str, title: str) -> SheetOutcome:
+def create_sheet(cfg: PchSystemConfig, player_uuid: str, title: str) -> SheetOutcome:
     """POST /sheets {title} → SheetDetail。"""
     return _request(cfg, "POST", "/sheets", player_uuid, json_body={"title": title})
 
 
-def rename_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, title: str) -> SheetOutcome:
+def rename_sheet(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, title: str) -> SheetOutcome:
     """PATCH /sheets/{sheet_id} {title} → SheetDetail。"""
     return _request(cfg, "PATCH", f"/sheets/{sheet_id}", player_uuid, json_body={"title": title})
 
 
-def delete_sheet(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
+def delete_sheet(cfg: PchSystemConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
     """DELETE /sheets/{sheet_id} → 204（成功返回 {}）。"""
     return _request(cfg, "DELETE", f"/sheets/{sheet_id}", player_uuid)
 
 
 def advance_sheet(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     player_uuid: str,
     sheet_id: int,
     to: Optional[str] = None,
@@ -150,7 +150,7 @@ def advance_sheet(
 # === sheets 行级 ===
 
 def upsert_row(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     player_uuid: str,
     sheet_id: int,
     item: Optional[str],
@@ -200,18 +200,18 @@ def upsert_row(
     )
 
 
-def delete_row(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
+def delete_row(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
     """DELETE /sheets/{sheet_id}/rows/{row_id} → 204。"""
     return _request(cfg, "DELETE", f"/sheets/{sheet_id}/rows/{row_id}", player_uuid)
 
 
-def claim_row(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
+def claim_row(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
     """POST /sheets/{sheet_id}/rows/{row_id}/claim → RowDetail。"""
     return _request(cfg, "POST", f"/sheets/{sheet_id}/rows/{row_id}/claim", player_uuid)
 
 
 def deliver_row(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     player_uuid: str,
     sheet_id: int,
     row_id: int,
@@ -232,7 +232,7 @@ def deliver_row(
 
 
 def contribute_row(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     player_uuid: str,
     sheet_id: int,
     row_id: int,
@@ -254,7 +254,7 @@ def contribute_row(
 
 
 def set_row_progress(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     player_uuid: str,
     sheet_id: int,
     row_id: int,
@@ -274,12 +274,12 @@ def set_row_progress(
     )
 
 
-def release_row(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
+def release_row(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
     """POST /sheets/{sheet_id}/rows/{row_id}/release → RowDetail。"""
     return _request(cfg, "POST", f"/sheets/{sheet_id}/rows/{row_id}/release", player_uuid)
 
 
-def reject_row(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
+def reject_row(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, row_id: int) -> SheetOutcome:
     """POST /sheets/{sheet_id}/rows/{row_id}/reject → RowDetail。"""
     return _request(cfg, "POST", f"/sheets/{sheet_id}/rows/{row_id}/reject", player_uuid)
 
@@ -287,7 +287,7 @@ def reject_row(cfg: HtcmcAuthConfig, player_uuid: str, sheet_id: int, row_id: in
 # === notifications ===
 
 def pending_notifications(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     player_uuid: str,
     limit: int,
 ) -> SheetOutcome:
@@ -301,7 +301,7 @@ def pending_notifications(
     )
 
 
-def ack_notifications(cfg: HtcmcAuthConfig, player_uuid: str, ids: list) -> SheetOutcome:
+def ack_notifications(cfg: PchSystemConfig, player_uuid: str, ids: list) -> SheetOutcome:
     """POST /notifications/ack {player_uuid, ids} → 成功返回 {} 或 {acked: n}。
 
     body 必须带 player_uuid（后端 NotificationAckRequest 必填，用于归属校验防越权 ack）。

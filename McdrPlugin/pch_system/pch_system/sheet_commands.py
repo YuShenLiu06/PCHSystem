@@ -20,7 +20,7 @@ from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
 from . import sheet_client, scanner
 from .view_args import paginate_rows, parse_view_args
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 from .qty import format_qty_safe
 from .messages import (
     SHEET_SERVICE_DOWN,
@@ -88,10 +88,10 @@ from .messages import (
 )
 
 # 由 __init__.py 在 on_load 中注入
-CONFIG: HtcmcAuthConfig = HtcmcAuthConfig()
+CONFIG: PchSystemConfig = PchSystemConfig()
 
 
-def configure(cfg: HtcmcAuthConfig) -> None:
+def configure(cfg: PchSystemConfig) -> None:
     global CONFIG
     CONFIG = cfg
 
@@ -350,7 +350,7 @@ def _sheet_list_flags(src, ctx):
 
 
 def _sheet_list_impl(server, player_name, *, mine: bool, status: str | None):
-    @new_thread('htcmc_sheet_list')
+    @new_thread('pch_sheet_list')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -475,7 +475,7 @@ def _sheet_view(src, ctx):
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
 
-    @new_thread('htcmc_sheet_view')
+    @new_thread('pch_sheet_view')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -503,7 +503,7 @@ def _sheet_view_args(src, ctx):
         server.tell(player_name, SHEET_VIEW_ARG_UNKNOWN.format(token=unknown))
         return
 
-    @new_thread('htcmc_sheet_view')
+    @new_thread('pch_sheet_view')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -522,7 +522,7 @@ def _sheet_quick(src, ctx):
         return
     server = src.get_server()
 
-    @new_thread('htcmc_sheet_quick')
+    @new_thread('pch_sheet_quick')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -550,7 +550,7 @@ def _sheet_create(src, ctx):
     server = src.get_server()
     title = ctx["title"]
 
-    @new_thread('htcmc_sheet_create')
+    @new_thread('pch_sheet_create')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -575,7 +575,7 @@ def _sheet_rename(src, ctx):
     sheet_id = ctx["sheet_id"]
     title = ctx["title"]
 
-    @new_thread('htcmc_sheet_rename')
+    @new_thread('pch_sheet_rename')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -599,7 +599,7 @@ def _sheet_delete(src, ctx):
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
 
-    @new_thread('htcmc_sheet_delete')
+    @new_thread('pch_sheet_delete')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -651,7 +651,7 @@ def _sheet_advance_impl(src, ctx, *, to):
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
 
-    @new_thread('htcmc_sheet_advance')
+    @new_thread('pch_sheet_advance')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -712,7 +712,7 @@ def _sheet_upsert(src, ctx):
     mode = 1 if ctx.get("mode") == "progress" else 0
     sort = ctx.get("sort", 0)
 
-    @new_thread('htcmc_sheet_upsert')
+    @new_thread('pch_sheet_upsert')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -749,7 +749,7 @@ def _sheet_set(src, ctx):
     need = ctx["need"]
     sort = ctx.get("sort")  # Integer 节点存入 ctx；缺省 None → 不改
 
-    @new_thread('htcmc_sheet_set')
+    @new_thread('pch_sheet_set')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -782,7 +782,7 @@ def _sheet_delrow(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
 
-    @new_thread('htcmc_sheet_delrow')
+    @new_thread('pch_sheet_delrow')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -823,7 +823,7 @@ def _sheet_addsub(src, ctx, *, mode=None):
         return
     sort = ctx.get("sort", 0)
 
-    @new_thread('htcmc_sheet_addsub')
+    @new_thread('pch_sheet_addsub')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -874,7 +874,7 @@ def _sheet_delsub(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
 
-    @new_thread('htcmc_sheet_delsub')
+    @new_thread('pch_sheet_delsub')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -911,7 +911,7 @@ def _sheet_setsub(src, ctx, *, mode=None):
         return
     sort = ctx.get("sort")  # Integer 节点存入 ctx；缺省 None → 不改
 
-    @new_thread('htcmc_sheet_setsub')
+    @new_thread('pch_sheet_setsub')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -946,7 +946,7 @@ def _sheet_claim(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
 
-    @new_thread('htcmc_sheet_claim')
+    @new_thread('pch_sheet_claim')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -976,7 +976,7 @@ def _sheet_deliver(src, ctx):
     row_id = ctx["row_id"]
     qty = ctx["qty"]
 
-    @new_thread('htcmc_sheet_deliver')
+    @new_thread('pch_sheet_deliver')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1017,7 +1017,7 @@ def _sheet_progress(src, ctx):
     row_id = ctx["row_id"]
     qty = ctx["delivered_qty"]
 
-    @new_thread('htcmc_sheet_progress')
+    @new_thread('pch_sheet_progress')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1056,7 +1056,7 @@ def _sheet_done(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
 
-    @new_thread('htcmc_sheet_done')
+    @new_thread('pch_sheet_done')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1099,7 +1099,7 @@ def _sheet_release(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
 
-    @new_thread('htcmc_sheet_release')
+    @new_thread('pch_sheet_release')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1124,7 +1124,7 @@ def _sheet_reject(src, ctx):
     sheet_id = ctx["sheet_id"]
     row_id = ctx["row_id"]
 
-    @new_thread('htcmc_sheet_reject')
+    @new_thread('pch_sheet_reject')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1148,7 +1148,7 @@ def _sheet_notify_list(src, ctx):
         return
     server = src.get_server()
 
-    @new_thread('htcmc_sheet_notify_list')
+    @new_thread('pch_sheet_notify_list')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1276,7 +1276,7 @@ def _sheet_submit_oneclick(src, ctx):
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
 
-    @new_thread('htcmc_sheet_submit')
+    @new_thread('pch_sheet_submit')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1295,7 +1295,7 @@ def _submit_quick(src, ctx):
         return
     server = src.get_server()
 
-    @new_thread('htcmc_sheet_submit')
+    @new_thread('pch_sheet_submit')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1327,7 +1327,7 @@ def _sheet_addhand(src, ctx):
     mode = 1 if ctx.get("mode") == "progress" else 0
     sort = ctx.get("sort", 0)
 
-    @new_thread('htcmc_sheet_addhand')
+    @new_thread('pch_sheet_addhand')
     def _do():
         try:
             player_uuid = uuid_api_remake.get_uuid(player_name)
@@ -1376,7 +1376,7 @@ def _sheet_setreg(src, ctx):
     row_id = ctx["row_id"]
     registry_id = ctx.get("registry_id")
 
-    @new_thread('htcmc_sheet_setreg')
+    @new_thread('pch_sheet_setreg')
     def _do():
         nonlocal registry_id
         try:

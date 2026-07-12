@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 import tests  # noqa: F401,E402
 
-from htcmc_auth.messages import (  # noqa: E402
+from pch_system.messages import (  # noqa: E402
     format_notification,
     format_row_line,
     rtext_button,
@@ -16,7 +16,7 @@ from htcmc_auth.messages import (  # noqa: E402
     format_section_separator,
     _status_color,
 )
-from htcmc_auth.text_layout import CHAT_LINE_PX, text_width_px  # noqa: E402
+from pch_system.text_layout import CHAT_LINE_PX, text_width_px  # noqa: E402
 
 
 def _click_values(rtext_list):

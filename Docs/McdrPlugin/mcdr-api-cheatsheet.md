@@ -730,7 +730,7 @@ def load_config_simple(
 from mcdreforged.api.all import *
 from mcdreforged.api.utils import Serializable
 
-class HtcmcAuthConfig(Serializable):
+class PchSystemConfig(Serializable):
     # 字段名 = 配置键（snake_case，遵循项目命名规范）
     api_url: str = 'http://backend:8000'
     service_token: str = ''
@@ -740,7 +740,7 @@ class HtcmcAuthConfig(Serializable):
     request_timeout: float = 10.0
     retry_times: int = 3
 
-    def validate(self) -> 'HtcmcAuthConfig':
+    def validate(self) -> 'PchSystemConfig':
         # 项目规范：在系统边界做输入校验
         if self.request_timeout <= 0:
             raise ValueError('request_timeout must be positive')
@@ -748,17 +748,17 @@ class HtcmcAuthConfig(Serializable):
             raise ValueError('retry_times must be >= 0')
         return self
 
-CONFIG: HtcmcAuthConfig
+CONFIG: PchSystemConfig
 
 def on_load(server: PluginServerInterface, prev):
     global CONFIG
     CONFIG = server.load_config_simple(
-        target_class=HtcmcAuthConfig,
+        target_class=PchSystemConfig,
     ).validate()
     server.logger.info(f'配置加载完成，API = {CONFIG.api_url}')
 ```
 
-> 配套文件：`config/htcmc_auth/config.json`（实际路径由 `in_data_folder=True` 决定，参见项目 `TestServer/config/htcmc_auth_config.json`）
+> 配套文件：`config/pch_system/config.json`（实际路径由 `in_data_folder=True` 决定，参见项目 `TestServer/config/pch_system_config.json`）
 
 ### 写回配置
 

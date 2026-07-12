@@ -7,12 +7,12 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(__file__))
 import tests  # noqa: F401,E402
 
-import htcmc_auth.notifier as notifier  # noqa: E402
-from htcmc_auth.config import HtcmcAuthConfig  # noqa: E402
+import pch_system.notifier as notifier  # noqa: E402
+from pch_system.config import PchSystemConfig  # noqa: E402
 
 
 def _cfg():
-    c = HtcmcAuthConfig()
+    c = PchSystemConfig()
     c.notify_poll_interval_seconds = 1.0
     c.notify_max_per_poll = 5
     return c

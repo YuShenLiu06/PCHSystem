@@ -98,7 +98,7 @@ curl http://localhost:8000/healthz
 
 ### 生产部署（一键脚本）
 
-面向服主的一键安装/更新脚本（自动检测/安装 Docker、国内网络镜像自适应、智能重建矩阵、`htcmc_auth` 插件部署 + token 双写）：
+面向服主的一键安装/更新脚本（自动检测/安装 Docker、国内网络镜像自适应、智能重建矩阵、`pch_system` 插件部署 + token 双写）：
 
 ```bash
 bash Scripts/install.sh   # 首次安装（交互式，幂等）

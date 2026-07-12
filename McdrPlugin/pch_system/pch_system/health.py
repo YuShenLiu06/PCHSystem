@@ -19,10 +19,10 @@ from typing import Optional
 import requests
 from mcdreforged.api.rtext import RColor, RStyle, RText, RTextList, RAction
 
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 from .messages import rtext_link
 
-_log = logging.getLogger("htcmc_auth.health")
+_log = logging.getLogger("pch_system.health")
 
 # === 常量 ===
 
@@ -39,7 +39,7 @@ FRONTEND_DOC_URL = (
 )
 
 # 本插件 id（mcdreforged.plugin.json:id），用于 get_plugin_metadata 取自身元数据
-PLUGIN_ID = "htcmc_auth"
+PLUGIN_ID = "pch_system"
 # 元数据解析失败时回落的作者名（json:author = "YuShen"）
 PLUGIN_AUTHOR_FALLBACK = "YuShen"
 
@@ -125,7 +125,7 @@ def _is_loopback_url(url: str) -> bool:
     return host in ("localhost", "::1", "0.0.0.0") or host.startswith("127.")
 
 
-def _probe_timeout(cfg: HtcmcAuthConfig) -> float:
+def _probe_timeout(cfg: PchSystemConfig) -> float:
     return min(cfg.http_timeout_seconds, _PROBE_TIMEOUT_CAP)
 
 
@@ -152,12 +152,12 @@ def _worst(findings: list[Finding]) -> str:
 # === 探针（纯函数，mockable）===
 
 
-def is_backend_configured(cfg: HtcmcAuthConfig) -> bool:
+def is_backend_configured(cfg: PchSystemConfig) -> bool:
     """``service_token`` 已脱离默认占位 → 视为「已配置」。"""
     return bool(cfg.service_token) and cfg.service_token != DEFAULT_SERVICE_TOKEN
 
 
-def probe_backend(cfg: HtcmcAuthConfig) -> BackendStatus:
+def probe_backend(cfg: PchSystemConfig) -> BackendStatus:
     """``GET {api_url}/info``（404 回退 ``/healthz``），1 次尝试不重试，best-effort 吞异常。"""
     timeout = _probe_timeout(cfg)
     base = cfg.api_url.rstrip("/")
@@ -257,7 +257,7 @@ def resolve_plugin_meta(server) -> PluginMeta:
     return PluginMeta(version=version, author=author)
 
 
-def probe_token(cfg: HtcmcAuthConfig) -> TokenStatus:
+def probe_token(cfg: PchSystemConfig) -> TokenStatus:
     """``GET /notifications/pending?player_uuid=<nil>&limit=1`` 带 ``X-Service-Token``。
 
     后端 ``require_service_token`` 先于 ``_require_player`` 解析（FastAPI
@@ -291,7 +291,7 @@ def probe_token(cfg: HtcmcAuthConfig) -> TokenStatus:
 
 
 def classify(
-    cfg: HtcmcAuthConfig,
+    cfg: PchSystemConfig,
     plugin_meta: Optional[PluginMeta] = None,
 ) -> list[Finding]:
     """组合 插件 / 后端 / 令牌 / 前端 探针，按状态矩阵产出 findings（含应展示链接）。
@@ -306,9 +306,9 @@ def classify(
     # --- 插件（始终 ok：能跑这段就证明插件已加载；展示自身版本号便于排障对齐）---
     ver = plugin_meta.version
     if ver and ver != "unknown":
-        findings.append(Finding(severity="ok", component="plugin", message=f"htcmc_auth v{ver}"))
+        findings.append(Finding(severity="ok", component="plugin", message=f"pch_system v{ver}"))
     else:
-        findings.append(Finding(severity="ok", component="plugin", message="htcmc_auth（版本未知）"))
+        findings.append(Finding(severity="ok", component="plugin", message="pch_system（版本未知）"))
 
     configured = is_backend_configured(cfg)
     backend = probe_backend(cfg)
@@ -464,7 +464,7 @@ def format_game_report(
 # === on_load 入口（best-effort，绝不抛）===
 
 
-def run_console_check(server, cfg: HtcmcAuthConfig) -> None:
+def run_console_check(server, cfg: PchSystemConfig) -> None:
     """on_load 调用：嗅探 + 控制台日志。全 ok → info；有 warn/error → warning。
 
     外层 ``try/except`` 吞所有异常——探针失败绝不影响插件加载（reload 不炸）。

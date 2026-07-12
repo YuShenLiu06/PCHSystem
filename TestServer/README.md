@@ -1,6 +1,6 @@
 # HTCMC PCHSystem 测试服务器
 
-> 用于 V1 端到端验收：MC（1.20.1 Fabric · 离线模式） + MCDReforged + htcmc_auth 插件 → 后端 → 前端三端联通。
+> 用于 V1 端到端验收：MC（1.20.1 Fabric · 离线模式） + MCDReforged + pch_system 插件 → 后端 → 前端三端联通。
 
 ## 端口
 
@@ -12,7 +12,7 @@
 ## 镜像
 
 - 基础：`python:3.11-slim` + `openjdk-17-jre-headless`
-- pip 装 `mcdreforged>=2.14,<3`（满足 `htcmc_auth` 的依赖）
+- pip 装 `mcdreforged>=2.14,<3`（满足 `pch_system` 的依赖）
 - 加入 `pchsystem_default` 外部网络，容器内通过 `http://pchsystem-backend-1:8000` 访问后端
 
 ## 目录约定
@@ -24,13 +24,13 @@ TestServer/
 ├── entrypoint.sh                 # 自动下载 Fabric launcher、生成 eula、启动 MCDR
 ├── config/
 │   ├── mcdr_config.yml           # MCDR: vanilla_handler + UTF-8（Fabric 专用）
-│   └── htcmc_auth_config.json    # 覆盖 htcmc_auth 默认配置，指向容器网络内 backend
+│   └── pch_system_config.json    # 覆盖 pch_system 默认配置，指向容器网络内 backend
 ├── plugins/
-│   └── uuid_api_remake.mcdr      # htcmc_auth 的运行时依赖
+│   └── uuid_api_remake.mcdr      # pch_system 的运行时依赖
 └── server/                       # 持久化卷（fabric jar + world + libraries，gitignored）
 ```
 
-`htcmc_auth` 源码目录通过 docker volume 直接挂载（`../McdrPlugin/htcmc_auth`），改插件源码后 `!!MCDR plugin reload htcmc_auth` 即可热更新，**无需重建镜像**。
+`pch_system` 源码目录通过 docker volume 直接挂载（`../McdrPlugin/pch_system`），改插件源码后 `!!MCDR plugin reload pch_system` 即可热更新，**无需重建镜像**。
 
 ## 启动
 
@@ -65,9 +65,9 @@ docker attach pchsystem-mc-test-1
 docker exec -i pchsystem-mc-test-1 rcon-cli 'say hello'  # 需装 rcon-cli，本镜像未装
 docker exec pchsystem-mc-test-1 bash
 
-# 热重载 htcmc_auth（改完 ../McdrPlugin/htcmc_auth/ 下源码后）
-docker exec -i pchsystem-mc-test-1 bash -c "echo '!!MCDR plugin reload htcmc_auth' | mcdreforged start --no-server-stop" 2>/dev/null \
-  || echo "改用 attach 进入控制台输入 !!MCDR plugin reload htcmc_auth"
+# 热重载 pch_system（改完 ../McdrPlugin/pch_system/ 下源码后）
+docker exec -i pchsystem-mc-test-1 bash -c "echo '!!MCDR plugin reload pch_system' | mcdreforged start --no-server-stop" 2>/dev/null \
+  || echo "改用 attach 进入控制台输入 !!MCDR plugin reload pch_system"
 
 # 看后端日志确认 token 请求
 docker logs -f pchsystem-backend-1

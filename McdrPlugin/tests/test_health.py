@@ -12,13 +12,13 @@ import tests  # noqa: F401  触发 stubs 安装与 sys.path 配置
 
 import requests
 
-import htcmc_auth.health as health
-from htcmc_auth.config import HtcmcAuthConfig
+import pch_system.health as health
+from pch_system.config import PchSystemConfig
 
 
 def _cfg(*, api_url="http://backend:8000", token="change_me_service_token",
          timeout=2.0, retries=0):
-    c = HtcmcAuthConfig()
+    c = PchSystemConfig()
     c.api_url = api_url
     c.service_token = token
     c.http_timeout_seconds = timeout
@@ -374,13 +374,13 @@ class RenderTest(unittest.TestCase):
 
     def test_game_report_plain_text(self):
         findings = [
-            health.Finding(severity="ok", component="plugin", message="htcmc_auth v0.6.1"),
+            health.Finding(severity="ok", component="plugin", message="pch_system v0.6.1"),
             health.Finding(severity="ok", component="backend", message="后端在线 v0.6.0"),
             health.Finding(severity="error", component="frontend", message="前端不可达",
                            links=(("前端部署文档", health.FRONTEND_DOC_URL),)),
         ]
         text = health.format_game_report(findings).to_plain_text()
-        self.assertIn("htcmc_auth v0.6.1", text)
+        self.assertIn("pch_system v0.6.1", text)
         self.assertIn("后端在线", text)
         self.assertIn("前端不可达", text)
         self.assertIn("[前端部署文档]", text)

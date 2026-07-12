@@ -5,7 +5,7 @@ from mcdreforged.api.command import Literal, Text, Integer, Float, QuotableText,
 
 from . import health, notifier
 from .commands import configure, _pch_root, _not_impl, _login, _status
-from .config import HtcmcAuthConfig
+from .config import PchSystemConfig
 from .sheet_commands import (
     configure as sheet_configure,
     _sheet_root,
@@ -39,7 +39,7 @@ from .sheet_commands import (
     _sheet_setreg,
 )
 
-CONFIG: HtcmcAuthConfig = HtcmcAuthConfig()
+CONFIG: PchSystemConfig = PchSystemConfig()
 
 # notifier 后台线程停止位：每次 on_load 新建一个，避免 reload 时老循环未退出
 # 期间与新循环双循环重复投递（on_unload set 老实例，on_load 用全新实例启动）。
@@ -48,7 +48,7 @@ _notifier_stop: threading.Event = threading.Event()
 
 def on_load(serv: PluginServerInterface, prev):
     global CONFIG, _notifier_stop
-    CONFIG = serv.load_config_simple("config.json", target_class=HtcmcAuthConfig)
+    CONFIG = serv.load_config_simple("config.json", target_class=PchSystemConfig)
     configure(CONFIG)
     sheet_configure(CONFIG)
     notifier.configure(CONFIG)
@@ -67,7 +67,7 @@ def on_load(serv: PluginServerInterface, prev):
     _start_notifier(serv)
     # 前后端可达性自检（RS-6：@new_thread 后台线程，best-effort 不阻塞 on_load）。
     _start_health_check(serv)
-    serv.logger.info("HTCMC Auth loaded (commands under !!PCH, sheets + notifier)")
+    serv.logger.info("PCH System loaded (commands under !!PCH, sheets + notifier)")
     # 打印实际生效的轮询参数，便于部署后从日志确认（防 example/默认值漂移被静默吞掉）
     serv.logger.info(
         "notifier poll interval = %ss (max_per_poll = %s)",
@@ -84,7 +84,7 @@ def on_unload(serv: PluginServerInterface):
 def _start_notifier(serv: PluginServerInterface):
     from mcdreforged.api.decorator import new_thread
 
-    @new_thread('htcmc_sheet_notifier')
+    @new_thread('pch_sheet_notifier')
     def _loop():
         notifier.run(serv, CONFIG, _notifier_stop)
 
@@ -96,7 +96,7 @@ def _start_health_check(serv: PluginServerInterface):
     # 镜像 _start_notifier；探针吞所有异常，reload 不炸。
     from mcdreforged.api.decorator import new_thread
 
-    @new_thread('htcmc_health_check')
+    @new_thread('pch_health_check')
     def _check():
         health.run_console_check(serv, CONFIG)
 

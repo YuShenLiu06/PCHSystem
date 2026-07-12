@@ -267,30 +267,32 @@ update_mcdr() {
 
     local changes
     changes=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
-    if printf '%s\n' "$changes" | grep -qE '^McdrPlugin/htcmc_auth/'; then
-        log_step "增量更新 htcmc_auth 插件（保守，不删玩家手改）"
+    if printf '%s\n' "$changes" | grep -qE '^McdrPlugin/pch_system/'; then
+        log_step "增量更新 pch_system 插件（保守，不删玩家手改）"
+        # 旧版插件 id 为 htcmc_auth → 先迁移（搬 config + 删旧目录，避免与新 pch_system 双注册 !!PCH）
+        migrate_legacy_plugin_name "$mcdr_root"
         if command -v rsync >/dev/null 2>&1; then
             rsync -a \
                 --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' --exclude='.pytest_cache' \
-                McdrPlugin/htcmc_auth/ "$mcdr_root/plugins/htcmc_auth/"
+                McdrPlugin/pch_system/ "$mcdr_root/plugins/pch_system/"
         else
-            cp -r McdrPlugin/htcmc_auth/* "$mcdr_root/plugins/htcmc_auth/" 2>/dev/null || true
-            find "$mcdr_root/plugins/htcmc_auth" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+            cp -r McdrPlugin/pch_system/* "$mcdr_root/plugins/pch_system/" 2>/dev/null || true
+            find "$mcdr_root/plugins/pch_system" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
         fi
-        log_info "插件已增量同步: $mcdr_root/plugins/htcmc_auth/"
+        log_info "插件已增量同步: $mcdr_root/plugins/pch_system/"
         # mcdreforged.plugin.json 的任何字段（version/dependencies/name/description/author/link/entrypoint）
         # 都随 !!MCDR plugin reload 一并重新读取，并由 DependencyWalker 重校 dependencies
         # —— 无需重启 MCDR（reload = unload→load→重校依赖）。仅当 dependencies 收紧到不满足时，
         # reload 会自动卸载插件（重启也救不了，需先满足依赖）。源码（.py）变更同理只需 reload。
-        log_warn "请在游戏内执行: !!MCDR plugin reload htcmc_auth"
+        log_warn "请在游戏内执行: !!MCDR plugin reload pch_system"
     else
-        log_info "无 htcmc_auth 插件变更"
+        log_info "无 pch_system 插件变更"
     fi
 
     # token 双写一致性校验（补丁 B：不照抄容器服务名 + token 必须与 .env 同值）
     local env_tok cfg_tok cfg_path
     env_tok=$(env_get MCDR_SERVICE_TOKEN)
-    cfg_path="$mcdr_root/config/htcmc_auth/config.json"
+    cfg_path="$mcdr_root/config/pch_system/config.json"
     if [[ -n "$env_tok" && -f "$cfg_path" ]]; then
         cfg_tok=$(jq -r .service_token "$cfg_path" 2>/dev/null || echo "")
         if [[ -z "$cfg_tok" ]]; then
@@ -298,7 +300,7 @@ update_mcdr() {
         fi
         if [[ -n "$cfg_tok" && "$env_tok" != "$cfg_tok" ]]; then
             log_warn "token 不一致：.env MCDR_SERVICE_TOKEN ≠ 插件 config.service_token。请手动同步（脚本不擅改你的 config）："
-            log_warn "  编辑 $cfg_path 的 service_token，改为与 .env 一致，然后 !!MCDR plugin reload htcmc_auth"
+            log_warn "  编辑 $cfg_path 的 service_token，改为与 .env 一致，然后 !!MCDR plugin reload pch_system"
         fi
     fi
 }

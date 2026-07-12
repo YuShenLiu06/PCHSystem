@@ -24,10 +24,10 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(__file__))
 import tests  # noqa: F401,E402  触发 stubs 安装与 sys.path 配置
 
-import htcmc_auth.sheet_commands as sc  # noqa: E402
-import htcmc_auth.sheet_client as sheet_client  # noqa: E402
-from htcmc_auth.config import HtcmcAuthConfig  # noqa: E402
-from htcmc_auth.messages import (  # noqa: E402
+import pch_system.sheet_commands as sc  # noqa: E402
+import pch_system.sheet_client as sheet_client  # noqa: E402
+from pch_system.config import PchSystemConfig  # noqa: E402
+from pch_system.messages import (  # noqa: E402
     format_phase_label,
     format_owner_footer,
     SHEET_OK_ADVANCED_CONSTRUCTING,
@@ -80,7 +80,7 @@ def _click_values(obj):
 # === advance_sheet client 单测 ===
 
 def _cfg():
-    c = HtcmcAuthConfig()
+    c = PchSystemConfig()
     c.api_url = "http://backend:8000"
     c.service_token = "tok"
     c.http_timeout_seconds = 1.0
