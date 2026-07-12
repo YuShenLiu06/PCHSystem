@@ -1,168 +1,104 @@
 # HTCMC Project Contribution & Honor System
 
-> 面向白名单生电社区服的**项目制工程贡献与荣誉体系**系统。
-> 三端分离（Web 端 · 游戏端 · 后端），纯荣誉激励，流程全自动，运营轻量化。
+> 面向白名单生电社区服的**项目制工程贡献与荣誉体系**。把「工程项目协作 + 积分激励」搬进 Minecraft：玩家在游戏里协作完成工程项目，系统跟踪每位参与者的贡献，完结后归档沉淀，（将来）按贡献结算积分与称号。流程全自动。
+
+> ⚠️ **仍在开发中**：当前已交付项目协作 / 归档 / 通知 / 一键部署；积分、称号等核心玩法尚未落地。见[开发状态](#开发状态)。
 
 ---
 
-## 项目定位
+## 功能特性
 
-| 维度 | 内容 |
-|---|---|
-| 服务端 | Minecraft · **Fabric + Create + Carpet**（离线模式） |
-| 玩法核心 | 项目制协作 · 黄皮子积分体系 · 指数称号 · 名人堂归档 |
-| 设计原则 | 风控前置入服 · 流程全自动化 · 运营轻量化 |
-| 激励属性 | **纯荣誉**（积分不可自由转移、不可交易） |
+### 特性
 
-**三端职责**（Web / 游戏 / 后端）：
+- **后端分离**：游戏内端与后端完全分离，后端可独立部署，游戏内端仅作为客户端。同时由于后端的原理，理论上支持**跨服 / 跨平台**（Java / Bedrock）协作。
+- **独立前端**：后端提供 Web 前端，游戏内端仅作为客户端。玩家可在 Web 端查看项目进度、编辑材料清单、上传投影 / 蓝图等。可以在不进入游戏的情况系啊进行查看进度以及协作。同时也支持在MCDR服务挂掉的时候也提供服务。
 
-- **Web 端（Vue3 + Element Plus）**：浏览器后台——项目配置、材料清单上传、积分结算查询、权限管控、进度监控。
-- **游戏端（MCDR 插件 + MC 服务端）**：游戏内命令菜单、箱子批量提交、UUID 推导、称号实时生效；经 HTTP API 与后端通信。
-- **后端（FastAPI + PostgreSQL + wiki.js）**：唯一数据拥有者——积分引擎、身份与权限、项目与材料清单、wiki git 双向同步、风控告警，全部集中于此。
+### 功能（已实现）
 
----
+- **游戏内登录后台**：`!!PCH login` 一键生成登录链接，点击直接进入 web 页面方便操作
+- **项目协作（在线表格）**：完整的项目材料清单协作——认领材料、多人累计上交、交付确认、打回返工、解除锁定，Web 端与游戏端**对等操作**
+    - 一键提交：支持一键扫描背包（支持潜影盒内物品）上报进度。
+    - 投影 / 蓝图一键建表：上传 `.litematic` 投影或机械动力 `.nbt` 蓝图，自动解析方块、翻译成中文名、生成材料清单（支持原版与 Create 模组物品）（仅 web 端支持）
+    - 子物品：一键通过倍数（支持小数）来直接生成子一级的合成物品的清单
+    - 快捷命令：游戏内大量命令已经通过可点击的方式来达到便携化，尽可能的减少手打命令的状况
+    - 智能数量换算：自动将数量换算成可读性更高的 个/组/盒 （正在考虑加入箱盒）
+    - 游戏内快速读取手持 `registry-id` 直接更改所需的物品 id，新增物品，去除手打物品 id 的苦恼
+    - Web 端行编辑：在线编辑材料行（名称 / 数量 / `registry-id`），与游戏端操作对等
+- **项目归档**：项目完结自动生成归档文档 + 贡献占比饼图，精确记录每位参与者的贡献
+- **通知投递**：认领 / 交付 / 打回 / 项目状况变化 / 上交等事件游戏内自动通知，离线期间的通知上线补推
 
-## 架构总览
+![一览](McdrPlugin/docs/img/sheet-mc.png)
 
-三端完全分离，后端为唯一数据拥有者，MCDR 仅作游戏内客户端，wiki.js 经 git 仓双向同步（默认关闭）。
+### 规划中（尚未实现）
 
-![architecture](Image/architecture.png)
-
-完整架构图与 ADR 见 [`Docs/architecture.md`](./Docs/architecture.md)。
-
----
-
-## 技术栈
-
-| 层 | 选型 |
-|---|---|
-| 后端 | Python · FastAPI · **模块化单体**（单库单服务，schema 隔离） |
-| 前端 | Vue 3 · Element Plus · Vite · Pinia |
-| 数据库 | PostgreSQL 16（Alembic 迁移，唯一业务库） |
-| MC 层 | MCDReforged 插件（仅游戏内客户端，不直连数据库） |
-| Wiki | wiki.js（经 git 仓双向同步，默认关闭） |
-| 部署 | Docker Compose |
-| 关键库 | [`litemapy`](https://github.com/SmylerMC/litemapy)（投影解析）、[`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)（SNBT 解析，不自研） |
+- **积分体系**：提供统一积分层，管理相关内容
+    - 提供统一积分入账层
+    - 提供统一积分出账层
+    - 提供积分排行榜
+    - 完善项目归档自动结算积分
+- **指数增长称号**：积分达标自动解锁，聊天前缀差异化，高阶全服公告
+- **项目协作（施工阶段）**：真正校验建造放置（当前施工阶段为占位）
+    - 提供实时的计分板进度显示
+- **Wiki 归档同步**：归档内容双向同步到 wiki.js
+    - 项目权限继承：将项目拥有者，admin，自动拥有该篇归档 wiki 的编辑权限
 
 ---
 
-## 仓库结构
+## 部署
 
-```
-PCHSystem/
-├── CLAUDE.md                 # 根规范（红线 R-1~R-12、命名、技术栈）
-├── CONTRIBUTING.md           # 分支 / Commit / SemVer / MCDR 发布
-├── CHANGELOG.md              # 三端变更日志
-├── TODO.md                   # 未来规划待办
-├── docker-compose.yml        # postgres + backend（wiki.js 独立部署，未入 compose）
-├── .env.example              # compose 环境变量模板
-│
-├── Docs/                     # 架构与设计文档（权威）
-│   ├── architecture.md       #   工程架构总览
-│   ├── guied.md              #   玩法设计（黄皮子积分 / 称号 / 项目制）
-│   ├── RUNBOOK.md            #   运维手册（部署 / 排错 / 回滚）
-│   ├── architecture/         #   data-model / frontend / services/*
-│   ├── Cheatsheets/          #   开发指令速查
-│   ├── Reports/              #   决策与计划报告（如 MCDR 发布策略）
-│   └── McdrPlugin/           #   MCDR API 速查
-│
-├── Backend/                  # FastAPI 模块化单体后端
-├── Frontend/                 # Vue3 后台
-├── McdrPlugin/               # MCDReforged 插件（含 README 市场入口）
-├── Scripts/                  # 一键安装 / 更新脚本（install.sh / update.sh）
-├── TestServer/               # 集成测试用 Docker 测试服
-├── Archive/                  # 项目归档产物（Markdown + 贡献图）
-└── Material/                 # 素材与参考
-```
+### 一键脚本（推荐）
 
-> 各子服务目录下各有自己的 `CLAUDE.md`（雷点 / 关键要素 / 文档索引），由 `service-claude-md` skill 维护。
-
----
-
-## 快速开始
-
-### 依赖
-
-- Docker + Docker Compose
-- Python 3.11+（MCDR 插件开发 / 后端本地调试）
-- Node.js 18+（前端开发）
-- Minecraft 服务端（由于 MCDR 良好的兼容性，我们几乎可以在所有我的世界服务端上运行）
-
-### 启动后端 + 数据库
+面向服主，一条命令完成 Docker 安装、国内网络镜像自适应、配置生成、起服务、数据库迁移、前端构建、`pch_system` 插件部署与 token 双写：
 
 ```bash
-cp .env.example .env       # 按需修改密码与密钥
-docker compose up -d        # 启动 backend + postgres
+git clone https://github.com/YuShenLiu06/PCHSystem.git
+cd PCHSystem
+bash Scripts/install.sh    # 首次安装（交互式，幂等）
+bash Scripts/update.sh     # 之后日常更新
+```
+
+完整选项（镜像策略、排错、密钥轮换、禁用前端容器等）见 [`Scripts/README.md`](./Scripts/README.md)。
+
+### 手动（docker compose）
+
+```bash
+cp .env.example .env       # 按需改密钥
+docker compose up -d       # 起 postgres + backend + web（前端默认由 web 容器托管）
 curl http://localhost:8000/healthz
 ```
 
-### 生产部署（一键脚本）
+> `.env` 的 `COMPOSE_PROFILES=web` 默认启用前端 web 容器（nginx 托管 `dist` + 反代 `/api`）；清空即禁用，改由自有 nginx 托管。详见 [`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md)。
 
-面向服主的一键安装/更新脚本（自动检测/安装 Docker、国内网络镜像自适应、智能重建矩阵、`pch_system` 插件部署 + token 双写）：
-
-```bash
-bash Scripts/install.sh   # 首次安装（交互式，幂等）
-bash Scripts/update.sh    # 之后日常更新
-```
-
-完整用法（选项、镜像策略、排错、密钥轮换）见 [`Scripts/README.md`](./Scripts/README.md)。
-
-### 本地开发
-
-详见各子目录 README / CLAUDE.md：
-
-- 后端：[`Backend/CLAUDE.md`](./Backend/CLAUDE.md)
-- 前端：[`Frontend/CLAUDE.md`](./Frontend/CLAUDE.md)
-- MCDR 插件：[`McdrPlugin/CLAUDE.md`](./McdrPlugin/CLAUDE.md)
-- 集成测试服：[`TestServer/README.md`](./TestServer/README.md)
+> 本项目**不含 Minecraft 服务端**：Fabric + MCDReforged 由你持有，插件经 HTTP 与后端通信。MCDR 插件本身的部署见 [`McdrPlugin/README.md`](./McdrPlugin/README.md)。
 
 ---
 
-## 文档导航
+## 架构
 
-### 架构与设计
-| 文档 | 说明 |
+三端分离：**后端（FastAPI + PostgreSQL）** 是唯一数据拥有者；**Web 端（Vue3）** 是浏览器后台；**游戏端（MCDR 插件）** 是纯客户端，不直连数据库，只经 HTTP 与后端通信。前端默认由 compose 的 web 容器（nginx）托管。
+
+![architecture](Image/architecture.png)
+
+完整架构图、ADR、跨服务流程见 [`Docs/architecture.md`](./Docs/architecture.md)。
+
+---
+
+## 开发状态
+
+| 状态 | 模块 |
 |---|---|
-| [工程架构总览](./Docs/architecture.md) | 三端架构、技术栈、ADR、风险矩阵、跨服务流程 |
-| [玩法设计](./Docs/guied.md) | 黄皮子积分体系、项目管理、荣誉激励、风控 |
-| [数据模型](./Docs/architecture/data-model.md) | 全部表结构、约束、索引、ER 图 |
-| [前端文档](./Docs/architecture/frontend.md) | Vue3 后台模块、鉴权、构建 |
+| ✅ 已交付 | 登录鉴权、项目协作（在线表格）、投影 / 蓝图解析、材料上交、项目归档、通知投递、一键部署 |
+| 🚧 规划中 | 积分结算、指数称号、施工方块检测、Wiki 同步、风控告警 |
 
-### 服务文档
-| 服务 | 职责 |
-|---|---|
-| [MCDR 插件](./Docs/architecture/services/mcdr-plugin.md) | 命令、箱子扫描、UUID 推导、称号下发、HTTP 上报 |
-| [user-service](./Docs/architecture/services/user-service.md) | MC 绑定 / Token / wiki 账号映射 / 权限 |
-| [project-service](./Docs/architecture/services/project-service.md) | 项目生命周期 + `.litematic` / `.nbt` 解析 + 材料清单 |
-| [scoring-service](./Docs/architecture/services/scoring-service.md) | 提交入库 + 放置贡献 + 黄皮子积分引擎 |
-| [title-service](./Docs/architecture/services/title-service.md) | 指数称号体系 + scoreboard 前缀下发 |
-| [wiki-service](./Docs/architecture/services/wiki-service.md) | git 双向同步归档 + 用户组 + Page Rules 授权 |
-| [alert-service](./Docs/architecture/services/alert-service.md) | 异常检测 + Notifier 抽象 |
-
-### 工程规范
-| 文档 | 说明 |
-|---|---|
-| [根 CLAUDE.md](./CLAUDE.md) | 全项目红线、命名规范、技术栈约束 |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | 分支模型 / Conventional Commits / 各组件独立 SemVer / MCDR 发布 |
-| [CHANGELOG.md](./CHANGELOG.md) | 三端变更记录 |
-| [Docs/RUNBOOK.md](./Docs/RUNBOOK.md) | dev/staging 运维：部署 / 健康检查 / 排错 / 回滚 |
+详见 [`TODO.md`](./TODO.md) 与 [`CHANGELOG.md`](./CHANGELOG.md)。
 
 ---
 
-## 当前状态
+## 开发与贡献
 
-变更记录见 [`CHANGELOG.md`](./CHANGELOG.md)，后续规划见 [`TODO.md`](./TODO.md)。
+- 部署 / 排错 / 回滚：[`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md)
+- 分支 / Commit / 发布规范：[`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- 根规范（红线、命名）：[`CLAUDE.md`](./CLAUDE.md)
+- 各端开发指引：[`Backend/CLAUDE.md`](./Backend/CLAUDE.md) · [`Frontend/CLAUDE.md`](./Frontend/CLAUDE.md) · [`McdrPlugin/CLAUDE.md`](./McdrPlugin/CLAUDE.md)
 
----
-
-## 贡献
-
-提 PR 前请先读：
-
-1. [根 CLAUDE.md](./CLAUDE.md) §3 的红线 R-1~R-12（任何改动不得违反）
-2. [CONTRIBUTING.md](./CONTRIBUTING.md) 的分支模型与 Commit 规范
-3. 涉及 MCDR 的改动必须先联网核实 API（见根 CLAUDE.md §0 S-1）
-
----
-
-*最后更新：2026-07-07*
+提 PR 前请先读 [`CONTRIBUTING.md`](./CONTRIBUTING.md) 与 [`CLAUDE.md`](./CLAUDE.md) §3 红线；涉及 MCDR 的改动须先联网核实 API（根 [`CLAUDE.md`](./CLAUDE.md) §0 S-1）。
