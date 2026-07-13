@@ -11,6 +11,38 @@
 [[ -n "${_PCH_COMMON_LOADED:-}" ]] && return 0
 _PCH_COMMON_LOADED=1
 
+# ---------- bash 版本守卫 ----------
+# macOS 自带 bash 3.2 不支持关联数组（declare -gA/-A）、=~ 等语法。
+# 要求 bash 4+：用户可 `brew install bash` 装 bash 5.x，然后用其完整路径运行。
+if (( BASH_VERSINFO[0] < 4 )); then
+    echo "错误：需要 bash 4.0+（当前 ${BASH_VERSION}）。macOS 自带 bash 3.2 不支持关联数组等语法。" >&2
+    echo "请装新版 bash 后用其完整路径运行：" >&2
+    echo "  brew install bash" >&2
+    echo "  /opt/homebrew/bin/bash Scripts/install.sh   # Apple Silicon" >&2
+    echo "  /usr/local/bin/bash Scripts/install.sh      # Intel Mac" >&2
+    exit 1
+fi
+
+# ---------- 平台探测 ----------
+# 被 ensure_docker / install_docker / ensure_docker_registry_mirrors 等的 macOS 分支使用。
+PCH_OS=""
+case "$(uname -s)" in
+    Linux)  PCH_OS="linux" ;;
+    Darwin) PCH_OS="macos" ;;
+    *)      PCH_OS="unknown" ;;
+esac
+
+# ---------- 跨平台命令探测 ----------
+# GNU timeout：macOS 无，装 coreutils 后 gtimeout 可用；都没有则降级为无超时直跑。
+if   command -v timeout  >/dev/null 2>&1; then TIMEOUT_CMD=(timeout)
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=(gtimeout)
+else                                          TIMEOUT_CMD=()
+fi
+# sed -i：GNU 用 `-i`，BSD/macOS 用 `-i ''`（空 backup 后缀）。
+if [[ "$PCH_OS" == "macos" ]]; then SED_I=(-i '')
+else                                SED_I=(-i)
+fi
+
 # ---------- 全局状态 ----------
 COMPOSE=""                 # "docker compose"(v2) 或 "docker-compose"(v1)，由 detect_compose 设置
 declare -gA DEPLOY_CONFIG=()  # 部署配置内存映像（load_deploy_config 填充）
@@ -86,7 +118,9 @@ require_cmd() {
 }
 
 detect_os() {
-    # stdout: debian | rhel | alpine | arch | unknown
+    # stdout: macos | debian | rhel | alpine | arch | unknown
+    # macOS 无 /etc/os-release，按平台探测短路返回。
+    if [[ "$PCH_OS" == "macos" ]]; then echo "macos"; return 0; fi
     local id="" id_like=""
     if [[ -f /etc/os-release ]]; then
         # shellcheck disable=SC1091
@@ -136,13 +170,22 @@ ensure_docker() {
         [[ -n "$COMPOSE" ]] && return 0
         die "docker-compose-plugin 安装失败，请手动安装"
     fi
-    # 2) docker 缺失 → 安装
+    # 1.5) macOS：docker 命令在但 info 失败（Docker Desktop 未启动），或 docker 缺失
+    #      → 不调 get.docker.com（不支持 mac），直接指引装/启动 Docker Desktop。
+    if [[ "$PCH_OS" == "macos" ]]; then
+        if command -v docker >/dev/null 2>&1; then
+            die "检测到 docker 命令但 'docker info' 失败。macOS 上请启动 Docker Desktop 后重跑本脚本。"
+        fi
+        die "macOS 未检测到 docker。请安装并启动 Docker Desktop：https://www.docker.com/products/docker-desktop/ ，启动后重跑本脚本。"
+    fi
+    # 2) docker 缺失 → 安装（仅 Linux 走此路径）
     install_docker
     detect_compose
     [[ -n "$COMPOSE" ]] || die "docker 已安装但仍检测不到 compose，请手动安装 docker-compose-plugin"
 }
 
 install_docker() {
+    [[ "$PCH_OS" == "macos" ]] && die "install_docker 不支持 macOS，请手动安装 Docker Desktop。"
     log_step "安装 Docker"
     assert_root_or_sudo
     local os; os=$(detect_os)
@@ -152,7 +195,7 @@ install_docker() {
         _post_install_docker
         return 0
     fi
-    log_warn "get.docker.com 失败，回退发行版原生包管理器（$os）"
+    log_warn "get.docker.com 失败，回退发行版原生包管理器（${os}）"
     _install_docker_native "$os"
     _post_install_docker
 }
@@ -165,18 +208,19 @@ _ensure_curl() {
         rhel)   as_root dnf install -y curl ;;
         alpine) as_root apk add --no-cache curl ;;
         arch)   as_root pacman -S --noconfirm curl ;;
-        *)      die "缺少 curl 且无法自动安装（未知发行版 $os），请手动安装 curl" ;;
+        *)      die "缺少 curl 且无法自动安装（未知发行版 ${os}），请手动安装 curl" ;;
     esac
 }
 
 _install_docker_native() {
+    [[ "$PCH_OS" == "macos" ]] && die "_install_docker_native 不支持 macOS。"
     local os=$1
     case "$os" in
         debian) as_root apt-get update -y && as_root apt-get install -y docker.io docker-compose-plugin ;;
         rhel)   as_root dnf install -y docker docker-compose-plugin || as_root yum install -y docker docker-compose-plugin ;;
         alpine) as_root apk add --no-cache docker docker-cli-compose openrc ;;
         arch)   as_root pacman -S --noconfirm docker docker-compose ;;
-        *)      die "不支持的发行版（$os），请手动安装 docker + docker-compose-plugin 后重跑" ;;
+        *)      die "不支持的发行版（${os}），请手动安装 docker + docker-compose-plugin 后重跑" ;;
     esac
 }
 
@@ -187,11 +231,13 @@ _install_compose_plugin() {
         rhel)   as_root dnf install -y docker-compose-plugin ;;
         alpine) as_root apk add --no-cache docker-cli-compose ;;
         arch)   as_root pacman -S --noconfirm docker-compose ;;
-        *)      log_warn "未知发行版（$os），无法自动补装 compose 插件" ;;
+        *)      log_warn "未知发行版（${os}），无法自动补装 compose 插件" ;;
     esac
 }
 
 _post_install_docker() {
+    # macOS：Docker Desktop 自管理（无 systemctl / usermod / getent），整体跳过。
+    [[ "$PCH_OS" == "macos" ]] && { log_info "macOS: Docker Desktop 自管理，跳过 systemd 配置"; return 0; }
     # 启动 docker 服务
     as_root systemctl enable --now docker 2>/dev/null \
         || as_root service docker start 2>/dev/null \
@@ -222,10 +268,17 @@ probe_url() {
     fi
 }
 
+# _run_with_timeout：有 timeout/gtimeout 则加超时，否则直跑（macOS 无 coreutils 时的降级）。
+_run_with_timeout() {
+    local secs=$1; shift
+    if [[ ${#TIMEOUT_CMD[@]} -gt 0 ]]; then "${TIMEOUT_CMD[@]}" "$secs" "$@"
+    else "$@"; fi
+}
+
 # pick_github_mirror: stdout 输出命中的 "<rewrite>|<insteadOf>" 或空串（=直连）
 pick_github_mirror() {
     # 直连可用则直接走直连（最快）
-    if timeout 8 git ls-remote --exit-code "${PCH_REPO_URL}" HEAD >/dev/null 2>&1; then
+    if _run_with_timeout 8 git ls-remote --exit-code "${PCH_REPO_URL}" HEAD >/dev/null 2>&1; then
         echo ""; return 0
     fi
     log_warn "GitHub 直连不通，尝试镜像源..."
@@ -235,7 +288,7 @@ pick_github_mirror() {
         insteadof="${entry#*|}"
         test_url="${rewrite}${PCH_REPO_URL#"${insteadof}"}"
         log_info "  探测镜像: $rewrite"
-        if timeout 12 git ls-remote --exit-code "$test_url" HEAD >/dev/null 2>&1; then
+        if _run_with_timeout 12 git ls-remote --exit-code "$test_url" HEAD >/dev/null 2>&1; then
             log_info "  选用镜像: $rewrite"
             echo "$entry"; return 0
         fi
@@ -259,6 +312,11 @@ gh_git() {
 
 # 配置 Docker registry 镜像加速（best-effort，失败不阻断）
 ensure_docker_registry_mirrors() {
+    # macOS：Docker Desktop 不读 /etc/docker/daemon.json（用 GUI Settings → Docker Engine）。
+    if [[ "$PCH_OS" == "macos" ]]; then
+        log_warn "macOS: Docker Desktop 用 GUI（Settings → Docker Engine）配 registry mirrors，脚本跳过自动配置。"
+        return 0
+    fi
     if [[ $EUID -ne 0 ]] && ! sudo -n true 2>/dev/null; then
         log_warn "无 root 权限，跳过 Docker registry 镜像加速配置"; return 0
     fi
@@ -366,13 +424,13 @@ wait_healthy() {
 wait_http_ok() {
     local url=$1 timeout=${2:-60} expect=${3:-200}
     local elapsed=0 got="000"
-    log_info "等待 $url 返回 $expect（超时 ${timeout}s）..."
+    log_info "等待 $url 返回 ${expect}（超时 ${timeout}s）..."
     while (( elapsed < timeout )); do
         got=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || echo "000")
         [[ "$got" == "$expect" ]] && return 0
         sleep 3; elapsed=$((elapsed + 3))
     done
-    die "等待 $url 超时（${timeout}s，最后 HTTP $got）"
+    die "等待 $url 超时（${timeout}s，最后 HTTP ${got}）"
 }
 
 # ============================================================
@@ -399,7 +457,7 @@ dump_pre_migration() {
     if dcc exec -T postgres pg_dump -U "$pg_user" "$pg_db" > "$MIGRATION_BAK" 2>"$err_tmp"; then
         # rc=0 但 0 字节：> 先建空文件、pg_dump 没来得及写就被中断/杀掉
         if [[ ! -s "$MIGRATION_BAK" ]]; then
-            log_error "迁移前快照为 0 字节（$MIGRATION_BAK）——安全网失效！"
+            log_error "迁移前快照为 0 字节（${MIGRATION_BAK}）——安全网失效！"
             log_error "  pg_dump 返回 0 但无输出（可能被中断/信号杀掉）。本次迁移无可恢复备份，请确认另有库备份。"
             [[ -s "$err_tmp" ]] && { log_warn "  pg_dump stderr:"; sed 's/^/    /' "$err_tmp" >&2; }
         fi
@@ -422,7 +480,7 @@ read_interactive() {
     local var=$1 prompt=$2 default=$3
     if [[ "${PCH_YES:-0}" == "1" ]]; then
         printf -v "$var" '%s' "$default"
-        log_info "$prompt → $default（--yes 自动采用）"
+        log_info "$prompt → ${default}（--yes 自动采用）"
         return 0
     fi
     local answer=""
@@ -519,9 +577,9 @@ run_step() {
     set -e
     if [[ $rc -eq 0 ]]; then return 0; fi
     if [[ "$on_fail" == "warn" ]]; then
-        log_warn "步骤「$name」失败（rc=$rc），已跳过"; return 0
+        log_warn "步骤「${name}」失败（rc=${rc}），已跳过"; return 0
     fi
-    die "步骤「$name」失败（rc=$rc）"
+    die "步骤「${name}」失败（rc=${rc}）"
 }
 
 # ============================================================
@@ -599,7 +657,7 @@ migrate_legacy_plugin_name() {
     # 2) 删旧插件目录（避免与新 pch_system 双注册 !!PCH）
     if [[ -e "$legacy_plugin" ]]; then
         rm -rf "$legacy_plugin"
-        log_info "已移除旧插件目录: $legacy_plugin（否则与新 pch_system 双注册 !!PCH 冲突）"
+        log_info "已移除旧插件目录: ${legacy_plugin}（否则与新 pch_system 双注册 !!PCH 冲突）"
     fi
 
     log_warn "迁移完成：MCDR 重启或游戏内 !!MCDR plugin reload pch_system 后生效"

@@ -10,3 +10,8 @@ config.local.yml
 
 # 构建缓存
 .docker/
+
+# install.sh deploy_mcdr_plugin 副产物（TestServer 用 bind-mount 源码，不应跑 install.sh 部署插件；
+# 误跑 --mcdr-root 会拷出 plugins/pch_system/ + 写 config/pch_system/config.json 含真 service_token）
+plugins/pch_system/
+config/pch_system/

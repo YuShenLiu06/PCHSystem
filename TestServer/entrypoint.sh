@@ -53,6 +53,16 @@ enforce-whitelist=false
 PROPS
 fi
 
+# ---------- Step 3.5: 同步 pch_system service_token（来自环境变量） ----------
+# TestServer/config/pch_system_config.json 用占位符 change_me_service_token（避免真 token 入 git），
+# 启动时用环境变量 MCDR_SERVICE_TOKEN（compose 经 env_file 从项目根 .env 注入）替换，
+# 保证与后端一致，否则代玩家写（!!PCH login / sheet）会 401。
+if [[ -n "${MCDR_SERVICE_TOKEN:-}" ]]; then
+    CFG="/mcdr/config/pch_system/config.json"
+    sed -i "s|\"service_token\": *\"[^\"]*\"|\"service_token\": \"${MCDR_SERVICE_TOKEN}\"|" "$CFG"
+    echo "[entrypoint] 已同步 pch_system service_token（来自 MCDR_SERVICE_TOKEN 环境变量）"
+fi
+
 # ---------- Step 4: 启动 MCDR（前台 daemon 模式） ----------
 # config.yml 已通过 Dockerfile COPY 到 /mcdr/config.yml
 # --auto-init：自动生成缺失的 permission.yml 等运行时文件
