@@ -14,9 +14,17 @@ services:
       # 开发模式：插件源码挂载（context=项目根，所以路径相对 TestServer/ 要 ../）
       # 改完代码用游戏内 !!MCDR plugin reload pch_system 秒级热重载
       - ../McdrPlugin:/mcdr/plugins/pch_system
+      # bind-mount 空目录覆盖 tests/：McdrPlugin/tests/ 是 Python 包（含 __init__.py），
+      # 违反 MCDR「插件目录禁止含 entrypoint 包之外的其他包」规则 → pch_system 加载失败。
+      # 用空目录覆盖让容器内 tests/ 为空（非包）；宿主 McdrPlugin/tests/ 不受影响（测试在宿主跑）。
+      # 注：不能用匿名 volume —— 它首次挂载会被镜像内 tests/ 内容填充，无法清空。
+      - ./empty:/mcdr/plugins/pch_system/tests
     networks:
       # 加入后端所在网络，容器内可用 http://pchsystem-backend-1:8000 访问后端
       - pchsystem_default
+    env_file:
+      # 注入项目根 .env（含 MCDR_SERVICE_TOKEN），供 entrypoint.sh 启动时同步 pch_system 的 service_token
+      - ../.env
     environment:
       MC_VERSION: "1.20.1"
       FABRIC_LOADER_VERSION: "0.19.3"
