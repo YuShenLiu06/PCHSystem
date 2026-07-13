@@ -17,6 +17,9 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# macOS sudo env_reset 可能清空 locale，保底设 C.UTF-8（不覆盖用户已设值）。
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+export LANG="${LANG:-C.UTF-8}"
 trap 'pch_err_trap $LINENO' ERR
 
 PCH_REPO_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
@@ -105,7 +108,7 @@ sync_repo() {
         log_info "跳过版本同步（--no-sync），使用当前工作树 ($(current_ref))"
         return 0
     fi
-    log_step "同步仓库到目标版本（strategy=$STRATEGY）"
+    log_step "同步仓库到目标版本（strategy=${STRATEGY}）"
     # dirty 保护（跟踪文件被改）
     if ! git diff --quiet HEAD -- 2>/dev/null || [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
         if ! confirm "检测到本地改动，继续将强制切换版本（可能丢弃改动）？ [y/N]" "n"; then
@@ -137,21 +140,21 @@ ensure_env() {
     pg_pwd=$(gen_secret 24)
     jwt=$(gen_secret 32)
     svc=$(gen_secret 24)
-    sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$pg_pwd|" .env
-    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$jwt|" .env
-    sed -i "s|^MCDR_SERVICE_TOKEN=.*|MCDR_SERVICE_TOKEN=$svc|" .env
+    sed "${SED_I[@]}" "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$pg_pwd|" .env
+    sed "${SED_I[@]}" "s|^JWT_SECRET=.*|JWT_SECRET=$jwt|" .env
+    sed "${SED_I[@]}" "s|^MCDR_SERVICE_TOKEN=.*|MCDR_SERVICE_TOKEN=$svc|" .env
     local web_default="http://localhost:5173"
     read_interactive WEB_BASE_URL "  WEB_BASE_URL（!!PCH login 回链前缀，默认本机前端）" "${WEB_BASE_URL:-$web_default}"
-    sed -i "s|^WEB_BASE_URL=.*|WEB_BASE_URL=$WEB_BASE_URL|" .env
+    sed "${SED_I[@]}" "s|^WEB_BASE_URL=.*|WEB_BASE_URL=$WEB_BASE_URL|" .env
     if [[ $NO_WEB -eq 1 ]]; then
-        sed -i 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=|' .env
+        sed "${SED_I[@]}" 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=|' .env
         log_info "已禁用 web 服务（--no-web）：.env COMPOSE_PROFILES 置空（web 服务不随 compose 起）"
     fi
     # 端口可配：若导出了 BACKEND_PORT/PG_PORT/WEB_PORT（如沙盒避让生产），写入 .env 持久化（供后续 update.sh 复用）
     local _bp="${BACKEND_PORT:-}" _gp="${PG_PORT:-}" _wp="${WEB_PORT:-}"
-    [[ -n "$_bp" ]] && sed -i "s|^BACKEND_PORT=.*|BACKEND_PORT=$_bp|" .env
-    [[ -n "$_gp" ]] && sed -i "s|^PG_PORT=.*|PG_PORT=$_gp|" .env
-    [[ -n "$_wp" ]] && sed -i "s|^WEB_PORT=.*|WEB_PORT=$_wp|" .env
+    [[ -n "$_bp" ]] && sed "${SED_I[@]}" "s|^BACKEND_PORT=.*|BACKEND_PORT=$_bp|" .env
+    [[ -n "$_gp" ]] && sed "${SED_I[@]}" "s|^PG_PORT=.*|PG_PORT=$_gp|" .env
+    [[ -n "$_wp" ]] && sed "${SED_I[@]}" "s|^WEB_PORT=.*|WEB_PORT=$_wp|" .env
     chmod 600 .env
     log_info ".env 已生成（POSTGRES_PASSWORD / JWT_SECRET / MCDR_SERVICE_TOKEN 已填强随机值）"
 }
@@ -306,7 +309,7 @@ deploy_mcdr_plugin() {
         read_interactive api_url "  插件访问后端的 URL（MCDR 与 backend 同机=127.0.0.1；同 docker 网络=服务名）" "$default_url"
     fi
     if [[ -f "$cfg" ]] && [[ $OVERWRITE_MCDR_CONFIG -eq 0 ]]; then
-        log_warn "已有 $cfg，保留（仅提示：请确认 service_token 与 .env MCDR_SERVICE_TOKEN 一致；强写用 --mcdr-overwrite-config）"
+        log_warn "已有 ${cfg}，保留（仅提示：请确认 service_token 与 .env MCDR_SERVICE_TOKEN 一致；强写用 --mcdr-overwrite-config）"
     else
         if command -v jq >/dev/null 2>&1; then
             jq --arg api "$api_url" --arg tok "$svc_token" \
@@ -320,7 +323,7 @@ d['api_url']=sys.argv[1]; d['service_token']=sys.argv[2]
 json.dump(d,open('$cfg','w'),ensure_ascii=False,indent=2)
 " "$api_url" "$svc_token"
         fi
-        log_info "config.json 已生成: $cfg（api_url=$api_url）"
+        log_info "config.json 已生成: ${cfg}（api_url=${api_url}）"
     fi
 
     cat >&2 <<EOF

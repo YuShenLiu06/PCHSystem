@@ -17,6 +17,9 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# macOS sudo env_reset 可能清空 locale，保底设 C.UTF-8（不覆盖用户已设值）。
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+export LANG="${LANG:-C.UTF-8}"
 trap 'pch_err_trap $LINENO' ERR
 
 PCH_REPO_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
@@ -107,9 +110,9 @@ fetch_and_compare() {
             OLD_SHA=$(git rev-parse "$OLD_SHA^{commit}" 2>/dev/null || echo "$OLD_SHA")
         fi
         if [[ "$OLD_SHA" == "$NEW_SHA" ]]; then
-            log_info "当前工作树与部署记录一致（$OLD_REF），--no-sync 仍执行更新流程（迁移/插件/健康）"
+            log_info "当前工作树与部署记录一致（${OLD_REF}），--no-sync 仍执行更新流程（迁移/插件/健康）"
         else
-            log_info "本地变更: $OLD_REF → $NEW_REF（--no-sync，未 fetch 远端）"
+            log_info "本地变更: $OLD_REF → ${NEW_REF}（--no-sync，未 fetch 远端）"
         fi
         return 0
     fi
@@ -121,7 +124,7 @@ fetch_and_compare() {
     OLD_SHA=$(git rev-parse HEAD)
     OLD_REF=$(current_ref)
 
-    log_step "拉取更新（strategy=$strategy）"
+    log_step "拉取更新（strategy=${strategy}）"
     if [[ "$strategy" == "edge" ]]; then
         gh_git "$GH_MIRROR_ENTRY" fetch origin "$PCH_DEFAULT_BRANCH"
         NEW_SHA=$(git rev-parse "origin/${PCH_DEFAULT_BRANCH}")
@@ -135,7 +138,7 @@ fetch_and_compare() {
     fi
 
     if [[ "$OLD_SHA" == "$NEW_SHA" ]]; then
-        log_info "已是最新（$OLD_REF），无需更新"
+        log_info "已是最新（${OLD_REF}），无需更新"
         exit 0
     fi
     log_info "版本变更: $OLD_REF → $NEW_REF"
@@ -263,7 +266,7 @@ update_mcdr() {
     [[ $NO_MCDR -eq 1 ]] && { log_info "跳过 MCDR 插件更新（--no-mcdr）"; return 0; }
     local mcdr_root; mcdr_root="${MCDR_ROOT_OVERRIDE:-$(cfg_get PCH_MCDR_ROOT)}"
     [[ -n "$mcdr_root" ]] || { log_info "未配置 MCDR 根目录，跳过插件更新"; return 0; }
-    [[ -d "$mcdr_root/plugins" ]] || { log_warn "MCDR 根目录无效: $mcdr_root（跳过插件更新）"; return 0; }
+    [[ -d "$mcdr_root/plugins" ]] || { log_warn "MCDR 根目录无效: ${mcdr_root}（跳过插件更新）"; return 0; }
 
     local changes
     changes=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
@@ -339,7 +342,7 @@ EOF
 
 check_compose() {
     # update.sh 假设 install.sh 已装好 Docker；此处只检测、不安装。
-    # 必须在任何 dcc 调用前设置 $COMPOSE，否则 dcc() 会 die（且 pg_dump 那行的
+    # 必须在任何 dcc 调用前设置 ${COMPOSE}，否则 dcc() 会 die（且 pg_dump 那行的
     # 2>/dev/null 会吞掉 die 的错误信息，表现为"迁移前快照后静默 exit 1"）。
     detect_compose
     [[ -n "$COMPOSE" ]] \
