@@ -13,21 +13,18 @@
 
 ## [Unreleased]
 
-> 响应 MCDR PluginCatalogue 审核反馈：项目结构 / 文档 / 打包链路整理。对应 commit 见 `git log`。
+_暂无待发布变更。_
 
-### Changed
+---
 
-- **MCDR 插件结构拍平**（`refactor(mcdr)`，2a5dff8）：去掉 `McdrPlugin/pch_system/` 外层包装，`McdrPlugin/` 直接作插件根（`mcdreforged.plugin.json` / `requirements.txt` / `config.json.example` 上移，包 `pch_system/` 位于 `McdrPlugin/` 下），对齐 [MCDReforged/PluginTemplate](https://github.com/MCDReforged/PluginTemplate) 官方平铺结构。连动更新 release.yml / TestServer / install.sh / update.sh / tests / CONTRIBUTING / .gitignore。
-- **AI 过程文档归拢**（`docs`，c3027ae）：`Docs/Plans/`、`Docs/superpowers/` 移入 `.claude/docs/`，仓库门面只留人读文档。
-- **README 精简**（`docs`，ab1e44f）：删去项目定位 / 三端职责 / 技术栈 / 巨型文档导航等架构自夸篇幅，架构仅留一段 + 图；补「功能特性」骨架。
+
+## [pch_system-v0.7.1-rc.1] - 2026-07-13
+
+候选版本，响应 PluginCatalogue 审核反馈整理项目结构与打包链路，供完整测试；正式 `0.7.1` 待测试通过后发布。
 
 ### Fixed
 
-- **`.mcdr` 打包漏带 `requirements.txt`**：requirements.txt 此前位于插件根上一级，`mcdreforged pack` 不收入 → 玩家 `!!MCDR plugin install` 不会自动装 Python 依赖。拍平后位于插件根，pack 正确收入（mcdreforged 2.15.7 实测 `.mcdr` 含 plugin.json + requirements.txt + pch_system/ 包，dev 文件自动排除）。
-
-### Removed
-
-- **删除 `McdrPlugin/plugin_info.json`**：PluginCatalogue 提交用的元数据，不属于插件 repo 本身；后续向 catalogue 提交时在 fork 仓 `plugins/pch_system/` 新建即可。
+- **从 catalogue 安装时自动装依赖**：经 `!!MCDR plugin install` 或 PluginCatalogue 安装本插件时，现在会正确一并安装 Python 依赖；此前因依赖清单未放在插件根，依赖不会被自动安装。
 
 ---
 
