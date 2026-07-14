@@ -269,7 +269,25 @@ docker compose restart backend
 
 ---
 
-## 11. 排错
+## 11. .env 增量补全
+
+`install.sh` / `update.sh` 会按 `.env.example` **幂等补全** `.env` 中缺失的键（已存在的键一律不动，保留你的值）。老用户从旧版升级后，新版新增的配置项（如 `WEB_PROBE_URL`、`COMPOSE_PROFILES`、`WEB_PORT`、`BACKEND_PORT`、`PG_PORT`）会被自动补上，避免后端读到空默认值——典型症状：`!!PCH status` 不显示前端版本号（缺 `WEB_PROBE_URL` → 后端 `probe_web("")` → `/info.web_version=null` → 插件只显示「前端在线」无版本）。
+
+补全规则：
+
+- **每个非密钥缺失键会提示确认/覆盖**（与 `WEB_BASE_URL` 同样的交互）：回车采用默认值，或输入自定义值；`--yes` / `PCH_YES=1` 全用默认（无人值守）。
+- **密钥类**（`POSTGRES_PASSWORD` / `JWT_SECRET` / `MCDR_SERVICE_TOKEN`）**不自动补**——缺失只告警，请手动设强随机值（R-11，绝不把 `change_me_*` 占位写进生产 `.env`）。
+- `WEB_PROBE_URL` 默认值按部署拓扑推断：`COMPOSE_PROFILES` 含 `web` → `http://web`（compose 服务名）；否则取 `WEB_BASE_URL`，非 `localhost`/`127.0.0.1` → 回退为 `WEB_BASE_URL`（并告警：后端容器未必能探到该外部地址）；`localhost` → 留空（并告警：前端版本探测不可用）。
+- `COMPOSE_PROFILES` 默认留空（保守，避免与既有外部 nginx 端口冲突/重复托管）；想改用 compose 托管前端，提示时输入 `web`。
+- 其余键（端口 / `NPM_REGISTRY` 等）默认用 `.env.example` 的值。
+
+补全完成后脚本会提示**查阅 `.env.example`（同目录）的行内注释**了解各键含义；如需再改，编辑 `.env` 后 `docker compose up -d --force-recreate backend` 重新注入。
+
+> `update.sh` 若判定「已是最新」（`fetch_and_compare` 提前退出）会跳过补全；需强制补全用 `bash Scripts/update.sh --no-sync`。补全仅发生在有键缺失时——补全后再跑输出 `unchanged`，不触发额外重建。
+
+---
+
+## 12. 排错
 
 | 现象 | 排查 |
 |---|---|
@@ -279,12 +297,13 @@ docker compose restart backend
 | 插件 `!!PCH` 命令不存在 | 确认依赖插件 `uuid_api_remake` + `minecraft_data_api` 已装；`docker logs <mcdr> \| grep pch_system` 看加载日志 |
 | 插件 reload 后行为没变 | 确认拷贝目标是 MCDR 实际加载的 `plugins/pch_system/`；version/dependencies 等元数据变更也只需 reload（reload 重读 `mcdreforged.plugin.json` + 重校依赖） |
 | `!!PCH login` 链接打不开 | 核对 `.env` 的 `WEB_BASE_URL`（login 回链前缀）与前端实际地址 |
+| `!!PCH status` 前端无版本号 | 核对 `.env` 的 `WEB_PROBE_URL`（缺则后端探不到前端 `/version.json` → `/info.web_version=null`）；跑 `bash Scripts/update.sh --no-sync` 触发 .env 补全（见 §11） |
 | token 401 | `.env` `MCDR_SERVICE_TOKEN` 与插件 config `service_token` 是否同值（见 §8） |
 | clone/pull 卡住 | 见 §5 镜像；或挂代理后 `HTTPS_PROXY=http://宿主:port bash Scripts/install.sh`（自动透传给 build 助 CJK 字体下载） |
 
 ---
 
-## 12. 不做的事（边界）
+## 13. 不做的事（边界）
 
 - **不部署 MC 服务端**（Fabric + MCDR 由你持有）；不部署 TestServer 的 `mc-test` 容器。
 - **默认托管前端**（compose `web` 服务：nginx 托管 dist + 反代 /api 到 backend），可经 `.env` 的 `COMPOSE_PROFILES` 禁用后走非容器自管 nginx（见 §10）。

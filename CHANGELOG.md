@@ -13,7 +13,14 @@
 
 ## [Unreleased]
 
-_暂无待发布变更。_
+### Fixed
+
+- **`.env` 增量补全**：老用户从旧版升级后，新版新增的 `.env` 配置项（如 `WEB_PROBE_URL`）不会自动补全，导致 `!!PCH status` 不显示前端版本号。`install.sh` / `update.sh` 现按 `.env.example` 幂等补全缺失键（密钥类不补、值优先让用户确认）；同批缺失键曾使 `env_get` 在 `set -e` 下打假报警 trap，已加 `|| true` 消除。
+- **重新安装/更新撞 web 端口不再裸退出**：已装机器重跑 `install.sh` / `update.sh` 时，web 容器宿主端口（默认 5173）若被遗留进程（如 `npm run dev`）或本项目残留 web 容器占用，`docker compose up -d` 不再以不透明的 `set -e` 退出——改为自动清理本项目残留 web 容器、对占用者提前说明并询问是否停掉；所有 `dcc up -d` 失败改干净退出并提示。绝不 `down -v` / 碰 postgres 数据卷。
+
+### Docs
+
+- `Scripts/README.md` 增补「`.env` 增量补全」小节与 `!!PCH status` 前端无版本号排错条目。
 
 ---
 

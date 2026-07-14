@@ -626,6 +626,90 @@ web_profile_active() {
 }
 
 # ============================================================
+# 重新安装：web 宿主端口冲突回收（绝不触碰 postgres / 数据卷）
+# ============================================================
+# port_listening <port>：宿主端口是否被监听（LISTEN）。ss 缺失/无权限→假（调用方兜底）。
+port_listening() {
+    ss -tlnp "sport = :$1" 2>/dev/null | grep -q 'LISTEN'
+}
+
+# _confirm_kill <prompt>：停掉端口占用者的显式确认。刻意不走 PCH_YES 自动 yes
+# （杀进程 / 删他人容器须亲眼确认，--yes 不代表可擅自停宿主服务）。
+_confirm_kill() {
+    local yn=""
+    read -r -p "$1 [y/N]: " yn || yn=""
+    case "$yn" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# reclaim_web_port <port>：web 容器宿主端口冲突回收（重新安装场景）。
+#   1) 本项目 pchsystem-web-1 残留（Created/Exited/失败）→ 自动 docker rm -f（安全，无需问）
+#   2) 仍被占 → 报告占用者（容器名 / 宿主进程 pid+comm）+ 询问是否停掉
+# 返回 0=已空闲/已清理；1=仍被占且用户拒绝。红线：只动 web 容器与明确占用者，
+#                          绝不 docker compose down / down -v / rm volume / 碰 postgres。
+reclaim_web_port() {
+    local port=$1
+    [[ -n "$port" ]] || return 0
+    port_listening "$port" || return 0
+    log_warn "宿主端口 $port 已被占用 → 排查占用者（web 容器需绑此端口）"
+
+    # 1) 本项目 pchsystem-web-1 残留（非 running）→ 自动清
+    local webc st
+    webc=$(docker ps -aq --filter 'name=^/pchsystem-web-1$' 2>/dev/null | head -1 || true)
+    if [[ -n "$webc" ]]; then
+        st=$(docker inspect -f '{{.State.Status}}' "$webc" 2>/dev/null || echo "")
+        if [[ "$st" != "running" ]]; then
+            log_info "  本项目残留 web 容器 pchsystem-web-1（状态=${st:-未知}）→ 自动移除"
+            docker rm -f "$webc" >/dev/null 2>&1 || true
+            port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+        fi
+    fi
+
+    # 2) 某 docker 容器占的？
+    local cname
+    cname=$(docker ps -a --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+            | awk -v p=":$port->" 'index($0,p){print $1; exit}' || true)
+    if [[ -n "$cname" ]]; then
+        log_warn "  占用者：容器 $cname"
+        if [[ "$cname" == "pchsystem-web-1" ]]; then
+            docker rm -f "$cname" >/dev/null 2>&1 || true
+            port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+            return 1
+        fi
+        if _confirm_kill "  停掉并移除容器 $cname 以释放端口 $port？"; then
+            docker rm -f "$cname" >/dev/null 2>&1 || true
+            port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+        fi
+        return 1
+    fi
+
+    # 3) 宿主进程（非 docker）
+    local line pid="" comm=""
+    line=$(ss -tlnp "sport = :$port" 2>/dev/null | grep 'LISTEN' | head -1 || true)
+    pid=$(printf '%s' "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2 || true)
+    [[ -n "$pid" ]] && comm=$(ps -o comm= -p "$pid" 2>/dev/null | head -1 || true)
+    log_warn "  占用者：宿主进程 ${comm:-unknown}（pid=${pid:-未知}）"
+    log_warn "  提示：可能是你之前 'npm run dev' 起的前端开发服或其他服务；停掉前请确认无影响。"
+    if [[ -z "$pid" ]]; then
+        log_warn "  无法获取 pid（install.sh 需 sudo 运行才能读到进程）→ 手动停掉或改 .env 的 WEB_PORT"
+        return 1
+    fi
+    if _confirm_kill "  停掉进程 ${comm}（pid=$pid）释放端口 $port？（SIGTERM，3s 未退则 SIGKILL）"; then
+        kill "$pid" 2>/dev/null || true
+        local i
+        for i in 1 2 3; do port_listening "$port" || break; sleep 1; done
+        if port_listening "$port"; then
+            log_warn "  SIGTERM 未释放，发送 SIGKILL"
+            kill -9 "$pid" 2>/dev/null || true
+            sleep 1
+        fi
+        port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+        log_error "  进程已停但端口仍被占（可能有子进程或被自动拉起）"
+        return 1
+    fi
+    return 1
+}
+
+# ============================================================
 # 插件 id 迁移（2026-07-12 起 plugin id 由 htcmc_auth 改为 pch_system）
 # ============================================================
 # migrate_legacy_plugin_name <mcdr_root>：把旧部署的 htcmc_auth 迁到 pch_system。
@@ -661,4 +745,76 @@ migrate_legacy_plugin_name() {
     fi
 
     log_warn "迁移完成：MCDR 重启或游戏内 !!MCDR plugin reload pch_system 后生效"
+}
+
+# ============================================================
+# .env 增量补全
+# ============================================================
+# ensure_env_keys：幂等补全 .env 相对 .env.example 缺失的键（已存在键一律不动，保留用户值）。
+# 补全值优先让用户手动输入：每个非密钥缺失键用 read_interactive 提示确认/覆盖
+# （--yes / PCH_YES=1 或输入空白 → 用默认值），与 ensure_env 现有 read_interactive 用法一致。
+# stdout 打印 changed|unchanged，供 update.sh 决定是否 force-recreate backend。
+# 密钥类（POSTGRES_PASSWORD / JWT_SECRET / MCDR_SERVICE_TOKEN）缺失只 warn，不补占位值（R-11）。
+ensure_env_keys() {
+    [[ -f .env.example && -f .env ]] || { echo unchanged; return 0; }
+
+    # 先把 .env.example 的键读入数组再遍历——勿在 `while read < <(grep)` 体内直接 read_interactive：
+    # 内层 read 会消费 grep 的重定向 stdin（而非终端），把 .env.example 内容误当用户输入。
+    local -a keys=()
+    local -A ex_val=()
+    local k v
+    while IFS='=' read -r k v; do
+        [[ -n "$k" ]] || continue
+        keys+=("$k"); ex_val["$k"]="$v"
+    done < <(grep -E '^[A-Z_]+=' .env.example)
+
+    # 处理顺序：COMPOSE_PROFILES 先于 WEB_PROBE_URL——后者据前者（web_profile_active）推断默认 http://web。
+    local -a sorted=()
+    for k in "${keys[@]}"; do [[ "$k" == "COMPOSE_PROFILES" ]] && sorted+=("$k"); done
+    for k in "${keys[@]}"; do [[ "$k" != "COMPOSE_PROFILES" ]] && sorted+=("$k"); done
+
+    local -a added=()
+    local default _val
+    for k in "${sorted[@]}"; do
+        grep -qE "^${k}=" .env && continue   # 已存在，不动
+        case "$k" in
+            POSTGRES_PASSWORD|JWT_SECRET|MCDR_SERVICE_TOKEN)
+                log_warn ".env 缺失密钥 $k——不自动补占位值（R-11），请手动设强随机值后重跑"
+                continue
+                ;;
+            WEB_PROBE_URL)
+                if web_profile_active; then
+                    default="http://web"
+                else
+                    local base
+                    base=$(grep -E '^WEB_BASE_URL=' .env 2>/dev/null | head -1 | cut -d= -f2-)
+                    if [[ -n "$base" && ! "$base" =~ ^https?://(localhost|127\.0\.0\.1)(:|$) ]]; then
+                        default="$base"
+                        log_warn "WEB_PROBE_URL 默认回退为 WEB_BASE_URL（$base）——后端容器未必能探到该外部地址，若 /info.web_version 仍为 null 请手改 .env"
+                    else
+                        default=""
+                        log_warn "WEB_PROBE_URL 默认留空：WEB_BASE_URL 是 localhost，后端容器内无法探前端 → /info.web_version=null（前端版本号不显示）"
+                    fi
+                fi
+                ;;
+            COMPOSE_PROFILES)
+                default=""
+                log_warn "COMPOSE_PROFILES 默认留空（避免与既有外部 nginx 端口冲突/重复托管）；若改用 compose 托管前端，可输入 web"
+                ;;
+            *)
+                default="${ex_val[$k]}"
+                ;;
+        esac
+        read_interactive _val "  补全 .env 缺失项 $k" "$default"
+        printf '%s=%s\n' "$k" "$_val" >> .env
+        added+=("$k")
+    done
+
+    if (( ${#added[@]} == 0 )); then
+        echo unchanged
+    else
+        log_info "已补全 .env 缺失配置项: $(IFS=,; echo "${added[*]}")"
+        log_info "各配置项含义与取值见 .env.example（同目录）行内注释；如需再改请编辑 .env 后 docker compose up -d --force-recreate backend"
+        echo changed
+    fi
 }

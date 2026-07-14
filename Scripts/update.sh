@@ -67,7 +67,9 @@ parse_args() {
     done
 }
 
-env_get() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-; }
+# .env 读字段（键缺失 / .env 缺失 → 空串 + 退出码 0；调用方用 ${var:-default} / [[ -n ]] 判空）。
+# 末尾 || true 防 grep 无匹配在 pipefail 下令 env_get 非零 → 裸赋值 set -e 静默退出（a022d73 同类）。
+env_get() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
 # ---------- 步骤 ----------
 check_managed() {
@@ -187,13 +189,22 @@ decide_rebuild() {
     if (( rebuild )); then
         log_step "Dockerfile / pyproject.toml 变更 → 重建 backend 镜像"
         compose_build backend
-        dcc up -d backend
+        dcc up -d backend || die "docker compose up -d backend 失败（postgres 与数据卷未受影响，未执行 down -v；docker compose logs backend 排查）"
     elif (( backend_changed )); then
         log_step "Backend 代码变更 → force-recreate（mount 策略，秒级，无需 rebuild）"
-        dcc up -d --force-recreate backend
+        dcc up -d --force-recreate backend || die "docker compose up -d --force-recreate backend 失败（postgres 与数据卷未受影响；docker compose logs backend 排查）"
     elif (( compose_changed )); then
         log_step "compose 配置变更 → up -d（自动 recreate）"
-        dcc up -d
+        # compose 全量 up 会连带起 web（若 profile 激活）→ 先回收宿主端口，避免 "address already in use" 裸退出。
+        # recreate 只换容器不删 volume，postgres 数据卷不受影响（绝非 down -v）。
+        if web_profile_active; then
+            local _wp="${WEB_PORT:-$(env_get WEB_PORT)}"; _wp="${_wp:-5173}"
+            reclaim_web_port "$_wp" || die "web 宿主端口 ${_wp} 被占且未释放（详见上方；postgres 与数据卷未受影响）"
+        fi
+        dcc up -d || die "docker compose up -d 失败（端口冲突见上方；postgres 与数据卷未受影响，未执行 down -v）"
+    elif (( ENV_CHANGED )); then
+        log_step ".env 已补全 → force-recreate backend（注入新 env）"
+        dcc up -d --force-recreate backend || die "docker compose up -d --force-recreate backend 失败（postgres 与数据卷未受影响；docker compose logs backend 排查）"
     else
         log_info "无 Backend / compose 变更，跳过后端容器操作"
     fi
@@ -203,7 +214,10 @@ decide_rebuild() {
     if web_profile_active && { (( web_changed )) || [[ $FORCE_FRONTEND -eq 1 ]]; }; then
         log_step "Frontend 变更（容器路径）→ 重建 web 镜像"
         compose_build web
-        dcc up -d web
+        # 启动 web 前回收宿主端口（清本项目残留 web 容器 / 询问停掉占用者），避免裸 set -e 退出。
+        local _wp="${WEB_PORT:-$(env_get WEB_PORT)}"; _wp="${_wp:-5173}"
+        reclaim_web_port "$_wp" || die "web 宿主端口 ${_wp} 被占且未释放（详见上方；postgres 与数据卷未受影响）"
+        dcc up -d web || die "docker compose up -d web 失败（端口冲突见上方；其他错误 docker compose logs web）"
     fi
 }
 
@@ -349,6 +363,14 @@ check_compose() {
         || die "docker compose 不可用（既无 v2 plugin 也无 v1 docker-compose）——请先运行 bash Scripts/install.sh（或安装 Docker + compose 插件）"
 }
 
+# .env 增量补全 wrapper：补全缺失键，changed 则置 ENV_CHANGED=1 供 decide_rebuild 决定是否 force-recreate。
+ENV_CHANGED=0
+ensure_env_keys_update() {
+    local status
+    status=$(ensure_env_keys)
+    [[ "$status" == "changed" ]] && ENV_CHANGED=1
+}
+
 # ---------- main ----------
 main() {
     parse_args "$@"
@@ -357,6 +379,7 @@ main() {
     fetch_and_compare
     guard_dirty
     do_checkout
+    ensure_env_keys_update   # checkout 后补全 .env 缺失键（读新版 .env.example）；changed → decide_rebuild 兜底 force-recreate
     decide_rebuild
     run_migrations
     update_frontend

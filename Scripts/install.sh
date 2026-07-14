@@ -76,8 +76,11 @@ parse_args() {
 }
 
 # .env 读字段（仅本仓库根 .env）
+# 键缺失 / .env 缺失 → 返回空串且退出码 0（非错误，调用方用 ${var:-default} / [[ -n ]] 判空，不依赖退出码）。
+# 末尾 || true：grep 无匹配返回 1，在 set -o pipefail 下会令 env_get 非零，
+# 使裸赋值 var=$(env_get K) 在 set -e 下静默退出（a022d73 同类 2>/dev/null 吞错反模式）。
 env_get() {
-    grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-
+    grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
 # ---------- 步骤 ----------
@@ -132,6 +135,7 @@ sync_repo() {
 ensure_env() {
     if [[ -f .env ]]; then
         log_warn ".env 已存在，保留不覆盖（如需重新生成请先备份并删除）"
+        ensure_env_keys >/dev/null   # 幂等补全新版新增的缺失键（已存在键不动；install 全新 up -d 随建随注入新 env）
         return 0
     fi
     log_step "生成 .env"
@@ -191,7 +195,34 @@ start_stack() {
         compose_build web
     fi
     log_step "启动 postgres + backend$(web_profile_active && echo ' + web')"
-    dcc up -d
+
+    # 重新安装：web profile 激活时先回收宿主端口（清本项目残留 web 容器 / 询问停掉占用者），
+    # 避免 dcc up -d 因 "address already in use" 裸 set -e 退出。
+    # 红线：只动 web 容器与明确占用者，绝不 docker compose down / down -v / 碰 postgres 与数据卷。
+    if web_profile_active; then
+        local _wp="${WEB_PORT:-$(env_get WEB_PORT)}"; _wp="${_wp:-5173}"
+        if ! reclaim_web_port "$_wp"; then
+            cat >&2 <<EOF
+$(log_error "web 容器宿主端口 ${_wp} 无法释放")
+解决（任选其一）：
+  - 手动停掉占用者后重跑：bash Scripts/install.sh --no-sync
+  - 改用空闲端口：编辑 .env 的 WEB_PORT=<空闲端口> 后重跑
+  - 前端已由外部 nginx 托管、无需 compose web 容器：.env 把 COMPOSE_PROFILES 置空 + WEB_PROBE_URL=<外部前端地址>，再 docker compose up -d --force-recreate backend
+（postgres 与数据卷未受影响，未执行 down -v）
+EOF
+            die "web 宿主端口 ${_wp} 被占且未释放"
+        fi
+    fi
+
+    if ! dcc up -d; then
+        cat >&2 <<EOF
+$(log_error "docker compose up -d 失败")
+- 若端口冲突：按上方提示处理（已尝试自动回收本项目残留 web 容器）
+- 其他错误：docker compose logs 排查
+（postgres 与数据卷未受影响，未执行 down -v）
+EOF
+        die "启动容器栈失败"
+    fi
     wait_healthy postgres 120
     local _bp="${BACKEND_PORT:-$(env_get BACKEND_PORT)}"; _bp="${_bp:-8000}"
     wait_http_ok "http://127.0.0.1:${_bp}/healthz" 180 200
