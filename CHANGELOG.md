@@ -17,25 +17,21 @@ _暂无待发布变更。_
 
 ---
 
+## [pch_system-v0.7.1] - 2026-07-14
 
-## [pch_system-v0.7.1-rc.2] - 2026-07-13
-
-第二个候选版本，补齐 macOS 部署支持；正式 `0.7.1` 待测试通过后发布。
+更新脚本支持 mac 修复python 依赖无法正确解读的问题
 
 ### Added
 
 - **macOS 部署支持**：一键安装 / 更新脚本（`install.sh` / `update.sh`）现可在 macOS 上运行（此前仅支持 Linux），自动适配 Docker Desktop 与 BSD 版工具差异。
 
----
-
-
-## [pch_system-v0.7.1-rc.1] - 2026-07-13
-
-候选版本，响应 PluginCatalogue 审核反馈整理项目结构与打包链路，供完整测试；正式 `0.7.1` 待测试通过后发布。
-
 ### Fixed
 
 - **从 catalogue 安装时自动装依赖**：经 `!!MCDR plugin install` 或 PluginCatalogue 安装本插件时，现在会正确一并安装 Python 依赖；此前因依赖清单未放在插件根，依赖不会被自动安装。
+
+### Docs
+
+- 更新 README 的表现效果
 
 ---
 
