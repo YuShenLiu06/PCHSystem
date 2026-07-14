@@ -20,6 +20,8 @@ bash Scripts/install.sh
 bash Scripts/update.sh
 ```
 
+> 详情参考 [`部署流程`](Docs/RUNBOOK.md#3-部署流程)
+
 ## 依赖
 
 - **MCDReforged ≥ 2.14.0**
