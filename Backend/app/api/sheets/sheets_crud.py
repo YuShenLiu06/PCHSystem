@@ -16,6 +16,7 @@ from app.api.sheets._shared import (
     notify_rows_deleted,
 )
 from app.core.db import get_session
+from app.models.sheet import SHEET_PHASE_ARCHIVED
 from app.models.user import Player
 from app.repositories import sheet_repo
 from app.repositories.player_repo import set_last_sheet
@@ -153,6 +154,8 @@ async def patch_sheet(
     sheet = await _load_sheet_or_404(session, sheet_id)
     if not _can_edit(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    if sheet.status == SHEET_PHASE_ARCHIVED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     sheet.title = body.title
     await session.flush()
     await session.commit()

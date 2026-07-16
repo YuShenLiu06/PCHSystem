@@ -103,6 +103,14 @@ def _resolve(server, player_name, outcome, *, on_success=None):
 
     成功（dict/list）→ 调 on_success；on_success 返回 None 表示未自行回执，本函数兜底。
     RATE_LIMITED / REMOVED / HttpError / None → 各自回执，返回 None。
+
+    错误码翻译（与 sheets.md §8 对齐）：
+      403 → 权限不足或非认领人
+      404 → 表或行不存在
+      409 归档（detail 含「归档」/「archiv」）→ 项目已归档，只读
+      409 其他 → 状态非法
+      422 → 参数有误（带 detail）
+      其他 4xx/5xx → 服务暂不可用提示（重试无益，提示玩家稍后再试）
     """
     if outcome is None:
         server.tell(player_name, SHEET_SERVICE_DOWN)
@@ -118,7 +126,11 @@ def _resolve(server, player_name, outcome, *, on_success=None):
         if err.status == 404:
             server.tell(player_name, SHEET_NOT_FOUND)
         elif err.status == 409:
-            server.tell(player_name, SHEET_CONFLICT)
+            # 归档只读（detail 含「归档」或「archiv」）单独译；其余 409 为行/状态非法
+            if "归档" in (err.detail or "") or "archiv" in (err.detail or "").lower():
+                server.tell(player_name, SHEET_ARCHIVED_READONLY)
+            else:
+                server.tell(player_name, SHEET_CONFLICT)
         elif err.status == 422:
             server.tell(player_name, SHEET_BAD_REQUEST.format(detail=err.detail))
         elif err.status == 403:
@@ -639,11 +651,8 @@ def _sheet_advance_to_archived(src, ctx):
 def _sheet_advance_impl(src, ctx, *, to):
     """advance 共享实现：调 advance_sheet → 按错误码 / 新状态译中文回执。
 
-    advance 端点独有的错误码（不走通用 _resolve）：
-      400 → 非法 to（SHEET_BAD_TARGET）
-      503 → 归档未配置（SHEET_ARCHIVE_UNCONFIGURED）
-      409 已 archived → SHEET_ARCHIVED_READONLY（区分于通用 409 状态非法）
-    其余 403/404/429/网络失败复用 _resolve。
+    advance 端点独有的错误码（先于 _resolve 兜底）：400 非法 to / 503 归档未配置。
+    其余（含 409 归档只读、409 状态非法、403/404/429/网络失败）统一复用 _resolve。
     """
     player_name = _require_player(src)
     if not player_name:
@@ -660,19 +669,14 @@ def _sheet_advance_impl(src, ctx, *, to):
             return
         outcome = sheet_client.advance_sheet(CONFIG, player_uuid, sheet_id, to)
 
-        # advance 专属错误码先于 _resolve 兜底处理
+        # advance 专属错误码先于 _resolve 兜底处理（409 归档/状态非法统一走 _resolve）
         if isinstance(outcome, sheet_client.HttpError):
             err = outcome
-            detail = (err.detail or "").lower()
             if err.status == 400:
                 server.tell(player_name, SHEET_BAD_TARGET)
                 return
             if err.status == 503:
                 server.tell(player_name, SHEET_ARCHIVE_UNCONFIGURED)
-                return
-            if err.status == 409 and "archiv" in detail:
-                # 后端返 SheetArchived 时 detail 含 archived 字样 → 只读回执
-                server.tell(player_name, SHEET_ARCHIVED_READONLY)
                 return
 
         def _show(data):
@@ -1190,6 +1194,10 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
     view = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
     if not isinstance(view, dict):
         _resolve(server, player_name, view)
+        return
+    if str(view.get("status", "")) == "archived":
+        # 归档终态只读：整体短路，避免逐行写返 409 刷「交付失败（状态变化）」
+        server.tell(player_name, SHEET_ARCHIVED_READONLY)
         return
     rows = view.get("rows") or []
     actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid)
