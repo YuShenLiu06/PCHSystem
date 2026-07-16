@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- **归档项目写操作返回「项目已归档，只读」（issue #7）**：归档终态项目执行认领 / 交付 / 解除 / 打回 / 上交 / 调整进度 / 改名时，后端 collab 写端点此前未捕获 `SheetArchived` → HTTP 500，游戏端因此显示「表格服务暂不可用，请稍后重试」。现 collab 6 端点（claim/delivery/release/reject/contribute/progress）+ `patch_sheet`（改名）统一补归档守卫返 409「项目已归档，只读」；MCDR `_resolve` 按 detail 含「归档」/「archiv」识别归档态、显示只读回执（与行状态非法的通用 409 区分），`!!PCH sheet submit` 在拉到归档项目时整体短路、不再逐行 409 刷屏。后端补 7 条归档 409 回归用例，MCDR 补 claim 中文/英文文案 + submit 短路用例。
 - **`.env` 增量补全**：老用户从旧版升级后，新版新增的 `.env` 配置项（如 `WEB_PROBE_URL`）不会自动补全，导致 `!!PCH status` 不显示前端版本号。`install.sh` / `update.sh` 现按 `.env.example` 幂等补全缺失键（密钥类不补、值优先让用户确认）；同批缺失键曾使 `env_get` 在 `set -e` 下打假报警 trap，已加 `|| true` 消除。
 - **重新安装/更新撞 web 端口不再裸退出**：已装机器重跑 `install.sh` / `update.sh` 时，web 容器宿主端口（默认 5173）若被遗留进程（如 `npm run dev`）或本项目残留 web 容器占用，`docker compose up -d` 不再以不透明的 `set -e` 退出——改为自动清理本项目残留 web 容器、对占用者提前说明并询问是否停掉；所有 `dcc up -d` 失败改干净退出并提示。绝不 `down -v` / 碰 postgres 数据卷。
 

@@ -350,7 +350,7 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 | `!!PCH sheet contribute <sheet_id> <row_id> <qty>` | 任意玩家 | `POST /sheets/{sheet_id}/rows/{row_id}/contribute` | **progress 行**上报贡献（任意玩家，qty≥1，累加不封顶，自动 done） |
 | `!!PCH sheet release <sheet_id> <row_id>` | 认领人自放 / owner 解锁 | `POST /sheets/{sheet_id}/rows/{row_id}/release` | 解除锁定（→open） |
 | `!!PCH sheet reject <sheet_id> <row_id>` | 认领人(done 态自取消) / owner 打回 | `POST /sheets/{sheet_id}/rows/{row_id}/reject` | 打回（done→claimed，delivered 归零） |
-| `!!PCH sheet submit <sheet_id>` | 任意玩家 | 复合（scan→按 `registry_id` 精确匹配→claim+delivery 或 contribute） | **一键提交**：扫完整背包（含潜影盒嵌套）→ 按 `registry_id` 匹配表行 → lock(open+have≥need) claim+deliver(need)→done / progress contribute(封顶到 need)；**纯申报不清背包**；跳过无 `registry_id` 的行。依赖 `minecraft_data_api` 插件 |
+| `!!PCH sheet submit <sheet_id>` | 任意玩家 | 复合（scan→按 `registry_id` 精确匹配→claim+delivery 或 contribute） | **一键提交**：扫完整背包（含潜影盒嵌套）→ 按 `registry_id` 匹配表行 → lock(open+have≥need) claim+deliver(need)→done / progress contribute(封顶到 need)；**纯申报不清背包**；跳过无 `registry_id` 的行。依赖 `minecraft_data_api` 插件；**归档项目（view 返 status=archived）整体短路 → 只读回执，不逐行写**（避免逐行 409 刷屏，issue #7） |
 | `!!submit` / `!!submit <sheet_id>` | 任意玩家 | `GET /me/last_sheet`（无参时）→ 同 `!!PCH sheet submit <sheet_id>` | **一键提交新根**：`!!submit` 重开上次查看的表格并直接提交（复用 `!!sheet` 的 `last_sheet` 存储，后端零改动）；`!!submit <编号>` 指定表格。与 `!!PCH sheet submit <id>` 共用实现；回执仅逐行展示与本人相关的跳过行，其余折叠为一行计数（降噪 bugfix） |
 | `!!PCH sheet addhand <sheet_id> <need> [lock\|progress] [sort]` | owner | `PUT /sheets/{sheet_id}/rows` | 手持物品自动填 `registry_id`（中文名后端翻译补）新建行 |
 | `!!PCH sheet setreg <sheet_id> <row_id> <registry_id>` | owner | `PUT /sheets/{sheet_id}/rows`（保留原 item_name，补 `registry_id`） | 给已有行补 `registry_id`（让该行可被一键提交匹配） |
