@@ -384,6 +384,121 @@ async def test_upsert_row_with_row_id_on_archived_409(client, tmp_path, monkeypa
     assert resp.status_code == 409
 
 
+async def _advance_to_archived(client, bearer, sid):
+    """owner 把表流转到 archived 终态（调用前需 _patch_archive_root 注入 archive_root）。"""
+    resp = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
+    assert resp.status_code == 200, resp.text
+
+
+# ---------- 归档终态只读：collab 6 端点 + rename → 409「项目已归档，只读」 ----------
+# issue #7：修复前 collab.py 未捕获 SheetArchived → 500（游戏端显示「表格服务暂不可用」）。
+
+
+@pytest.mark.asyncio
+async def test_claim_on_archived_409(client, tmp_path, monkeypatch):
+    """issue #7 核心：归档项目 claim → 409（不再 500）。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 10, 0))["id"]
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.post(f"/sheets/{sid}/rows/{rid}/claim", headers=_auth(bearer_bob))
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delivery_on_archived_409(client, tmp_path, monkeypatch):
+    """归档后认领人上报交付 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    _, bearer_bob = await _make_player("bob")
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 10, 0))["id"]
+    await client.post(f"/sheets/{sid}/rows/{rid}/claim", headers=_auth(bearer_bob))  # bob 为认领人
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/delivery",
+        json={"delivered_qty": 5},
+        headers=_auth(bearer_bob),
+    )
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_release_on_archived_409(client, tmp_path, monkeypatch):
+    """归档后拥有者解除锁定 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 10, 0))["id"]
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.post(f"/sheets/{sid}/rows/{rid}/release", headers=_auth(bearer))
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reject_on_archived_409(client, tmp_path, monkeypatch):
+    """归档后拥有者打回 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 10, 0))["id"]
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.post(f"/sheets/{sid}/rows/{rid}/reject", headers=_auth(bearer))
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_contribute_on_archived_409(client, tmp_path, monkeypatch):
+    """归档后 progress 行上交 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 10, 1))["id"]  # progress
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{rid}/contribute",
+        json={"qty": 3},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_set_row_progress_on_archived_409(client, tmp_path, monkeypatch):
+    """归档后拥有者调整 progress 绝对值 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    rid = (await _upsert_row(client, bearer, sid, "iron", 10, 1))["id"]  # progress
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.patch(
+        f"/sheets/{sid}/rows/{rid}/progress",
+        json={"delivered_qty": 5},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_patch_sheet_rename_on_archived_409(client, tmp_path, monkeypatch):
+    """归档后改名 → 409（patch_sheet 补归档守卫；修复前静默成功）。"""
+    _patch_archive_root(monkeypatch, tmp_path)
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    await _advance_to_archived(client, bearer, sid)
+    resp = await client.patch(f"/sheets/{sid}", json={"title": "新标题"}, headers=_auth(bearer))
+    assert resp.status_code == 409
+    assert "归档" in resp.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_upsert_row_without_row_id_still_creates(client):
     """不带 row_id（回归）：走原 by-item_name 新建语义，不破。"""

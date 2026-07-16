@@ -55,7 +55,13 @@ class SheetRowConflict(Exception):
 
 
 class SheetArchived(Exception):
-    """sheet 已归档只读，api 层翻译为 409。任何写操作入口先经 _assert_writable 守卫。"""
+    """sheet 已归档只读，api 层翻译为 409。任何写操作入口先经 _assert_writable 守卫。
+
+    契约：api 层统一译为 HTTP 409，detail 用「项目已归档，只读」（advance 路径为英文
+    「sheet is archived, read-only」）。MCDR `_resolve` 按 detail 含「归档」/「archiv」
+    子串识别归档态并显示「项目已归档，只读」——改文案须保留其中一个标记，否则游戏端
+    会回退为通用「状态非法」。
+    """
 
 
 async def _assert_writable(session: AsyncSession, sheet_id: int) -> None:

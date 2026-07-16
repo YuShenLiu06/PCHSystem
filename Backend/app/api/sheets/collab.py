@@ -15,7 +15,7 @@ from app.api.sheets._shared import (
 from app.core.db import get_session
 from app.models.user import Player
 from app.repositories import sheet_repo
-from app.repositories.sheet_repo import SheetRowConflict
+from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 from app.schemas.sheet import (
     RowContributeRequest,
     RowDeliveryRequest,
@@ -57,6 +57,9 @@ async def claim_row(
                 item_name=item_name,
             )
         await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
@@ -106,6 +109,9 @@ async def set_row_delivery(
                 need=row.need_qty,
             )
         await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
@@ -178,6 +184,9 @@ async def release_row(
                     item_name=prev_item,
                 )
         await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
@@ -214,6 +223,9 @@ async def reject_row(
                 item_name=old_row.item_name,
             )
         await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
@@ -260,6 +272,9 @@ async def contribute_to_row(
                 need=row.need_qty,
             )
         await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
@@ -334,6 +349,9 @@ async def set_row_progress(
                         need=row.need_qty,
                     )
         await session.commit()
+    except SheetArchived:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
