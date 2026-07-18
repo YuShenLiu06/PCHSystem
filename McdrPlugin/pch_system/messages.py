@@ -225,6 +225,7 @@ def format_row_clickable(
     sheet_id,
     *,
     is_owner: bool = False,
+    is_manager: bool = False,
     player_name: str = "",
     player_uuid: str = "",
 ) -> RTextList:
@@ -303,13 +304,13 @@ def format_row_clickable(
                 "[退]", f"!!PCH sheet reject {sheet_id} {rid}",
                 color=RColor.red, hover="打回（done→claimed，delivered 归零，可重做）",
             ))
-    if is_owner and mode == 1:  # progress 行 owner 专用：绝对值覆写进度（可增可减）
+    if (is_owner or is_manager) and mode == 1:  # progress 行 tier B：绝对值覆写进度（owner 或协管员）
         buttons.append(rtext_button(
             "[调]", f"!!PCH sheet progress {sheet_id} {rid} ",
             color=RColor.yellow,
             hover="直接修正进度（绝对值，可增可减；末尾补数量后回车）",
         ))
-    if is_owner:
+    if is_owner or is_manager:  # tier B 行级管理（[改][-][子]）：owner 或协管员
         buttons.append(rtext_button(
             "[改]", f"!!PCH sheet setreg {sheet_id} {rid} ",
             color=RColor.yellow,
@@ -317,7 +318,7 @@ def format_row_clickable(
         ))
         buttons.append(rtext_button(
             "[-]", f"!!PCH sheet delrow {sheet_id} {rid}",
-            color=RColor.red, hover="删除此行（拥有者）",
+            color=RColor.red, hover="删除此行（拥有者/协管员）",
         ))
         # 顶层父行（非子行）显示 [子] 按钮
         if parent_row_id is None:
@@ -453,37 +454,46 @@ def format_submit_footer(sheet_id) -> RTextList:
     ])
 
 
-def format_owner_footer(sheet_id, status: str = "collecting") -> RTextList:
-    """拥有者底部管理栏：阶段流转按钮 + 增删改按钮（按 status 显隐）。
+def format_owner_footer(sheet_id, status: str = "collecting", *, is_owner: bool = True) -> RTextList:
+    """拥有者/协管员底部管理栏：阶段流转按钮 + 增删改按钮（按 status + tier 显隐）。
 
-    阶段流转（owner/admin 触发，真实 RBAC 以后端 403 为准）：
-      collecting  → [进入施工]（advance constructing）+ [直接归档]（advance archived）
-      constructing → [标记施工完成并归档]（advance archived）
-      archived    → 只读终态：不渲染任何流转/增删改按钮（后端对写操作返 409 SheetArchived）
+    调用前提：外层已守卫 is_owner or is_manager（非此二者不进入本栏）。本函数参数
+    ``is_owner`` 用于区分 tier A（仅 owner）vs tier B（owner+manager）按钮。
 
-    非归档态额外保留原有 [新增物品]/[改标题]/[删表] 管理按钮；**新增物品按钮走 addhand**（决策点2）。
+    tier 分流（迁移 0014，真实 RBAC 以后端 403 为准）：
+      tier B（owner 或协管员）：
+        collecting  → [进入施工]（advance constructing）+ [新增物品]（addhand）
+        constructing → [新增物品]（addhand）
+      tier A（仅 owner）：
+        collecting  → [直接归档]（advance archived）
+        constructing → [标记施工完成并归档]（advance archived）
+        任意非归档态 → [改标题]（rename）+ [删表]（delete）
+      archived → 只读终态：不渲染任何流转/增删改按钮（后端返 409 SheetArchived）
+
     未知 status 兜底按 collecting 处理（保守显示，避免误锁管理操作）。
     """
     status = str(status) if status is not None else "collecting"
     buttons: list = []
 
-    # 1) 阶段流转按钮（按状态机）
+    # 1) 阶段流转按钮（按状态机 + tier 分流）
     if status == "collecting":
         buttons.append(rtext_button(
             "[进入施工]", f"!!PCH sheet advance {sheet_id} constructing",
             color=RColor.green, hover="进入施工阶段（collecting → constructing）",
         ))
-        buttons.append(rtext_button(
-            "[直接归档]", f"!!PCH sheet advance {sheet_id} archived",
-            color=RColor.yellow,
-            hover="跳过施工直接归档（生成只读文档，不可逆）",
-        ))
+        if is_owner:
+            buttons.append(rtext_button(
+                "[直接归档]", f"!!PCH sheet advance {sheet_id} archived",
+                color=RColor.yellow,
+                hover="跳过施工直接归档（生成只读文档，不可逆）",
+            ))
     elif status == "constructing":
-        buttons.append(rtext_button(
-            "[标记施工完成并归档]", f"!!PCH sheet advance {sheet_id} archived",
-            color=RColor.yellow,
-            hover="施工完成，生成只读归档文档（不可逆）",
-        ))
+        if is_owner:
+            buttons.append(rtext_button(
+                "[标记施工完成并归档]", f"!!PCH sheet advance {sheet_id} archived",
+                color=RColor.yellow,
+                hover="施工完成，生成只读归档文档（不可逆）",
+            ))
     # archived：只读，无流转按钮
 
     # 2) 增删改管理按钮（archived 态隐藏——后端只读，操作会 409）
@@ -493,14 +503,15 @@ def format_owner_footer(sheet_id, status: str = "collecting") -> RTextList:
             color=RColor.aqua,
             hover="用手持物品建行（续输：数量 [lock|progress] [排序]）",
         ))
-        buttons.append(rtext_button(
-            "[改标题]", f"!!PCH sheet rename {sheet_id} ",
-            color=RColor.aqua, hover="修改表标题（续输新标题）",
-        ))
-        buttons.append(rtext_button(
-            "[删表]", f"!!PCH sheet delete {sheet_id}",
-            color=RColor.red, hover="删除整表（级联删行，谨慎）",
-        ))
+        if is_owner:
+            buttons.append(rtext_button(
+                "[改标题]", f"!!PCH sheet rename {sheet_id} ",
+                color=RColor.aqua, hover="修改表标题（续输新标题）",
+            ))
+            buttons.append(rtext_button(
+                "[删表]", f"!!PCH sheet delete {sheet_id}",
+                color=RColor.red, hover="删除整表（级联删行，谨慎）",
+            ))
 
     return _center_button_row(buttons)
 

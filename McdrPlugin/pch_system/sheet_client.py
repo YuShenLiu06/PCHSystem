@@ -147,6 +147,37 @@ def advance_sheet(
     return _request(cfg, "POST", f"/sheets/{sheet_id}/advance", player_uuid, params=params)
 
 
+# === sheets 协管员（manager，迁移 0014）===
+
+def list_managers(cfg: PchSystemConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
+    """GET /sheets/{sheet_id}/managers → list[{player_uuid, player_name, granted_at}]。
+
+    任意登录玩家可读（透明）。失败返回 None / HttpError。
+    """
+    return _request(cfg, "GET", f"/sheets/{sheet_id}/managers", player_uuid)
+
+
+def grant_manager(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, target_uuid: str) -> SheetOutcome:
+    """POST /sheets/{sheet_id}/managers {player_uuid} → list[SheetManagerEntry]。
+
+    owner/超管授予协管员（后端 RBAC；非 owner → 403）。返回刷新后的列表。
+    target_uuid 由调用方经 uuid_api_remake.get_uuid(name) 推导（RS-8）。
+    """
+    return _request(
+        cfg, "POST", f"/sheets/{sheet_id}/managers", player_uuid,
+        json_body={"player_uuid": target_uuid},
+    )
+
+
+def revoke_manager(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, target_uuid: str) -> SheetOutcome:
+    """DELETE /sheets/{sheet_id}/managers/{target_uuid} → list[SheetManagerEntry]。
+
+    owner/超管撤销任意协管员；manager 可 self-revoke（后端按 _can_manage OR self 判定）。
+    返回刷新后的列表。
+    """
+    return _request(cfg, "DELETE", f"/sheets/{sheet_id}/managers/{target_uuid}", player_uuid)
+
+
 # === sheets 行级 ===
 
 def upsert_row(

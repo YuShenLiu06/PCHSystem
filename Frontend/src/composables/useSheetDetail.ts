@@ -14,6 +14,8 @@ import {
   releaseRow,
   rejectRow,
   advanceSheet,
+  grantSheetManager,
+  revokeSheetManager,
   type SheetDetail,
   type RowDetail,
 } from '../api/sheets'
@@ -61,6 +63,7 @@ export interface UseSheetDetailHandle {
   subRowPopoverVisible: Ref<Record<number, boolean>>
   // 派生
   canEdit: ComputedRef<boolean>
+  canManage: ComputedRef<boolean>
   isReadOnly: ComputedRef<boolean>
   treeRows: ComputedRef<TreeNode[]>
   // 行/身份判定（依赖 sheet/auth）
@@ -88,6 +91,10 @@ export interface UseSheetDetailHandle {
   onRelease: (row: RowDetail) => Promise<void>
   onReject: (row: RowDetail) => Promise<void>
   onSubRowPopoverShow: (parentRow: RowDetail) => void
+  // 协管员（manager，迁移 0014）
+  managerInputUuid: Ref<string>
+  onGrantManager: () => Promise<void>
+  onRevokeManager: (playerUuid: string) => Promise<void>
 }
 
 /**
@@ -130,12 +137,25 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
   // （trigger=click + applyRefreshedSheet 身份保留合并后，无全表重渲染副作用来附带关闭 popover）
   const subRowPopoverVisible = ref<Record<number, boolean>>({})
 
-  // 拥有者（或 admin/owner 角色）——可改清单（item/need/mode/sort）、删行、解除锁定、打回
-  const canEdit = computed(() => {
+  // 拥有者或全局 admin/owner 角色——tier A 高危写（改名/删表/归档/授予撤销协管员）。
+  // R-9：仅控可见性，真实拒绝在后端 403。
+  const canManage = computed(() => {
     const p = auth.player
     if (!p || !sheet.value) return false
     return sheet.value.owner_uuid === p.uuid || p.role === 'admin' || p.role === 'owner'
   })
+
+  // tier B 常规写（增删改行/子物品/进度/解除/打回/进入施工）——owner、超管，或本表协管员（迁移 0014）。
+  // 现 canEdit 语义升级为 tier B（原 tier A 语义移至 canManage）；现有 v-if="canEdit" 自动继承。
+  const canEdit = computed(() => {
+    if (canManage.value) return true
+    const p = auth.player
+    if (!p || !sheet.value) return false
+    return (sheet.value.managers ?? []).some((m) => m.player_uuid === p.uuid)
+  })
+
+  // 协管员授予输入框（UUID——前端无 name→uuid 解析，MCDR 端用 uuid_api_remake 解析）
+  const managerInputUuid = ref('')
 
   // 已归档 = 只读终态：隐藏所有写操作。R-9：仅可见性，真实拒绝在后端 409
   const isReadOnly = computed(() => sheet.value?.status === 'archived')
@@ -615,6 +635,33 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     }
   }
 
+  // 协管员管理（迁移 0014）—— grant/revoke 返回刷新后的 managers 列表，直接并入 sheet.value
+  async function onGrantManager(): Promise<void> {
+    const uuid = managerInputUuid.value.trim()
+    if (!uuid) {
+      ElMessage.warning('请输入玩家 UUID')
+      return
+    }
+    try {
+      const managers = await grantSheetManager(sheetId.value, uuid)
+      if (sheet.value) sheet.value = { ...sheet.value, managers }
+      managerInputUuid.value = ''
+      ElMessage.success('已添加协管员')
+    } catch (e: unknown) {
+      ElMessage.error(sheetErrorMessage(e))
+    }
+  }
+
+  async function onRevokeManager(playerUuid: string): Promise<void> {
+    try {
+      const managers = await revokeSheetManager(sheetId.value, playerUuid)
+      if (sheet.value) sheet.value = { ...sheet.value, managers }
+      ElMessage.success('已移除协管员')
+    } catch (e: unknown) {
+      ElMessage.error(sheetErrorMessage(e))
+    }
+  }
+
   onMounted(load)
   // RouterView 无 :key，param-only 变更不重挂载组件；watch 守卫未来跨表导航（当前无此入口，潜伏 gap）
   watch(sheetId, () => {
@@ -634,6 +681,7 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     titleDraft,
     subRowPopoverVisible,
     canEdit,
+    canManage,
     isReadOnly,
     treeRows,
     isClaimant,
@@ -658,5 +706,8 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     onRelease,
     onReject,
     onSubRowPopoverShow,
+    managerInputUuid,
+    onGrantManager,
+    onRevokeManager,
   }
 }

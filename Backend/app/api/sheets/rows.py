@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_player
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_operate,
     _load_sheet_or_404,
     _resolve_item_name,
     _row_dict,
@@ -187,7 +187,7 @@ async def upsert_row(
 ) -> RowDetail:
     """行新建 / 更新（单端点按 ``row_id`` 分流）。"""
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_operate(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     try:
         if body.row_id is not None:
@@ -218,7 +218,7 @@ async def delete_row(
     player: Player = Depends(get_current_player),
 ):
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_operate(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:

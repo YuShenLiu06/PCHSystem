@@ -18,8 +18,16 @@ export interface SheetSummary {
   updated_at: string
 }
 
+/** 项目级协管员（迁移 0014）：由 owner 授予，协助管理日常协作（tier B 写权限）。 */
+export interface SheetManagerEntry {
+  player_uuid: string
+  player_name: string
+  granted_at: string
+}
+
 export interface SheetDetail extends SheetSummary {
   rows: RowDetail[]
+  managers: SheetManagerEntry[]
 }
 
 // mode: 0=lock（锁定/二元备齐），1=progress（进度/聚合众筹，多人贡献者列表）
@@ -234,5 +242,27 @@ export async function getSheetArchiveAsset(id: number, filename: string): Promis
   const { data } = await http.get<Blob>(`/sheets/${id}/archive/assets/${filename}`, {
     responseType: 'blob',
   })
+  return data
+}
+
+// ---------- 协管员（manager，迁移 0014）----------
+
+/** GET /sheets/{id}/managers —— 列出协管员（任意登录玩家可读） */
+export async function listSheetManagers(id: number): Promise<SheetManagerEntry[]> {
+  const { data } = await http.get<SheetManagerEntry[]>(`/sheets/${id}/managers`)
+  return data
+}
+
+/** POST /sheets/{id}/managers —— owner/超管授予协管员（body {player_uuid}），返回刷新后的列表 */
+export async function grantSheetManager(id: number, playerUuid: string): Promise<SheetManagerEntry[]> {
+  const { data } = await http.post<SheetManagerEntry[]>(`/sheets/${id}/managers`, {
+    player_uuid: playerUuid,
+  })
+  return data
+}
+
+/** DELETE /sheets/{id}/managers/{player_uuid} —— owner/超管撤销（或 manager self-revoke），返回刷新后的列表 */
+export async function revokeSheetManager(id: number, playerUuid: string): Promise<SheetManagerEntry[]> {
+  const { data } = await http.delete<SheetManagerEntry[]>(`/sheets/${id}/managers/${playerUuid}`)
   return data
 }

@@ -25,6 +25,7 @@ from app.models.sheet import (
     SHEET_PHASE_COLLECTING,
     SHEET_PHASE_CONSTRUCTING,
     Sheet,
+    SheetManager,
     SheetRow,
     SheetRowContributor,
 )
@@ -172,7 +173,7 @@ async def list_sheets(
     - 单值（collecting/constructing/archived）→ status == 该值。
 
     player_uuid（参与优先排序）：
-    - 非空时，该玩家参与过的表（owner/claimant/contributor）排在前面，组内按 id 升序；
+    - 非空时，该玩家参与过的表（owner/claimant/contributor/manager）排在前面，组内按 id 升序；
     - None 时，按 sheet id 升序（与历史行为一致）。
     """
     stmt = (
@@ -187,9 +188,11 @@ async def list_sheets(
         stmt = stmt.where(Sheet.status == status_filter)
 
     if player_uuid is not None:
-        # 构造「该玩家参与过的 sheet_id 集」复合 SELECT（三源 UNION）。
+        # 构造「该玩家参与过的 sheet_id 集」复合 SELECT（四源 UNION，迁移 0014 加 manager 源）。
         # 直接以 CompoundSelect 传入 in_()——勿加 .subquery()，否则 SQLAlchemy 会
         # 触发「Coercing Subquery into select() for IN()」告警（2.x 行为）。
+        # UNION 默认 DISTINCT：同一 sheet 多源命中只算一次（如 owner 同时是别表 manager，
+        # 两表 sheet_id 不同各出现一次，不重复）。
         involved_ids = (
             select(SheetRow.sheet_id).where(SheetRow.claimant_uuid == player_uuid)
         ).union(
@@ -197,6 +200,7 @@ async def list_sheets(
             .join(SheetRowContributor, SheetRowContributor.row_id == SheetRow.id)
             .where(SheetRowContributor.player_uuid == player_uuid),
             select(Sheet.id).where(Sheet.owner_uuid == player_uuid),
+            select(SheetManager.sheet_id).where(SheetManager.player_uuid == player_uuid),
         )
         stmt = stmt.order_by(Sheet.id.in_(involved_ids).desc(), Sheet.id.asc())
     else:

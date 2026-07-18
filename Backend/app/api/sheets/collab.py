@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_player
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_operate,
     _load_sheet_or_404,
     _row_dict,
     _row_response,
@@ -134,7 +134,7 @@ async def release_row(
     prev_item = old_row.item_name
     prev_mode = old_row.mode
     is_claimant_self = prev_claimant == player.uuid
-    if not is_claimant_self and not _can_edit(sheet, player):
+    if not is_claimant_self and not _can_operate(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     progress_contributors = []
     if prev_mode == sheet_repo.MODE_PROGRESS:
@@ -205,7 +205,7 @@ async def reject_row(
     if current is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     old_row = current[0]
-    if old_row.claimant_uuid != player.uuid and not _can_edit(sheet, player):
+    if old_row.claimant_uuid != player.uuid and not _can_operate(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     try:
         row = await sheet_repo.reject_row(session, sheet_id, row_id)
@@ -293,7 +293,7 @@ async def set_row_progress(
 ) -> RowDetail:
     """progress 行 owner 直接修正进度（绝对值，可增可减）。"""
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_operate(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:
