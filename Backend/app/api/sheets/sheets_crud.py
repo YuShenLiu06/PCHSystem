@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_player, require_service_token
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_manage,
     _load_sheet_or_404,
     _resolve_item_name,
     _to_detail,
@@ -19,6 +19,7 @@ from app.core.db import get_session
 from app.models.sheet import SHEET_PHASE_ARCHIVED
 from app.models.user import Player
 from app.repositories import sheet_repo
+from app.repositories import sheet_manager_repo
 from app.repositories.player_repo import set_last_sheet
 from app.repositories.sheet_repo import SheetArchived
 from app.schemas.sheet import (
@@ -141,7 +142,8 @@ async def get_sheet(
         await session.commit()
     except Exception:
         logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)
-    return _to_detail(sheet, ordered, owner_name, contributors_map)
+    managers = await sheet_manager_repo.list_managers(session, sheet_id)
+    return _to_detail(sheet, ordered, owner_name, contributors_map, managers)
 
 
 @router.patch("/{sheet_id}", response_model=SheetDetail)
@@ -152,7 +154,7 @@ async def patch_sheet(
     player: Player = Depends(get_current_player),
 ) -> SheetDetail:
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_manage(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     if sheet.status == SHEET_PHASE_ARCHIVED:
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
@@ -166,7 +168,8 @@ async def patch_sheet(
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
-    return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
+    managers = await sheet_manager_repo.list_managers(session, sheet_id)
+    return _to_detail(sheet, rows_with_names, owner_name, contributors_map, managers)
 
 
 @router.delete("/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -178,7 +181,7 @@ async def delete_sheet(
     from sqlalchemy.exc import IntegrityError
 
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_manage(sheet, player):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     rows_with_names = await sheet_repo.list_rows(session, sheet_id)
     progress_row_ids = [

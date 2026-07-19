@@ -12,6 +12,16 @@ class SheetPatchRequest(BaseModel):
     title: str = Field(min_length=1, max_length=128)
 
 
+class ManagerGrantRequest(BaseModel):
+    """``POST /sheets/{id}/managers``：授予协管员。
+
+    按 player_uuid 授予（MCDR 端先用 uuid_api_remake 把玩家名转 UUID 再调本端点）。
+    目标玩家须已存在于 players 表（至少登录过一次），否则 FK 失败 → api 层 422。
+    """
+
+    player_uuid: UUID
+
+
 class RowUpsertRequest(BaseModel):
     """行 upsert / 更新请求（``PUT /sheets/{sid}/rows``，单端点按 row_id 分流）。
 
@@ -88,6 +98,14 @@ class RowContributor(BaseModel):
     player_name: str
 
 
+class SheetManagerEntry(BaseModel):
+    """项目级协管员（迁移 0014）：由 owner 授予，协助管理日常协作。"""
+
+    player_uuid: UUID
+    player_name: str
+    granted_at: datetime
+
+
 class RowDetail(BaseModel):
     id: int
     item_name: str
@@ -119,6 +137,7 @@ class SheetSummary(BaseModel):
 
 class SheetDetail(SheetSummary):
     rows: list[RowDetail]
+    managers: list[SheetManagerEntry] = []
 
 
 class SheetItemIn(RowUpsertRequest):

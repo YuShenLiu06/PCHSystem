@@ -186,6 +186,17 @@ collecting ─────────────────────▶ co
 
 > 端点位于 `top_router`（与 `/me`、`/auth/*` 同级），**不在 sheets 子路由内**；schema 见 `Backend/app/schemas/auth.py::LastSheetResponse`。响应模型 `{sheet_id: int | None}`。
 
+### 5.6 项目协管员（manager，迁移 0014）
+
+| 方法 | 路径 | 鉴权 | 成功 | 说明 |
+|---|---|---|---|---|
+| GET | `/sheets/{id}/managers` | 任意登录玩家（JWT 或 service-token+UUID） | 200 `list[SheetManagerEntry]` | 列出协管员（透明，全员可读） |
+| POST | `/sheets/{id}/managers` | **tier A**：owner / 全局 admin-owner | 201 `list[SheetManagerEntry]` | body `{player_uuid}`；幂等（重复授予返 201 + 同列表）；目标须已存在（至少登录过一次，否则 422）；owner 自身拒（422）；归档态拒（409） |
+| DELETE | `/sheets/{id}/managers/{player_uuid}` | **tier A**：owner / 全局 admin-owner；**例外** self-revoke（`player_uuid == 自己`）放行 | 200 `list[SheetManagerEntry]` | 撤销协管员；目标不存在 404；归档态拒 409 |
+
+`SheetManagerEntry{player_uuid, player_name, granted_at}`；协管员列表也随 `GET /sheets/{id}` 的 `SheetDetail.managers` 字段一并返回（供前端/MCDR 算 `is_manager` 控按钮显隐）。`granted_by_uuid` 仅存表内作审计、不在响应中暴露。MCDR 命令 `!!PCH sheet manager <表id> [list|add <玩家名>|remove <玩家名>]`（add/remove 先用 `uuid_api_remake.get_uuid(玩家名)` 转 UUID 再调端点）。
+
+
 ---
 
 ## 6. 请求 / 响应模型
@@ -264,19 +275,26 @@ class SheetDetail(SheetSummary):
 
 ## 7. 权限矩阵
 
-| 动作 | 拥有者 | admin/owner 角色 | 认领人（lock 行） | 其他登录玩家 |
-|---|---|---|---|---|
-| 读（列表/详情/单表 CSV） | ✅ | ✅ | ✅ | ✅ |
-| 改表/行 upsert/删行/删表 | ✅ | ✅ | ❌ | ❌ |
-| 认领 claim（**lock** 行） | ✅ | ✅ | — | ✅ |
-| 上报交付 / 标备齐（**lock** 行） | 仅当自己是认领人 | 仅当自己是认领人 | ✅ | ❌ |
-| **贡献 contribute（progress 行）** | ✅ | ✅ | — | ✅ |
-| 解除锁定 release | ✅（lock 自认/owner；progress 仅 owner） | ✅ | ✅（lock 自放） | ❌ |
-| 打回 reject（**lock** 行） | ✅ | ✅ | ✅ | ❌ |
-| **阶段流转 advance（项目级）** | ✅ | ✅ | — | ❌ |
-| 读归档 markdown `GET /archive` | ✅ | ✅ | ✅ | ✅ |
-| 读归档资产 `GET /archive/assets/{filename}` | ✅ | ✅ | ✅ | ✅ |
-| 全量 CSV 导出 | — service token — | — | — | — |
+> **两层写权限**（迁移 0014）：**tier A 高危**（删项目/改名/授予撤销协管员/归档）仅 owner 或全局 admin/owner；**tier B 常规**（增删改行/子物品/进度/解除/打回/进入施工）另含本表**协管员**（`sheet_managers` 关系，由 owner 授予）。全局 admin/owner 超管覆盖一切。协管员是 per-sheet 关系，不复用全局 role。
+
+| 动作 | 拥有者 | admin/owner 角色 | 协管员（per-sheet） | 认领人（lock 行） | 其他登录玩家 |
+|---|---|---|---|---|---|
+| 读（列表/详情/单表 CSV） | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **tier A**：改项目名 `PATCH /sheets/{id}` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **tier A**：删项目 `DELETE /sheets/{id}` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **tier A**：授予/撤销协管员 `POST/DELETE /managers` | ✅（owner 可 self-revoke） | ✅ | ❌（self-revoke 除外） | ❌ | ❌ |
+| **tier A**：归档 `advance?to=archived` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **tier B**：行 upsert / 删行 / setreg / 子物品 addsub/delsub/setsub | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **tier B**：progress 进度覆写 `PATCH /progress` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **tier B**：进入施工 `advance?to=constructing` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| 认领 claim（**lock** 行） | ✅ | ✅ | ✅ | — | ✅ |
+| 上报交付 / 标备齐（**lock** 行） | 仅当自己是认领人 | 仅当自己是认领人 | 仅当自己是认领人 | ✅ | ❌ |
+| **贡献 contribute（progress 行）** | ✅ | ✅ | ✅ | — | ✅ |
+| 解除锁定 release | ✅（lock 自认/owner；progress 仅 owner/协管员） | ✅ | ✅（lock 自认；progress） | ✅（lock 自放） | ❌ |
+| 打回 reject（**lock** 行） | ✅ | ✅ | ✅ | ✅ | ❌ |
+| 读归档 markdown `GET /archive` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 读归档资产 `GET /archive/assets/{filename}` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 全量 CSV 导出 | — service token — | — | — | — | — |
 
 ---
 

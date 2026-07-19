@@ -13,6 +13,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **项目级协管员（manager）角色**：项目拥有者现可授予其他玩家「协管员」身份，协助日常协作。协管员拥有除「删除项目 / 改项目名 / 授予撤销协管员 / 归档」以外的全部写权限（增删改行、子物品、改物品 id、调整进度、解除锁定、打回、进入施工阶段），分担 owner 管理负担。权限按项目独立授予（A 可为项目 #1 的协管员、对项目 #2 仍是普通玩家），不复用全局超管角色。全局 admin/owner 超管保留对任意项目的全部权限。
+  - 后端：新表 `sheets.sheet_managers`（迁移 0014，PK 幂等）+ `_can_manage`（tier A 高危）/ `_can_operate`（tier B 常规）双层 helper（ORM 关系预加载，保持 sync）+ `GET/POST/DELETE /sheets/{id}/managers` 端点（owner 授予/撤销，manager 可 self-revoke）+ `SheetDetail` 响应增 `managers` 字段。授予/撤销均经统一通知层给受影响方投递（`sheet_manager_granted` 绿色正向 / `sheet_manager_revoked` 黄色提醒；self-revoke 主动卸任不通知，命令回执已告知）。
+  - 游戏端：`!!PCH sheet manager <表id> [list|add <玩家名>|remove <玩家名>]`；行级 `[改][-][子][调]` 与底部 `[进入施工][新增物品]` 按钮对协管员可见，归档/改名/删表按钮仅 owner 可见。
+  - 前端：详情页协管员管理面板（owner 可按 UUID 增删，所有人可见列表）；改名/删表/归档按钮改为 owner 专属（原 `canEdit` 拆为 `canManage` tier A + `canEdit` tier B）。
+
 ### Fixed
 
 - **归档项目写操作返回「项目已归档，只读」（issue #7）**：归档终态项目执行认领 / 交付 / 解除 / 打回 / 上交 / 调整进度 / 改名时，后端 collab 写端点此前未捕获 `SheetArchived` → HTTP 500，游戏端因此显示「表格服务暂不可用，请稍后重试」。现 collab 6 端点（claim/delivery/release/reject/contribute/progress）+ `patch_sheet`（改名）统一补归档守卫返 409「项目已归档，只读」；MCDR `_resolve` 按 detail 含「归档」/「archiv」识别归档态、显示只读回执（与行状态非法的通用 409 区分），`!!PCH sheet submit` 在拉到归档项目时整体短路、不再逐行 409 刷屏。后端补 7 条归档 409 回归用例，MCDR 补 claim 中文/英文文案 + submit 短路用例。

@@ -17,8 +17,8 @@ from app.main import create_app
 _settings = get_settings()
 _TRUNCATE_SQL = text(
     "TRUNCATE users.auth_tokens, users.jwt_revocations, users.players, "
-    "sheets.sheet_row_contributors, sheets.sheet_rows, sheets.sheets, "
-    "notifications.notifications CASCADE"
+    "sheets.sheet_managers, sheets.sheet_row_contributors, sheets.sheet_rows, "
+    "sheets.sheets, notifications.notifications CASCADE"
 )
 
 

@@ -32,9 +32,43 @@ def _resolve_item_name(item_name: str | None, registry_id: str | None) -> str:
         ) from exc
 
 
+def _is_owner(sheet: Sheet, player: Player) -> bool:
+    """表的真拥有者（owner_uuid 匹配）。用于 tier A 高危操作的前置判定。"""
+    return sheet.owner_uuid == player.uuid
+
+
+def _is_superuser(player: Player) -> bool:
+    """全局 admin/owner 角色（全服超管），对任意项目拥有全部权限（含 tier A）。"""
+    return player.role in ("admin", "owner")
+
+
+def _can_manage(sheet: Sheet, player: Player) -> bool:
+    """tier A 高危写权限：owner 或全局超管。
+
+    覆盖：删除项目、改项目名、授予/撤销协管员、归档（advance→archived）。
+    manager 无此权限。
+    """
+    return _is_owner(sheet, player) or _is_superuser(player)
+
+
+def _can_operate(sheet: Sheet, player: Player) -> bool:
+    """tier B 常规写权限：owner、全局超管，或本表 manager（迁移 0014）。
+
+    覆盖：增删改行、子物品、setreg、progress 覆写、release、reject、
+    collecting→constructing 流转。manager 可触发。
+    依赖 Sheet.managers 关系预加载（lazy="selectin"）——调用前须经
+    _load_sheet_or_404 / sheet_repo.get_sheet 路径加载。
+    """
+    if _can_manage(sheet, player):
+        return True
+    managers = getattr(sheet, "managers", None) or []
+    return any(m.player_uuid == player.uuid for m in managers)
+
+
 def _can_edit(sheet: Sheet, player: Player) -> bool:
-    """表的 owner 或 admin/owner 角色可编辑。"""
-    return sheet.owner_uuid == player.uuid or player.role in ("admin", "owner")
+    """[deprecated] tier A 别名，等价于 _can_manage。保留一轮渐进迁移，新代码请用
+    _can_manage（tier A）/ _can_operate（tier B）。"""
+    return _can_manage(sheet, player)
 
 
 async def _load_sheet_or_404(session: AsyncSession, sheet_id: int) -> Sheet:
@@ -206,10 +240,15 @@ def _to_detail(
     rows_with_names: list[tuple[SheetRow, str | None]],
     owner_name: str,
     contributors_map: dict[int, list[tuple[uuid.UUID, str]]] | None = None,
+    managers: list[tuple[uuid.UUID, str, object]] | None = None,
 ):
-    from app.schemas.sheet import RowDetail, SheetDetail
+    from app.schemas.sheet import RowDetail, SheetDetail, SheetManagerEntry
 
     cmap = contributors_map or {}
+    mgrs = [
+        SheetManagerEntry(player_uuid=pu, player_name=pn, granted_at=gat)
+        for pu, pn, gat in (managers or [])
+    ]
     return SheetDetail(
         id=sheet.id,
         owner_uuid=sheet.owner_uuid,
@@ -233,6 +272,7 @@ def _to_detail(
             )
             for r, name in rows_with_names
         ],
+        managers=mgrs,
     )
 
 
