@@ -430,10 +430,12 @@ def _render_sheet_detail(server, player_name, player_uuid, sheet_id, *, page: in
         rows = data.get("rows") or []
         status = str(data.get("status") or "collecting")
         # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
-        # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
+        # R-5 account 级：viewer_uuids 含当前玩家 → 同 account 任一 UUID 建的表都算 owner；
+        # 名字兜底兼容历史数据 / 缺 uuid 场景。
         owner_uuid = str(data.get("owner_uuid") or "")
         owner_name = data.get("owner_name") or ""
-        is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
+        viewer_uuids = {str(u) for u in (data.get("viewer_uuids") or [])}
+        is_owner = (bool(player_uuid) and player_uuid in viewer_uuids) or (owner_name == player_name)
         parts = [RText(SHEET_DETAIL_TITLE.format(
             id=data.get("id"),
             title=data.get("title") or "",
@@ -462,6 +464,7 @@ def _render_sheet_detail(server, player_name, player_uuid, sheet_id, *, page: in
                 parts.append(format_row_clickable(
                     r, sheet_id,
                     is_owner=is_owner,
+                    viewer_uuids=viewer_uuids,
                     player_name=player_name,
                     player_uuid=player_uuid,
                 ))
@@ -1200,7 +1203,8 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
         server.tell(player_name, SHEET_ARCHIVED_READONLY)
         return
     rows = view.get("rows") or []
-    actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid)
+    viewer_uuids = {str(u) for u in (view.get("viewer_uuids") or [])}
+    actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid, viewer_uuids=viewer_uuids)
 
     done_lines: list = []
     shown_skips: list = []

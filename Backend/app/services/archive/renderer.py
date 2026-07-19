@@ -14,8 +14,9 @@ context dict 约定（service.archive_sheet 注入）::
         "archived_at": datetime | None, # 归档时间（archive 时填 now(utc)）
         "constructing_at": datetime | None,  # 可选：进入施工时间（有则显）
         # contributor_totals: aggregate_contributor_totals 返回的原形态
-        # [(player_uuid, player_name, total_qty)]，已按总量降序、名字升序兜底
-        #（lock 交付 + progress 上交合并按人，剔除零和玩家）。
+        # [(represent_uuid, display_name, total_qty)]，已按总量降序、名字升序兜底
+        #（lock 交付 + progress 上交合并按账号，剔除零和玩家）。
+        # display_name = 自定义昵称优先，否则账号下最近活跃 UUID 游戏名。
         # render_contributor_stats / render_contribution_chart 用它。
         "contributor_totals": list[tuple[UUID, str, int]],
     }

@@ -160,8 +160,12 @@ _CONTRIB_DISPLAY_MAX = 2
 
 
 def _format_contributors(contributors: list) -> str:
-    """progress 行认领者列：按贡献量降序取前 N 位 + 省略号；无贡献者显「未认领」。"""
-    names = [c.get("player_name") for c in (contributors or []) if c.get("player_name")]
+    """progress 行认领者列：按贡献量降序取前 N 位 + 省略号；无贡献者显「未认领」。
+
+    贡献者按 Web 账号聚合（后端 contributors 元素含 ``display_name`` 而非 ``player_name``）；
+    display_name = 自定义昵称优先，否则账号下最近活跃 UUID 游戏名。
+    """
+    names = [c.get("display_name") for c in (contributors or []) if c.get("display_name")]
     if not names:
         return "未认领"
     if len(names) <= _CONTRIB_DISPLAY_MAX:
@@ -236,14 +240,15 @@ def format_row_clickable(
     sheet_id,
     *,
     is_owner: bool = False,
+    viewer_uuids: set[str] | None = None,
     player_name: str = "",
     player_uuid: str = "",
 ) -> RTextList:
     """格式化单行为可点击 RTextList：行文本 + 按状态/模式/查看者权限追加尾部操作按钮。
 
     按钮显隐对齐后端 RBAC（红线 R-9：真实权限以后端 403 为准，此处仅控可见性）。
-    查看者身份用 UUID 为主、名字兜底（离线模式名↔UUID 1:1，见 R-5）：
-      is_claimant = (claimant_uuid == player_uuid) or (claimant_name == player_name)
+    查看者身份用 account 级（viewer_uuids 含行的 claimant_uuid → 同 account 任一 UUID 认领都算自己，R-5）；
+    名字兜底兼容历史数据 / 缺 uuid 场景。
     lock 模式（单认领人状态机）：
       open      → [认]（任意）
       claimed   → [完]（仅认领人）/ [释]（认领人 or owner）
@@ -260,10 +265,12 @@ def format_row_clickable(
     status = str(row.get("status", ""))
     mode = int(row.get("mode", 0))
     parent_row_id = row.get("parent_row_id")
-    # 身份锚 = UUID（行上存的 claimant_uuid 是权威锚；claimant_name 仅展示，可变）；
-    # 名字兜底防 payload 偶发缺 uuid。默认 player_*="" → is_claimant=False（fails closed）。
+    # R-5 account 级：viewer_uuids 含行的 claimant_uuid → 同 account 任一 UUID 认领的行都算自己；
+    # 名字兜底防 payload 偶发缺 uuid。默认 viewer_uuids/player_* 空 → is_claimant=False（fails closed）。
+    _viewer_uuids = viewer_uuids or set()
+    claimant_uuid = str(row.get("claimant_uuid") or "")
     is_claimant = (
-        (bool(player_uuid) and str(row.get("claimant_uuid") or "") == player_uuid)
+        (bool(claimant_uuid) and claimant_uuid in _viewer_uuids)
         or (bool(player_name) and row.get("claimant_name") == player_name)
     )
     can_release_or_reject = is_claimant or is_owner

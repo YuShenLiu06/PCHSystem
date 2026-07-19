@@ -20,6 +20,11 @@
   - **游戏端**（MCDR）：`!!PCH bind`（无参 → game_init 出短码）+ `!!PCH bind <code>`（消费 web_init 码）；新增 `bind_client.py`（`/bind/token` 单头 + `/bind/consume` 双头，哨兵复用），命令树替换原 stub；短码回执灰色（敏感信息规则）。11 条 bind_client 测试，覆盖率 100%。
   - **前端**：新增身份管理（`/register` 注册永久账号、`/login` 密码登录、`/bind/confirm` 输码确认、`/bind/claim` 临时会话绑到已有账号、`/identities` 绑定列表+出码）；`/me` 升级为账号 + 绑定 UUID 列表 + 临时账号引导横幅；`AuthExchange` 按账号临时/永久状态分流到 `/register` 或 `/me`；`api/identity.ts` 统一封装（顺手把原 inline 的 `/auth/exchange`、`/me` 也补进封装）。14 条新增测试，vue-tsc + build 通过。
 
+- **sheets 业务全面升 account 级 + 自定义昵称（R-5 落地深化）**：身份主锚升级（见上）让一个 Web 账号可绑多 MC UUID，但 sheets 业务表仍按 `player_uuid` 隔离——同一人多 UUID 的贡献被拆成多条、彼此无法操作对方建的表 / 认领的行。本次把权限判定 / contributors 聚合 / 「我参与的行」高亮 / 显示名 全部升到 account 级；**存储层不动**（保留 `player_uuid` 作审计锚，零回填风险）。
+  - **后端**（migration `0015_web_account_display_name`）：`web_accounts` 加 `display_name`（玩家自定义昵称，sheets 三端显示名主源；空则回退该账号下最近活跃 UUID 的游戏名）。sheets 权限层 `_can_edit` / collab(delivery/release/reject) / rows / lifecycle 改用 account UUID 集合判断——同 account 任一 UUID 建的表 / 认领的 lock 行，其他 UUID 可编辑、deliver、release、reject（lock 语义从「单人锁定」变「账号锁定」）。contributors 按 account 聚合（同账号多 UUID 合并为一条、贡献量合并）；`SheetDetail` 新增 `viewer_uuids`（当前账号全部 UUID，下发前端/MCDR 做可见性判断）；新增 `PATCH /web-accounts/me`（设昵称）+ `resolve_display_name(s)` 批量解析（避免 N+1）。`/me` / `/auth/exchange` / `/auth/refresh` 统一经 helper 构造 `AccountBrief`（不再漏传 display_name）。业务表零迁移。
+  - **前端**：`SheetEditor` 的 owner / 认领人按钮可见性改用 `viewer_uuids`（同 account 共享，lidrem 能管理 LiuYuShen_06 建的表）；`/me` 加昵称编辑入口，删除多 UUID 下无意义的「激活/未激活」状态列；contributors / owner 显示名统一取 display_name（设昵称后刷新不再回退「未设置」）。
+  - **游戏端**（MCDR）：`!!PCH sheet view` 的 owner 特权按钮 + 行按钮（认领/交付/解除/打回）、`!!submit` 一键提交的认领人匹配，全部改用 `viewer_uuids`（同 account 任一 UUID 都算 owner / 认领人）；contributors 显示 display_name。scanner 测试 51 条全绿。
+
 ### Fixed
 
 - **归档项目写操作返回「项目已归档，只读」（issue #7）**：归档终态项目执行认领 / 交付 / 解除 / 打回 / 上交 / 调整进度 / 改名时，后端 collab 写端点此前未捕获 `SheetArchived` → HTTP 500，游戏端因此显示「表格服务暂不可用，请稍后重试」。现 collab 6 端点（claim/delivery/release/reject/contribute/progress）+ `patch_sheet`（改名）统一补归档守卫返 409「项目已归档，只读」；MCDR `_resolve` 按 detail 含「归档」/「archiv」识别归档态、显示只读回执（与行状态非法的通用 409 区分），`!!PCH sheet submit` 在拉到归档项目时整体短路、不再逐行 409 刷屏。后端补 7 条归档 409 回归用例，MCDR 补 claim 中文/英文文案 + submit 短路用例。

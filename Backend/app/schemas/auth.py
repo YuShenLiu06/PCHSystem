@@ -25,6 +25,7 @@ class AccountBrief(BaseModel):
     id: int
     is_temporary: bool
     username: str | None = None
+    display_name: str | None = None
     role: str
 
 

@@ -32,9 +32,19 @@ def _resolve_item_name(item_name: str | None, registry_id: str | None) -> str:
         ) from exc
 
 
-def _can_edit(sheet: Sheet, player: Player) -> bool:
-    """表的 owner 或 admin/owner 角色可编辑。"""
-    return sheet.owner_uuid == player.uuid or player.role in ("admin", "owner")
+def _can_edit(
+    sheet: Sheet, player: Player, account_uuids: set[uuid.UUID]
+) -> bool:
+    """表的 owner（同 account 任一 UUID）或 admin/owner 角色可编辑（R-5 主锚）。
+
+    owner 判断升 account 级：``owner_uuid in account_uuids``（同 account 任一 UUID 建的
+    表都可编辑）。role 取 account 级（``_resolve_role``，权威源 WebAccount.role）。
+    """
+    from app.api.deps import _resolve_role
+
+    if sheet.owner_uuid in account_uuids:
+        return True
+    return _resolve_role(player) in ("admin", "owner")
 
 
 async def _load_sheet_or_404(session: AsyncSession, sheet_id: int) -> Sheet:
@@ -63,6 +73,8 @@ async def notify_owner_row_event(
     *,
     sheet: Sheet,
     actor: Player,
+    actor_name: str,
+    account_uuids: set[uuid.UUID],
     category: str,
     title: str,
     body: str,
@@ -70,12 +82,12 @@ async def notify_owner_row_event(
     item_name: str,
     **payload_extra,
 ) -> None:
-    """通知 owner 行事件（收件人=owner）。actor==recipient 时跳过。"""
-    if sheet.owner_uuid == actor.uuid:
+    """通知 owner 行事件（收件人=owner）。actor 与 owner 同 account 时跳过。"""
+    if sheet.owner_uuid in account_uuids:
         return
     full_payload = {
         "actor_uuid": str(actor.uuid),
-        "actor_name": actor.current_name,
+        "actor_name": actor_name,
         **_row_payload(sheet, row_id, item_name, **payload_extra),
     }
     await notification_service.notify(
@@ -93,18 +105,20 @@ async def notify_uuids(
     uuids: list[uuid.UUID],
     *,
     actor: Player,
+    actor_name: str,
+    account_uuids: set[uuid.UUID],
     category: str,
     title: str,
     body: str,
     **payload,
 ) -> None:
-    """批量通知（贡献者群发）。actor==recipient 自动跳过。"""
+    """批量通知（贡献者群发）。recipient 与 actor 同 account 时跳过（含 actor 自身）。"""
     for recipient_uuid in uuids:
-        if recipient_uuid == actor.uuid:
+        if recipient_uuid in account_uuids:
             continue
         full_payload = {
             "actor_uuid": str(actor.uuid),
-            "actor_name": actor.current_name,
+            "actor_name": actor_name,
             **payload,
         }
         await notification_service.notify(
@@ -122,14 +136,19 @@ async def notify_rows_deleted(
     *,
     sheet: Sheet,
     actor: Player,
+    actor_name: str,
+    account_uuids: set[uuid.UUID],
     rows_with_names: list[tuple[SheetRow, str | None]],
-    contributors_map: dict[int, list[tuple[uuid.UUID, str]]] | None = None,
+    contributors_map: (
+        dict[int, list[tuple[int | None, str, list[uuid.UUID], int]]] | None
+    ) = None,
 ) -> None:
     """删行/删表后通知各行的认领人与 progress 贡献者（删行 + 删表共用，DRY）。
 
     - 认领人（claimant_uuid 非空）：``sheet_row_deleted``，标题「认领的行已被删除」。
-    - progress 行贡献者（contributors_map 命中）：同 category，标题「贡献的行已被删除」。
-    actor==recipient 自动跳过（notify_uuids 内置）。
+    - progress 行贡献者（contributors_map 命中，按 account 聚合后展开 member_uuids）：
+      同 category，标题「贡献的行已被删除」。
+    recipient 与 actor 同 account 自动跳过（notify_uuids 内置）。
     """
     cmap = contributors_map or {}
     for row, _name in rows_with_names:
@@ -139,6 +158,8 @@ async def notify_rows_deleted(
                 session,
                 [row.claimant_uuid],
                 actor=actor,
+                actor_name=actor_name,
+                account_uuids=account_uuids,
                 category="sheet_row_deleted",
                 title="认领的行已被删除",
                 body=f"[{item_name}] 已被拥有者删除，认领取消",
@@ -147,11 +168,13 @@ async def notify_rows_deleted(
                 row_id=row.id,
                 item_name=item_name,
             )
-        for contrib_uuid, _contrib_name in cmap.get(row.id, []):
+        for _aid, _dn, member_uuids, _qty in cmap.get(row.id, []):
             await notify_uuids(
                 session,
-                [contrib_uuid],
+                member_uuids,
                 actor=actor,
+                actor_name=actor_name,
+                account_uuids=account_uuids,
                 category="sheet_row_deleted",
                 title="贡献的行已被删除",
                 body=f"[{item_name}] 已被拥有者删除，贡献取消",
@@ -205,7 +228,11 @@ def _to_detail(
     sheet: Sheet,
     rows_with_names: list[tuple[SheetRow, str | None]],
     owner_name: str,
-    contributors_map: dict[int, list[tuple[uuid.UUID, str]]] | None = None,
+    contributors_map: (
+        dict[int, list[tuple[int | None, str, list[uuid.UUID], int]]] | None
+    ) = None,
+    *,
+    viewer_uuids: set[uuid.UUID] | list[uuid.UUID] | None = None,
 ):
     from app.schemas.sheet import RowDetail, SheetDetail
 
@@ -220,14 +247,20 @@ def _to_detail(
         archived_at=sheet.archived_at,
         created_at=sheet.created_at,
         updated_at=sheet.updated_at,
+        viewer_uuids=list(viewer_uuids or []),
         rows=[
             RowDetail(
                 **_row_dict(
                     r,
                     name,
                     [
-                        {"player_uuid": pu, "player_name": pn}
-                        for pu, pn in cmap.get(r.id, [])
+                        {
+                            "account_id": aid,
+                            "display_name": dn,
+                            "member_uuids": mids,
+                            "contributed_qty": qty,
+                        }
+                        for aid, dn, mids, qty in cmap.get(r.id, [])
                     ],
                 )
             )
@@ -253,7 +286,12 @@ async def _row_response(
     if with_contributors:
         contrib_map = await sheet_repo.list_contributors(session, [row.id])
         contributors = [
-            {"player_uuid": pu, "player_name": pn}
-            for pu, pn in contrib_map.get(row.id, [])
+            {
+                "account_id": aid,
+                "display_name": dn,
+                "member_uuids": mids,
+                "contributed_qty": qty,
+            }
+            for aid, dn, mids, qty in contrib_map.get(row.id, [])
         ]
     return RowDetail(**_row_dict(row, name, contributors))

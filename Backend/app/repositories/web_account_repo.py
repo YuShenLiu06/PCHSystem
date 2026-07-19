@@ -80,3 +80,71 @@ async def attach_player(
         .values(web_account_id=account_id)
     )
     await session.flush()
+
+
+async def resolve_display_names(
+    session: AsyncSession,
+    player_uuids: list[uuid.UUID],
+) -> dict[uuid.UUID, str]:
+    """批量解析显示名（sheets 三端主源，避免 list 路径 N+1）。
+
+    对每个 ``player_uuid`` 解析（优先级递减）：
+    1. 其 ``WebAccount.display_name`` 非空 → 映射到 display_name（同 account 所有 UUID 共享）。
+    2. 否则 → 该 account 下 ``last_seen_at`` 最新 Player 的 ``current_name``。
+    3. 未绑 account（``web_account_id IS NULL``）→ 自身 ``current_name``。
+
+    返回 ``{player_uuid: name}``；入参为空返 ``{}``。
+    """
+    if not player_uuids:
+        return {}
+
+    unique = list(dict.fromkeys(player_uuids))  # 去重保序
+
+    # 一次查全部目标 player + 其 account 的 display_name
+    target_stmt = (
+        select(
+            Player.uuid,
+            Player.current_name,
+            Player.web_account_id,
+            WebAccount.display_name,
+        )
+        .select_from(Player)
+        .outerjoin(WebAccount, WebAccount.id == Player.web_account_id)
+        .where(Player.uuid.in_(unique))
+    )
+    targets = (await session.execute(target_stmt)).all()
+
+    # 涉及的 account → 回退名（account 下 last_seen_at 最新 player 的 current_name）
+    account_ids = {t.web_account_id for t in targets if t.web_account_id is not None}
+    fallback_by_account: dict[int, str] = {}
+    if account_ids:
+        members_stmt = (
+            select(Player.web_account_id, Player.current_name, Player.last_seen_at)
+            .where(Player.web_account_id.in_(account_ids))
+        )
+        latest_by_account: dict[int, tuple] = {}  # account_id -> (current_name, last_seen_at)
+        for m in (await session.execute(members_stmt)).all():
+            cur = latest_by_account.get(m.web_account_id)
+            if cur is None or m.last_seen_at > cur[1]:
+                latest_by_account[m.web_account_id] = (m.current_name, m.last_seen_at)
+        fallback_by_account = {
+            aid: name for aid, (name, _ts) in latest_by_account.items()
+        }
+
+    result: dict[uuid.UUID, str] = {}
+    for t in targets:
+        if t.display_name:
+            result[t.uuid] = t.display_name
+        elif t.web_account_id is not None and t.web_account_id in fallback_by_account:
+            result[t.uuid] = fallback_by_account[t.web_account_id]
+        else:
+            result[t.uuid] = t.current_name
+    return result
+
+
+async def resolve_display_name(
+    session: AsyncSession, player_uuid: uuid.UUID
+) -> str:
+    """单条显示名解析（复用 :func:`resolve_display_names`）。"""
+    names = await resolve_display_names(session, [player_uuid])
+    return names.get(player_uuid, str(player_uuid))

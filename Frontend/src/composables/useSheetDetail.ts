@@ -134,7 +134,8 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
   const canEdit = computed(() => {
     const p = auth.player
     if (!p || !sheet.value) return false
-    return sheet.value.owner_uuid === p.uuid || p.role === 'admin' || p.role === 'owner'
+    // R-5 account 级：同 account 任一 UUID 建的表都可编辑（viewer_uuids 由后端按 account 聚合下发）
+    return sheet.value.viewer_uuids.includes(p.uuid) || p.role === 'admin' || p.role === 'owner'
   })
 
   // 已归档 = 只读终态：隐藏所有写操作。R-9：仅可见性，真实拒绝在后端 409
@@ -147,8 +148,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
 
   // 当前玩家是否为该行的认领人
   function isClaimant(row: RowDetail): boolean {
-    const p = auth.player
-    return !!p && !!row.claimant_uuid && p.uuid === row.claimant_uuid
+    // R-5 account 级：同 account 任一 UUID 认领的行都算自己（可 deliver/release/reject）
+    const uuids = sheet.value?.viewer_uuids ?? []
+    return !!row.claimant_uuid && uuids.includes(row.claimant_uuid)
   }
 
   // 获取父行模式（子行专用）

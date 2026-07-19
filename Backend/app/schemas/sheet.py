@@ -82,10 +82,16 @@ class RowProgressRequest(BaseModel):
 
 
 class RowContributor(BaseModel):
-    """progress 行的贡献者（上交过材料的玩家）。"""
+    """progress 行的贡献者（按 Web 账号聚合：同账号多 UUID 合并为一条）。
 
-    player_uuid: UUID
-    player_name: str
+    ``account_id`` 为 None 表示该贡献者未绑 Web 账号（历史数据），按 player 退化为一对一。
+    ``display_name`` 统一显示名（自定义昵称优先，否则该账号下最近活跃 UUID 的游戏名）。
+    """
+
+    account_id: int | None = None
+    display_name: str
+    member_uuids: list[UUID]
+    contributed_qty: int
 
 
 class RowDetail(BaseModel):
@@ -119,6 +125,10 @@ class SheetSummary(BaseModel):
 
 class SheetDetail(SheetSummary):
     rows: list[RowDetail]
+    # 当前查看者所属 Web 账号的全部 UUID（R-5 主锚：权限/可见性升 account 级）。
+    # 前端/MCDR 据此判断 owner/claimant 可见性（含同 account 多 UUID 共享权限）；
+    # 真实权限仍以后端 RBAC 为准（R-9），此处仅服务可见性。
+    viewer_uuids: list[UUID] = Field(default_factory=list)
 
 
 class SheetItemIn(RowUpsertRequest):

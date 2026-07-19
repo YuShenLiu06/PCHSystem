@@ -272,11 +272,11 @@ function back(): void {
               <template v-if="row.contributors && row.contributors.length">
                 <el-tag
                   v-for="c in row.contributors"
-                  :key="c.player_uuid"
+                  :key="c.account_id ?? c.member_uuids[0]"
                   size="small"
                   style="margin: 2px;"
                 >
-                  {{ c.player_name }}
+                  {{ c.display_name }}
                 </el-tag>
               </template>
               <span v-else style="color: #aaa;">—</span>

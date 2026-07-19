@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchMe, confirmBind, type MeResponse } from '../api/identity'
+import { fetchMe, confirmBind, updateMyDisplayName, type MeResponse } from '../api/identity'
 import { extractApiError } from '../utils/error'
 
 const router = useRouter()
@@ -57,6 +57,41 @@ function goToClaim(): void {
   router.push('/bind/claim')
 }
 
+// 昵称编辑（display_name = sheets 三端显示名主源；空则回退游戏名）
+const editingName = ref(false)
+const displayNameInput = ref('')
+const savingName = ref(false)
+
+function startEditName(): void {
+  displayNameInput.value = me.value?.account.display_name ?? ''
+  editingName.value = true
+}
+
+function cancelEditName(): void {
+  editingName.value = false
+}
+
+async function saveDisplayName(): Promise<void> {
+  const name = displayNameInput.value.trim()
+  if (!name) {
+    ElMessage.warning('昵称不能为空')
+    return
+  }
+  savingName.value = true
+  try {
+    const resp = await updateMyDisplayName(name)
+    if (me.value) {
+      me.value = { ...me.value, account: resp.account }
+    }
+    editingName.value = false
+    ElMessage.success('昵称已更新')
+  } catch (e: unknown) {
+    ElMessage.error(extractApiError(e) ?? '保存失败')
+  } finally {
+    savingName.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -90,6 +125,24 @@ onMounted(load)
       <div v-if="me">
         <p><strong>账号 ID：</strong>{{ me.account.id }}</p>
         <p><strong>用户名：</strong>{{ me.account.username ?? '(未设置)' }}</p>
+        <p>
+          <strong>昵称：</strong>
+          <span v-if="!editingName">{{ me.account.display_name ?? '(未设置，显示游戏名)' }}</span>
+          <el-input
+            v-else
+            v-model="displayNameInput"
+            size="small"
+            style="width: 200px; margin-left: 8px;"
+            maxlength="64"
+            placeholder="用于项目贡献/拥有者显示"
+            @keyup.enter="saveDisplayName"
+          />
+          <el-button v-if="!editingName" link type="primary" size="small" style="margin-left: 8px;" @click="startEditName">修改</el-button>
+          <template v-else>
+            <el-button type="primary" size="small" :loading="savingName" @click="saveDisplayName">保存</el-button>
+            <el-button size="small" @click="cancelEditName">取消</el-button>
+          </template>
+        </p>
         <p><strong>角色：</strong>{{ me.account.role }}</p>
         <p><strong>类型：</strong>
           <el-tag :type="me.account.is_temporary ? 'warning' : 'success'" size="small">
@@ -105,12 +158,6 @@ onMounted(load)
         <el-table-column prop="uuid" label="UUID" width="280" />
         <el-table-column prop="name" label="玩家名" width="160" />
         <el-table-column prop="role" label="角色" width="120" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.uuid === me.active_uuid" type="success" size="small">当前激活</el-tag>
-            <el-tag v-else type="info" size="small">未激活</el-tag>
-          </template>
-        </el-table-column>
       </el-table>
       <el-empty v-if="me && me.players.length === 0" description="暂无绑定的游戏身份">
         <el-button type="primary" @click="openBindDialog">绑定新身份</el-button>

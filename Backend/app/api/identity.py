@@ -36,6 +36,7 @@ from app.schemas.identity import (
     MyAccountResponse,
     PasswordLoginRequest,
     RegisterRequest,
+    UpdateDisplayNameRequest,
 )
 
 router = APIRouter(prefix="/web-accounts", tags=["identity"])
@@ -45,11 +46,12 @@ _settings = get_settings()
 
 
 def _account_brief(account: WebAccount) -> AccountBrief:
-    """构造 AccountBrief（含 role）。"""
+    """构造 AccountBrief（含 role + display_name）。"""
     return AccountBrief(
         id=account.id,
         is_temporary=account.is_temporary,
         username=account.username,
+        display_name=account.display_name,
         role=account.role,
     )
 
@@ -148,6 +150,26 @@ async def get_my_account(
     session: AsyncSession = Depends(get_session),
 ) -> MyAccountResponse:
     """返回当前账号 + 绑定 players 列表（前端 MyAccountResponse shape）。"""
+    players = await web_account_repo.list_players(session, account.id)
+    return MyAccountResponse(
+        account=_account_brief(account),
+        players=[_player_brief(p, account.role) for p in players],
+    )
+
+
+@router.patch("/me", response_model=MyAccountResponse)
+async def update_my_account(
+    body: UpdateDisplayNameRequest,
+    account: WebAccount = Depends(get_current_account),
+    session: AsyncSession = Depends(get_session),
+) -> MyAccountResponse:
+    """更新当前账号的自定义昵称（display_name，sheets 三端显示名主源）。
+
+    空白 strip；schema ``min_length=1`` 拒纯空白（与迁移 CHECK 一致）。
+    """
+    account.display_name = body.display_name.strip()
+    await session.commit()
+    await session.refresh(account)
     players = await web_account_repo.list_players(session, account.id)
     return MyAccountResponse(
         account=_account_brief(account),

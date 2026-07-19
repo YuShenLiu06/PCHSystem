@@ -33,7 +33,7 @@ describe('auth store', () => {
   })
 
   const player: PlayerBrief = { uuid: 'uuid-123', name: 'Steve', role: 'player' }
-  const account: AccountBrief = { id: 1, is_temporary: false, username: 'steve', role: 'user' }
+  const account: AccountBrief = { id: 1, is_temporary: false, username: 'steve', display_name: null, role: 'user' }
   const tokens = { access_token: 'acc', refresh_token: 'ref' }
 
   describe('初始状态', () => {

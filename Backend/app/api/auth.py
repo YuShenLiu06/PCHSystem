@@ -33,6 +33,21 @@ top_router = APIRouter(tags=["me"])
 _settings = get_settings()
 
 
+def _account_brief(account: WebAccount) -> AccountBrief:
+    """构造 AccountBrief（含 display_name）。
+
+    exchange / refresh / /me 三端点共用，避免逐处手搓遗漏字段
+    （display_name 曾在 /me 漏传 → 刷新后昵称回退显示「未设置」，bug 2026-07-19）。
+    """
+    return AccountBrief(
+        id=account.id,
+        is_temporary=account.is_temporary,
+        username=account.username,
+        display_name=account.display_name,
+        role=account.role,
+    )
+
+
 @router.post("/token", response_model=TokenIssueResponse)
 async def post_token(
     body: TokenIssueRequest,
@@ -82,12 +97,7 @@ async def post_exchange(
         access_token=access,
         refresh_token=refresh,
         player=PlayerBrief(uuid=player.uuid, name=player.current_name, role=account.role),
-        account=AccountBrief(
-            id=account.id,
-            is_temporary=account.is_temporary,
-            username=account.username,
-            role=account.role,
-        ),
+        account=_account_brief(account),
     )
 
 
@@ -133,12 +143,7 @@ async def post_refresh(
         access_token=access,
         refresh_token=refresh,
         player=PlayerBrief(uuid=player.uuid, name=player.current_name, role=account.role),
-        account=AccountBrief(
-            id=account.id,
-            is_temporary=account.is_temporary,
-            username=account.username,
-            role=account.role,
-        ),
+        account=_account_brief(account),
     )
 
 
@@ -151,12 +156,7 @@ async def get_me(
     """返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。"""
     players = await web_account_repo.list_players(session, account.id)
     return MeResponse(
-        account=AccountBrief(
-            id=account.id,
-            is_temporary=account.is_temporary,
-            username=account.username,
-            role=account.role,
-        ),
+        account=_account_brief(account),
         players=[
             PlayerBrief(uuid=p.uuid, name=p.current_name, role=account.role)
             for p in players

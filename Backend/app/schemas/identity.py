@@ -7,7 +7,7 @@
 import re
 import uuid
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _validate_username(v: str) -> str:
@@ -87,6 +87,15 @@ class BindConsumeRequest(BaseModel):
 
 class BindConfirmRequest(BaseModel):
     short_code: str
+
+
+class UpdateDisplayNameRequest(BaseModel):
+    """PATCH /web-accounts/me 请求体：设置自定义昵称（sheets 三端显示名主源）。
+
+    空白 strip；schema ``min_length=1`` 拒纯空白（与迁移 CHECK 一致）。
+    """
+
+    display_name: str = Field(min_length=1, max_length=64)
 
 
 # ===== 响应模型（引用 schemas.auth 的 AccountBrief/PlayerBrief 保持单一来源） =====

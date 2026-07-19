@@ -1,12 +1,17 @@
 """表级 CRUD + CSV 导出（原 sheets.py 块2）。"""
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_player, require_service_token
+from app.api.deps import (
+    get_current_account_uuids,
+    get_current_player,
+    require_service_token,
+)
 from app.api.sheets._shared import (
     _can_edit,
     _load_sheet_or_404,
@@ -18,7 +23,7 @@ from app.api.sheets._shared import (
 from app.core.db import get_session
 from app.models.sheet import SHEET_PHASE_ARCHIVED
 from app.models.user import Player
-from app.repositories import sheet_repo
+from app.repositories import sheet_repo, web_account_repo
 from app.repositories.player_repo import set_last_sheet
 from app.repositories.sheet_repo import SheetArchived
 from app.schemas.sheet import (
@@ -39,11 +44,13 @@ async def create_sheet(
     body: SheetCreateRequest,
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
     sheet = await sheet_repo.create_sheet(session, player.uuid, body.title)
     await session.commit()
     await session.refresh(sheet)
-    return _to_detail(sheet, [], player.current_name)
+    owner_name = await web_account_repo.resolve_display_name(session, player.uuid)
+    return _to_detail(sheet, [], owner_name, viewer_uuids=account_uuids)
 
 
 @router.post("/from-items", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
@@ -51,6 +58,7 @@ async def create_sheet_from_items(
     body: SheetFromItemsRequest,
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
     """按材料清单一次性建表 + 批量行（mode 默认 lock）；调用方=拥有者。单事务 commit。"""
     sheet = await sheet_repo.create_sheet(session, player.uuid, body.title)
@@ -80,7 +88,7 @@ async def create_sheet_from_items(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
     sheet_obj, owner_name = result
     rows_with_names = await sheet_repo.list_rows(session, sheet.id)
-    return _to_detail(sheet_obj, rows_with_names, owner_name)
+    return _to_detail(sheet_obj, rows_with_names, owner_name, viewer_uuids=account_uuids)
 
 
 @router.get("", response_model=list[SheetSummary])
@@ -93,19 +101,16 @@ async def list_sheets(
     ),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> list[SheetSummary]:
-    from app.repositories import web_account_repo
-
     owner_uuid = player.uuid if owner == "me" else None
 
-    # 聚合查询：按 account 展开 UUID 列表（未绑则单 UUID）
-    if player.web_account_id:
-        uuids = await web_account_repo.list_uuids(session, player.web_account_id)
-    else:
-        uuids = [player.uuid]
-
+    # 聚合查询：按 account 的 UUID 集合参与优先排序（未绑账号回退 {self.uuid}）
     sheets_with_names = await sheet_repo.list_sheets(
-        session, owner_uuid=owner_uuid, status_filter=status_filter, player_uuids=uuids
+        session,
+        owner_uuid=owner_uuid,
+        status_filter=status_filter,
+        player_uuids=list(account_uuids),
     )
     return [_to_summary(s, name) for s, name in sheets_with_names]
 
@@ -127,6 +132,7 @@ async def get_sheet(
     q: str | None = Query(default=None, description="按 item_name/registry_id 大小写不敏感过滤行"),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ):
     result = await sheet_repo.get_sheet(session, sheet_id)
     if result is None:
@@ -139,18 +145,23 @@ async def get_sheet(
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
+    # 「我参与的行」高亮升 account 级：同 account 的 UUID 贡献过的行都算我的
     my_row_ids = {
         rid
         for rid, members in contributors_map.items()
-        if any(pu == player.uuid for pu, _ in members)
+        if any(
+            (player.web_account_id is not None and aid == player.web_account_id)
+            or bool(account_uuids & set(member_uuids))
+            for aid, _dn, member_uuids, _qty in members
+        )
     }
-    ordered = sort_sheet_rows(rows_with_names, player.uuid, my_row_ids)
+    ordered = sort_sheet_rows(rows_with_names, account_uuids, my_row_ids)
     try:
         await set_last_sheet(session, player.uuid, sheet_id)
         await session.commit()
     except Exception:
         logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)
-    return _to_detail(sheet, ordered, owner_name, contributors_map)
+    return _to_detail(sheet, ordered, owner_name, contributors_map, viewer_uuids=account_uuids)
 
 
 @router.patch("/{sheet_id}", response_model=SheetDetail)
@@ -159,9 +170,10 @@ async def patch_sheet(
     body: SheetPatchRequest,
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_edit(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     if sheet.status == SHEET_PHASE_ARCHIVED:
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
@@ -175,7 +187,7 @@ async def patch_sheet(
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
-    return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
+    return _to_detail(sheet, rows_with_names, owner_name, contributors_map, viewer_uuids=account_uuids)
 
 
 @router.delete("/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -183,11 +195,12 @@ async def delete_sheet(
     sheet_id: int,
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> Response:
     from sqlalchemy.exc import IntegrityError
 
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_edit(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     rows_with_names = await sheet_repo.list_rows(session, sheet_id)
     progress_row_ids = [
@@ -198,10 +211,13 @@ async def delete_sheet(
         if progress_row_ids
         else {}
     )
+    actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
     await notify_rows_deleted(
         session,
         sheet=sheet,
         actor=player,
+        actor_name=actor_name,
+        account_uuids=account_uuids,
         rows_with_names=rows_with_names,
         contributors_map=contributors_map,
     )

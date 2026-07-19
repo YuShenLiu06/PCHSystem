@@ -1,11 +1,12 @@
 """项目阶段 advance + 归档读（原 sheets.py 块5）。"""
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_player
+from app.api.deps import get_current_account_uuids, get_current_player
 from app.api.sheets._shared import (
     _can_edit,
     _load_sheet_or_404,
@@ -52,7 +53,9 @@ def _infer_advance_target(current_status: str) -> str:
     return SHEET_PHASE_ARCHIVED
 
 
-async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int):
+async def _sheet_detail_or_404(
+    session: AsyncSession, sheet_id: int, *, viewer_uuids: set[uuid.UUID]
+):
     """重新构造 SheetDetail（advance 后取最新 sheet + rows + contributors）。"""
     result = await sheet_repo.get_sheet(session, sheet_id)
     if result is None:
@@ -62,7 +65,9 @@ async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int):
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
-    return _to_detail(sheet, rows_with_names, owner_name, contributors_map)
+    return _to_detail(
+        sheet, rows_with_names, owner_name, contributors_map, viewer_uuids=viewer_uuids
+    )
 
 
 @router.post("/{sheet_id}/advance", response_model=SheetDetail)
@@ -73,6 +78,7 @@ async def advance_sheet_phase(
     ),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
     """项目阶段流转（owner/admin）。"""
     if to is not None and to not in _VALID_ADVANCE_TARGETS:
@@ -81,7 +87,7 @@ async def advance_sheet_phase(
             f"invalid 'to' target: {to} (expected constructing|archived)",
         )
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player):
+    if not _can_edit(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
 
     target = to if to is not None else _infer_advance_target(sheet.status)
@@ -121,7 +127,7 @@ async def advance_sheet_phase(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
         await session.commit()
         await session.refresh(advanced)
-    return await _sheet_detail_or_404(session, sheet_id)
+    return await _sheet_detail_or_404(session, sheet_id, viewer_uuids=account_uuids)
 
 
 @router.get("/{sheet_id}/archive", response_class=PlainTextResponse)

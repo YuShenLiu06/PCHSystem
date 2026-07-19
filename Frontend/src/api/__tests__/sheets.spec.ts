@@ -297,7 +297,7 @@ describe('sheets API client', () => {
         mode: 1,
         status: 'claimed',
         delivered_qty: 32,
-        contributors: [{ player_uuid: 'me', player_name: 'Me' }],
+        contributors: [{ account_id: null, display_name: 'Me', member_uuids: ['me'], contributed_qty: 32 }],
       }
       mocked.post.mockResolvedValue({ data: contributed })
       const result = await contributeRow(1, 10, 32)
@@ -313,7 +313,7 @@ describe('sheets API client', () => {
         mode: 1,
         status: 'done',
         delivered_qty: 64,
-        contributors: [{ player_uuid: 'me', player_name: 'Me' }],
+        contributors: [{ account_id: null, display_name: 'Me', member_uuids: ['me'], contributed_qty: 64 }],
       }
       mocked.patch.mockResolvedValue({ data: adjusted })
       const result = await setRowProgress(1, 10, 64)

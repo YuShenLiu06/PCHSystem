@@ -7,6 +7,7 @@ export interface AccountBrief {
   id: number
   is_temporary: boolean
   username: string | null
+  display_name: string | null
   role: string
 }
 
@@ -78,6 +79,14 @@ export async function register(username: string, password: string): Promise<Auth
 /** GET /web-accounts/me —— 取账号详情（含绑定玩家列表） */
 export async function getMyAccount(): Promise<MyAccountResponse> {
   const { data } = await http.get<MyAccountResponse>('/web-accounts/me')
+  return data
+}
+
+/** PATCH /web-accounts/me —— 设置自定义昵称（display_name，sheets 三端显示名主源） */
+export async function updateMyDisplayName(displayName: string): Promise<MyAccountResponse> {
+  const { data } = await http.patch<MyAccountResponse>('/web-accounts/me', {
+    display_name: displayName,
+  })
   return data
 }
 

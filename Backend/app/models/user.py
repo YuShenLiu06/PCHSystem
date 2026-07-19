@@ -22,6 +22,9 @@ class WebAccount(Base):
     password_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
     wiki_user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 玩家自定义昵称（sheets 三端统一显示名主源）；为空时应用层回退到
+    # 该账号下 last_seen_at 最新 UUID 的 current_name。不用 username（那是 Web 登录账号名）。
+    display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

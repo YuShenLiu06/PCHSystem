@@ -11,7 +11,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import get_session
 from app.core.jwt import decode_token
 from app.models.user import Player, WebAccount
-from app.repositories import player_repo
+from app.repositories import player_repo, web_account_repo
 
 logger = logging.getLogger(__name__)
 _settings: Settings = get_settings()
@@ -172,6 +172,24 @@ async def get_current_player(
     return await _player_from_service_token(
         session, request, x_service_token, x_player_uuid
     )
+
+
+async def get_current_account_uuids(
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> set[uuid.UUID]:
+    """解析当前 player 同 WebAccount 的全部 UUID 集合（含自己）。
+
+    用于 sheets 权限/聚合层升级到 account 级（R-5 主锚落地）：owner/claimant 校验
+    改为 ``uuid in account_uuids``、contributors 聚合/「我参与的行」高亮按集合命中。
+
+    未绑 account（``web_account_id IS NULL``，历史数据 / !!PCH login 自动挂临时账号前）
+    回退 ``{player.uuid}`` 单元素集合，向后兼容。
+    """
+    if player.web_account_id is None:
+        return {player.uuid}
+    uuids = await web_account_repo.list_uuids(session, player.web_account_id)
+    return set(uuids) | {player.uuid}
 
 
 async def get_current_account(
