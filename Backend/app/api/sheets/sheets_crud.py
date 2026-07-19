@@ -94,9 +94,18 @@ async def list_sheets(
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
 ) -> list[SheetSummary]:
+    from app.repositories import web_account_repo
+
     owner_uuid = player.uuid if owner == "me" else None
+
+    # 聚合查询：按 account 展开 UUID 列表（未绑则单 UUID）
+    if player.web_account_id:
+        uuids = await web_account_repo.list_uuids(session, player.web_account_id)
+    else:
+        uuids = [player.uuid]
+
     sheets_with_names = await sheet_repo.list_sheets(
-        session, owner_uuid=owner_uuid, status_filter=status_filter, player_uuid=player.uuid
+        session, owner_uuid=owner_uuid, status_filter=status_filter, player_uuids=uuids
     )
     return [_to_summary(s, name) for s, name in sheets_with_names]
 

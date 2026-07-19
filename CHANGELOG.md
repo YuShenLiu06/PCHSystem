@@ -13,6 +13,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **身份主锚升级：Web 账号绑定多 MC UUID（完善 `!!PCH bind`）**：解决多服务器 / 离线改名 / 多账号场景下身份与积分无法统一的问题。一个 Web 账号（主锚）可绑定多个 MC UUID（子身份），积分与贡献按账号聚合（R-5 落地）。
+  - **后端**（migration `0014_web_accounts_bind`）：新表 `users.web_accounts`（username/password_hash；`username IS NULL` = 临时账号，`!!PCH login` 仍可直接用，给出临时账号引导注册或绑定）+ `users.bind_tokens`（双向绑定短码，方向 `game_init`/`web_init`）；`players` 加 `web_account_id` FK（不回填，下次 login 自动挂临时账号）。JWT `sub` 由 `player_uuid` 改为 `web_account_id`（+ `active_uuid` claim）——**breaking：现有会话失效需重登**；`role` 权威源迁到 account 级。新端点：`POST /auth/login`（密码登录）、`POST /web-accounts/register`（临时→永久）、`GET /web-accounts/me`、`POST /bind/{token,issue,confirm,consume,claim}`（双向绑定闭环；game_init 走 service-token、web_init 走 JWT）。聚合查询（sheets 参与优先 / notifications / 归档贡献排行）改 `JOIN players → GROUP BY web_account_id`，业务表零迁移；`score_ledger`（未建）将来建时直接加 `owner_account_id`。新增依赖 `bcrypt`。26 条 identity 集成测试。
+  - **游戏端**（MCDR）：`!!PCH bind`（无参 → game_init 出短码）+ `!!PCH bind <code>`（消费 web_init 码）；新增 `bind_client.py`（`/bind/token` 单头 + `/bind/consume` 双头，哨兵复用），命令树替换原 stub；短码回执灰色（敏感信息规则）。11 条 bind_client 测试，覆盖率 100%。
+  - **前端**：新增身份管理（`/register` 注册永久账号、`/login` 密码登录、`/bind/confirm` 输码确认、`/bind/claim` 临时会话绑到已有账号、`/identities` 绑定列表+出码）；`/me` 升级为账号 + 绑定 UUID 列表 + 临时账号引导横幅；`AuthExchange` 按账号临时/永久状态分流到 `/register` 或 `/me`；`api/identity.ts` 统一封装（顺手把原 inline 的 `/auth/exchange`、`/me` 也补进封装）。14 条新增测试，vue-tsc + build 通过。
+
 ### Fixed
 
 - **归档项目写操作返回「项目已归档，只读」（issue #7）**：归档终态项目执行认领 / 交付 / 解除 / 打回 / 上交 / 调整进度 / 改名时，后端 collab 写端点此前未捕获 `SheetArchived` → HTTP 500，游戏端因此显示「表格服务暂不可用，请稍后重试」。现 collab 6 端点（claim/delivery/release/reject/contribute/progress）+ `patch_sheet`（改名）统一补归档守卫返 409「项目已归档，只读」；MCDR `_resolve` 按 detail 含「归档」/「archiv」识别归档态、显示只读回执（与行状态非法的通用 409 区分），`!!PCH sheet submit` 在拉到归档项目时整体短路、不再逐行 409 刷屏。后端补 7 条归档 409 回归用例，MCDR 补 claim 中文/英文文案 + submit 短路用例。

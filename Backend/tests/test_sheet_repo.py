@@ -1400,9 +1400,9 @@ async def test_list_sheets_involved_first_ordering():
         await sheet_repo.contribute_row(s, s4.id, row.id, alice, 10)
         await s.commit()
 
-    # Act：查询 alice 的列表（player_uuid=alice）
+    # Act：查询 alice 的列表（player_uuids=[alice]；账号级聚合传 UUID 列表）
     async with async_session_factory() as s:
-        sheets = await sheet_repo.list_sheets(s, player_uuid=alice)
+        sheets = await sheet_repo.list_sheets(s, player_uuids=[alice])
 
     # Assert：alice 参与的表（s1, s2, s3, s4）应在前面，未参与的（s5）在后面
     # 组内按 id 升序

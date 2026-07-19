@@ -98,28 +98,50 @@ async def notify(
 
 
 async def fetch_pending(
-    session: AsyncSession, recipient_uuid: UUID, limit: int = 50
+    session: AsyncSession, recipient_uuids: UUID | list[UUID], limit: int = 50
 ) -> list[Notification]:
-    return await notification_repo.fetch_pending(session, recipient_uuid, limit)
+    """拉取未投递通知。``recipient_uuids`` 接受单 UUID（向后兼容）或列表（账号级聚合）。"""
+    if isinstance(recipient_uuids, UUID):
+        uuids: list[UUID] = [recipient_uuids]
+    else:
+        uuids = list(recipient_uuids)
+    return await notification_repo.fetch_pending(session, uuids, limit)
 
 
 async def mark_delivered(
-    session: AsyncSession, ids: list[int], recipient_uuid: UUID
+    session: AsyncSession,
+    ids: list[int],
+    recipient_uuids: UUID | list[UUID],
 ) -> int:
-    return await notification_repo.mark_delivered(session, ids, recipient_uuid)
+    """标投递：接受单 UUID（向后兼容）或列表（账号级聚合）。"""
+    return await notification_repo.mark_delivered(session, ids, recipient_uuids)
 
 
 async def mark_read(
-    session: AsyncSession, notification_id: int, recipient_uuid: UUID
+    session: AsyncSession,
+    notification_id: int,
+    recipient_uuids: UUID | list[UUID],
 ) -> bool:
-    return await notification_repo.mark_read(session, notification_id, recipient_uuid)
+    """标已读：接受单 UUID（向后兼容）或列表（账号级聚合）。"""
+    return await notification_repo.mark_read(session, notification_id, recipient_uuids)
 
 
 async def fetch_by_id_or_none(
-    session: AsyncSession, recipient_id: int, recipient_uuid: UUID
+    session: AsyncSession,
+    recipient_id: int,
+    recipient_uuids: UUID | list[UUID],
 ) -> Notification | None:
-    """读取单条并校验归属（防越权 read 返回他人通知）。返回归属该 recipient 的记录或 None。"""
+    """读取单条并校验归属（防越权 read 返回他人通知）。
+
+    接受单 UUID 或列表；归属列表中任一 UUID 即放行。
+    """
     record = await notification_repo.get_by_id(session, recipient_id)
-    if record is None or record.recipient_uuid != recipient_uuid:
+    if record is None:
+        return None
+    if isinstance(recipient_uuids, UUID):
+        allowed: list[UUID] = [recipient_uuids]
+    else:
+        allowed = list(recipient_uuids)
+    if record.recipient_uuid not in allowed:
         return None
     return record

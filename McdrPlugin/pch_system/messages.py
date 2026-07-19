@@ -52,6 +52,17 @@ LOGIN_REMOVED = "§c你已被移出白名单"
 LOGIN_UUID_FAIL = "§c获取 UUID 失败: {err}"
 PLAYER_ONLY = "§c{cmd} 只能玩家在游戏内执行"
 
+# === bind 命令回执 ===
+BIND_RATE_LIMITED = "§e操作太频繁，请稍后再试"
+BIND_SERVICE_DOWN = "§c绑定服务暂不可用，请稍后重试"
+BIND_REMOVED = "§c你已被移出白名单"
+BIND_UUID_FAIL = "§c获取 UUID 失败: {err}"
+# 短码模板：整行 §7 灰色（敏感信息禁 § 高亮），有效期分钟
+BIND_OK_TEMPLATE = "§7收到绑定请求，你的短码是 {code}（有效期 {minutes} 分钟）"
+# /bind/consume 成功回执：username 来自 AccountBrief，uuid 来自 PlayerBrief（方案 §一.10）
+BIND_CONSUME_OK = "§a绑定成功！你的 Web 账号: {username}（UUID: {uuid}）"
+BIND_CONSUME_FAIL = "§c绑定失败：{reason}"
+
 # === sheets 命令回执 ===
 SHEET_SERVICE_DOWN = "§c表格服务暂不可用，请稍后重试"
 SHEET_RATE_LIMITED = "§e操作太频繁，请稍后再试"

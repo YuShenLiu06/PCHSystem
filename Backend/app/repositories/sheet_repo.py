@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import case, delete, func, or_, select, union_all
+from sqlalchemy import String, case, delete, func, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -162,7 +162,7 @@ async def list_sheets(
     session: AsyncSession,
     owner_uuid: uuid.UUID | None = None,
     status_filter: str | None = None,
-    player_uuid: uuid.UUID | None = None,
+    player_uuids: list[uuid.UUID] | None = None,
 ) -> list[tuple[Sheet, str]]:
     """列所有表：inner join players 取 owner 游戏名。返回 [(Sheet, owner_name)]。
 
@@ -171,8 +171,8 @@ async def list_sheets(
     - "active" → status ∈ (collecting, constructing)；
     - 单值（collecting/constructing/archived）→ status == 该值。
 
-    player_uuid（参与优先排序）：
-    - 非空时，该玩家参与过的表（owner/claimant/contributor）排在前面，组内按 id 升序；
+    player_uuids（参与优先排序，account 级聚合）：
+    - 非空时，该账号任一 UUID 参与过的表（owner/claimant/contributor）排在前面；
     - None 时，按 sheet id 升序（与历史行为一致）。
     """
     stmt = (
@@ -186,17 +186,17 @@ async def list_sheets(
     elif status_filter is not None:
         stmt = stmt.where(Sheet.status == status_filter)
 
-    if player_uuid is not None:
-        # 构造「该玩家参与过的 sheet_id 集」复合 SELECT（三源 UNION）。
+    if player_uuids:
+        # 构造「该账号任一 UUID 参与过的 sheet_id 集」复合 SELECT（三源 UNION）。
         # 直接以 CompoundSelect 传入 in_()——勿加 .subquery()，否则 SQLAlchemy 会
         # 触发「Coercing Subquery into select() for IN()」告警（2.x 行为）。
         involved_ids = (
-            select(SheetRow.sheet_id).where(SheetRow.claimant_uuid == player_uuid)
+            select(SheetRow.sheet_id).where(SheetRow.claimant_uuid.in_(player_uuids))
         ).union(
             select(SheetRow.sheet_id)
             .join(SheetRowContributor, SheetRowContributor.row_id == SheetRow.id)
-            .where(SheetRowContributor.player_uuid == player_uuid),
-            select(Sheet.id).where(Sheet.owner_uuid == player_uuid),
+            .where(SheetRowContributor.player_uuid.in_(player_uuids)),
+            select(Sheet.id).where(Sheet.owner_uuid.in_(player_uuids)),
         )
         stmt = stmt.order_by(Sheet.id.in_(involved_ids).desc(), Sheet.id.asc())
     else:
@@ -831,20 +831,22 @@ async def clear_contributors(session: AsyncSession, row_id: int) -> None:
 async def aggregate_contributor_totals(
     session: AsyncSession, sheet_id: int
 ) -> list[tuple[uuid.UUID, str, int]]:
-    """聚合该 sheet 每个玩家的贡献总量（lock 交付 + progress 上交合并按人）。
+    """聚合该 sheet 每个账号的贡献总量（lock 交付 + progress 上交合并按账号）。
 
-    返回 ``[(player_uuid, player_name, total_qty)]``，按 total_qty 降序、
-    player_name 升序兜底（同贡献量下名字字母序）。
+    返回 ``[(represent_uuid, player_name, total_qty)]``，按 total_qty 降序、
+    player_name 升序兜底。
 
-    两支 union_all 后外层再 GROUP BY player：
-    - lock 支：``SUM(delivered_qty)`` GROUP BY ``claimant_uuid``（mode=LOCK 且 claimant 非空）。
-    - progress 支：``SUM(contributed_qty)`` GROUP BY ``player_uuid``（mode=PROGRESS，
-      join sheet_row_contributors）。
-    - 外层 ``HAVING SUM(qty) > 0``：剔除 lock 认领但 delivered=0、以及任何零和玩家。
-      同一玩家既是 lock claimant 又是 progress 贡献者 → 两支合并求和。
-    空 → []。
+    按 web_account_id 分组（NULL 回退按 player.uuid，用 COALESCE）：
+    - 同一账号多个 UUID 的贡献合并显示为一条。
+    - represent_uuid：账号绑定的第一个 UUID（用于标识）。
+    - player_name：该 UUID 的当前游戏名。
+
+    两支 union_all 后 JOIN Player 按 web_account_id GROUP BY：
+    - lock 支：``SUM(delivered_qty)`` GROUP BY ``claimant_uuid``（mode=LOCK）。
+    - progress 支：``SUM(contributed_qty)`` GROUP BY ``player_uuid``（mode=PROGRESS）。
+    - 外层 ``HAVING SUM(qty) > 0``：剔除零贡献玩家。
     """
-    # lock 支：claimant_uuid 是 Player.uuid 子集（FK），复用为统一 player_uuid 列。
+    # lock 支：claimant_uuid 是 Player.uuid 子集（FK）
     lock_part = (
         select(
             SheetRow.claimant_uuid.label("player_uuid"),
@@ -872,17 +874,27 @@ async def aggregate_contributor_totals(
     combined = union_all(lock_part, progress_part).subquery()
 
     total = func.sum(combined.c.qty).label("total_qty")
+    # 按 account 分组（NULL web_account_id 时退化为按 uuid 分组）：
+    # 两参数类型须一致，统一 cast 为 text。PG 无 min(uuid)，故 uuid 也 cast 为 text 取 MIN。
+    # represent_uuid 用 MIN(uuid::text)::uuid 还原；player_name 取 MIN(current_name)。
+    group_key = func.coalesce(
+        Player.web_account_id.cast(String), Player.uuid.cast(String)
+    )
     stmt = (
-        select(Player.uuid, Player.current_name, total)
+        select(
+            func.min(Player.uuid.cast(String)).label("represent_uuid_str"),
+            func.min(Player.current_name).label("player_name"),
+            total,
+        )
         .select_from(combined)
         .join(Player, Player.uuid == combined.c.player_uuid)
-        .group_by(Player.uuid, Player.current_name)
+        .group_by(group_key)
         .having(total > 0)
-        .order_by(total.desc(), Player.current_name.asc())
+        .order_by(total.desc(), func.min(Player.current_name).asc())
     )
     return [
-        (pu, pn, qty)
-        for pu, pn, qty in (await session.execute(stmt)).all()
+        (uuid.UUID(pu_str), pn, qty)
+        for pu_str, pn, qty in (await session.execute(stmt)).all()
     ]
 
 

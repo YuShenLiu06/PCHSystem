@@ -35,13 +35,18 @@ async def create(
 
 
 async def fetch_pending(
-    session: AsyncSession, recipient_uuid: uuid.UUID, limit: int = 50
+    session: AsyncSession, recipient_uuids: list[uuid.UUID], limit: int = 50
 ) -> list[Notification]:
-    """拉取某玩家未投递（delivered_at IS NULL）通知，按 created_at asc。"""
+    """拉取某账号（多 UUID）未投递通知，按 created_at asc。
+
+    recipient_uuids：账号绑定的全部 UUID 列表（由 web_account_repo.list_uuids 获取）。
+    """
+    if not recipient_uuids:
+        return []
     stmt = (
         select(Notification)
         .where(
-            Notification.recipient_uuid == recipient_uuid,
+            Notification.recipient_uuid.in_(recipient_uuids),
             Notification.delivered_at.is_(None),
         )
         .order_by(Notification.created_at.asc())
@@ -53,20 +58,24 @@ async def fetch_pending(
 async def mark_delivered(
     session: AsyncSession,
     ids: list[int],
-    recipient_uuid: uuid.UUID,
+    recipient_uuids: uuid.UUID | list[uuid.UUID],
 ) -> int:
-    """批量标投递（delivered_at=now），仅限 recipient_uuid 名下（防越权）。
+    """批量标投递（delivered_at=now），仅限 recipient_uuids 名下（防越权）。
 
-    跨玩家的 id 不命中，返回值不含它们（调用方据此判断越权 ack）。
+    接受单 UUID（向后兼容）或列表（账号级聚合，C-1 仍防跨账号）。
+    跨账号的 id 不命中，返回值不含它们。
     """
     if not ids:
+        return 0
+    uuids: list[uuid.UUID] = [recipient_uuids] if isinstance(recipient_uuids, uuid.UUID) else list(recipient_uuids)
+    if not uuids:
         return 0
     now = datetime.now(timezone.utc)
     stmt = (
         update(Notification)
         .where(
             Notification.id.in_(ids),
-            Notification.recipient_uuid == recipient_uuid,
+            Notification.recipient_uuid.in_(uuids),
             Notification.delivered_at.is_(None),
         )
         .values(delivered_at=now)
@@ -78,18 +87,21 @@ async def mark_delivered(
 async def mark_read(
     session: AsyncSession,
     notification_id: int,
-    recipient_uuid: uuid.UUID,
+    recipient_uuids: uuid.UUID | list[uuid.UUID],
 ) -> bool:
-    """单条标已读（read_at=now），仅当归属 recipient_uuid（防越权，跨玩家返 False）。
+    """单条标已读（read_at=now），仅当归属 recipient_uuids（防越权，跨账号返 False）。
 
     L-2：已读必然已投递，同步幂等置 delivered_at=now（若尚未投递）。
     """
+    uuids: list[uuid.UUID] = [recipient_uuids] if isinstance(recipient_uuids, uuid.UUID) else list(recipient_uuids)
+    if not uuids:
+        return False
     now = datetime.now(timezone.utc)
     stmt = (
         update(Notification)
         .where(
             Notification.id == notification_id,
-            Notification.recipient_uuid == recipient_uuid,
+            Notification.recipient_uuid.in_(uuids),
         )
         .values(read_at=now, delivered_at=now)
     )

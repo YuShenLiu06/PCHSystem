@@ -20,6 +20,14 @@ class TokenExchangeRequest(BaseModel):
     token: uuid.UUID
 
 
+class AccountBrief(BaseModel):
+    """Web 账号摘要（与前端 Frontend/src/api/identity.ts AccountBrief 对齐）。"""
+    id: int
+    is_temporary: bool
+    username: str | None = None
+    role: str
+
+
 class PlayerBrief(BaseModel):
     uuid: uuid.UUID
     name: str
@@ -27,10 +35,16 @@ class PlayerBrief(BaseModel):
 
 
 class TokenExchangeResponse(BaseModel):
+    """exchange / login / register / claim-bind 共用 shape（前端 AuthResponse）。
+
+    player 永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号）；
+    register/claim 边界场景下若暂无 player 允许 None，由调用方保证语义。
+    """
     access_token: str
     refresh_token: str
     token_type: str = "Bearer"
-    player: PlayerBrief
+    player: PlayerBrief | None = None
+    account: AccountBrief
 
 
 class RefreshRequest(BaseModel):
@@ -38,9 +52,10 @@ class RefreshRequest(BaseModel):
 
 
 class MeResponse(BaseModel):
-    uuid: uuid.UUID
-    name: str
-    role: str
+    """当前身份响应（升级为 account + players + active_uuid）。"""
+    account: AccountBrief
+    players: list[PlayerBrief]
+    active_uuid: uuid.UUID
 
 
 class LastSheetResponse(BaseModel):

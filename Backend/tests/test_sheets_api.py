@@ -7,7 +7,7 @@
 - CSV 全量导出：service token
 
 复用 test_auth_api.py 的 _svc_token fixture 模式（注入 service token 到 deps._settings）。
-JWT 用 app.core.jwt.create_access_token 直接签发（不经 /auth/exchange）。
+JWT 用 app.core.jwt.create_access_token 直接签发（不经 /auth/exchange），sub=account_id。
 """
 import uuid
 
@@ -16,8 +16,8 @@ import pytest
 import app.api.deps as deps
 from app.core.config import get_settings
 from app.core.db import async_session_factory
-from app.core.jwt import create_access_token
 from app.models.user import Player
+from tests.conftest import seed_player_with_account
 
 
 @pytest.fixture(autouse=True)
@@ -27,13 +27,8 @@ def _svc_token(monkeypatch):
 
 
 async def _make_player(name: str = "alice", role: str = "user") -> tuple[uuid.UUID, str]:
-    """seed player 并签 JWT，返回 (uuid, bearer)。"""
-    u = uuid.uuid4()
-    async with async_session_factory() as s:
-        s.add(Player(uuid=u, current_name=name, role=role))
-        await s.commit()
-    token = create_access_token(u, role)
-    return u, f"Bearer {token}"
+    """seed player + 临时 WebAccount 并签 JWT，返回 (uuid, bearer)。"""
+    return await seed_player_with_account(name=name, role=role)
 
 
 def _auth(bearer: str) -> dict[str, str]:
@@ -1757,8 +1752,9 @@ async def test_sub_item_duplicate_registry_conflict(client):
 
 
 @pytest.mark.asyncio
-async def test_sub_item_on_archived_sheet_409(client):
+async def test_sub_item_on_archived_sheet_409(client, tmp_path, monkeypatch):
     """子物品：archived 表建子行 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
     _, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
     # 建父行
