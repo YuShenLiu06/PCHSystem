@@ -15,8 +15,8 @@ const errorMsg = ref('')
 onMounted(async () => {
   const token = route.query.token as string | undefined
   if (!token) {
-    status.value = 'error'
-    errorMsg.value = '缺少 token'
+    // 无 token（非 !!PCH login 回链：直接访问/书签/手输）→ 转账号密码登录
+    router.replace('/login')
     return
   }
   try {

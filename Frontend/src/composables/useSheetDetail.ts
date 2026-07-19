@@ -134,8 +134,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
   const canEdit = computed(() => {
     const p = auth.player
     if (!p || !sheet.value) return false
-    // R-5 account 级：同 account 任一 UUID 建的表都可编辑（viewer_uuids 由后端按 account 聚合下发）
-    return sheet.value.viewer_uuids.includes(p.uuid) || p.role === 'admin' || p.role === 'owner'
+    // R-5 account 级：表的 owner_uuid 在我的 account UUID 集合里 → 同 account 任一 UUID 建的表都可编辑。
+    // 注意方向：viewer_uuids 是「我的」集，判断 owner 在不在此集（不是「我」在不在集——后者恒真）
+    return sheet.value.viewer_uuids.includes(sheet.value.owner_uuid) || p.role === 'admin' || p.role === 'owner'
   })
 
   // 已归档 = 只读终态：隐藏所有写操作。R-9：仅可见性，真实拒绝在后端 409

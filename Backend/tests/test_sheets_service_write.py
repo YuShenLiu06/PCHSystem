@@ -464,7 +464,11 @@ async def test_service_token_channel_contribute_equivalent(client):
     body = resp.json()
     assert body["delivered_qty"] == 4
     assert body["status"] == "claimed"
-    assert body["contributors"] == [{"player_uuid": str(bob), "player_name": "bob"}]
+    assert len(body["contributors"]) == 1
+    c = body["contributors"][0]
+    assert str(bob) in c["member_uuids"]
+    assert c["display_name"] == "bob"
+    assert c["contributed_qty"] == 4
 
 
 @pytest.mark.asyncio

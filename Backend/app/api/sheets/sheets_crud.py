@@ -157,7 +157,7 @@ async def get_sheet(
     }
     ordered = sort_sheet_rows(rows_with_names, account_uuids, my_row_ids)
     try:
-        await set_last_sheet(session, player.uuid, sheet_id)
+        await set_last_sheet(session, player, sheet_id)
         await session.commit()
     except Exception:
         logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)

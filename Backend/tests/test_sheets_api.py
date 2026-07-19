@@ -911,7 +911,7 @@ async def test_set_row_progress_by_owner_overrides_and_keeps_contributors(client
     assert body["claimant_uuid"] is None
     # contributors 保留（owner 调整不动贡献者名单）
     assert len(body["contributors"]) == 1
-    assert body["contributors"][0]["player_uuid"] == str(bob_uuid)
+    assert str(bob_uuid) in body["contributors"][0]["member_uuids"]
 
 
 @pytest.mark.asyncio
@@ -986,8 +986,8 @@ async def test_contribute_partial_accumulates_and_lists_contributor(client):
     assert body["claimant_uuid"] is None
     contribs = body["contributors"]
     assert len(contribs) == 1
-    assert contribs[0]["player_uuid"] == str(bob_uuid)
-    assert contribs[0]["player_name"] == "bob"
+    assert str(bob_uuid) in contribs[0]["member_uuids"]
+    assert contribs[0]["display_name"] == "bob"
 
 
 @pytest.mark.asyncio
@@ -1014,14 +1014,14 @@ async def test_contribute_multiple_players_accumulate(client):
 
     b1 = await _contribute(client, bearer_bob, sid, rid, 3)
     assert b1["delivered_qty"] == 3
-    assert {c["player_name"] for c in b1["contributors"]} == {"bob"}
+    assert {c["display_name"] for c in b1["contributors"]} == {"bob"}
 
     b2 = await _contribute(client, bearer_carol, sid, rid, 4)
     assert b2["delivered_qty"] == 7
-    names = {c["player_name"] for c in b2["contributors"]}
+    names = {c["display_name"] for c in b2["contributors"]}
     assert names == {"bob", "carol"}
-    uuids = {c["player_uuid"] for c in b2["contributors"]}
-    assert str(bob_uuid) in uuids and str(carol_uuid) in uuids
+    all_member_uuids = {u for c in b2["contributors"] for u in c["member_uuids"]}
+    assert str(bob_uuid) in all_member_uuids and str(carol_uuid) in all_member_uuids
 
 
 @pytest.mark.asyncio
@@ -1036,7 +1036,7 @@ async def test_contribute_same_player_idempotent_contributor(client):
     body = await _contribute(client, bearer_bob, sid, rid, 4)
     assert body["delivered_qty"] == 7
     assert len(body["contributors"]) == 1
-    assert body["contributors"][0]["player_name"] == "bob"
+    assert body["contributors"][0]["display_name"] == "bob"
 
 
 @pytest.mark.asyncio
@@ -1136,7 +1136,7 @@ async def test_progress_detail_includes_contributors_field(client):
     rows = {r["id"]: r for r in detail["rows"]}
     # progress 行 contributors 非空
     assert len(rows[rid_p]["contributors"]) == 1
-    assert rows[rid_p]["contributors"][0]["player_name"] == "bob"
+    assert rows[rid_p]["contributors"][0]["display_name"] == "bob"
     # lock 行 contributors 为空数组
     assert rows[rid_l]["contributors"] == []
 

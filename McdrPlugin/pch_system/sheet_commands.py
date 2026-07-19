@@ -435,7 +435,9 @@ def _render_sheet_detail(server, player_name, player_uuid, sheet_id, *, page: in
         owner_uuid = str(data.get("owner_uuid") or "")
         owner_name = data.get("owner_name") or ""
         viewer_uuids = {str(u) for u in (data.get("viewer_uuids") or [])}
-        is_owner = (bool(player_uuid) and player_uuid in viewer_uuids) or (owner_name == player_name)
+        # R-5 account 级：表的 owner_uuid 在我的 account UUID 集合里 → 同 account 任一 UUID 建的表都算 owner。
+        # 注意方向：viewer_uuids 是「我的」集，判断 owner 在不在此集（不是「我」在不在集——后者恒真）
+        is_owner = (bool(owner_uuid) and owner_uuid in viewer_uuids) or (owner_name == player_name)
         parts = [RText(SHEET_DETAIL_TITLE.format(
             id=data.get("id"),
             title=data.get("title") or "",

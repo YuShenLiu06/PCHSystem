@@ -40,16 +40,23 @@ async def get_by_uuid(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def set_last_sheet(session: AsyncSession, player_uuid: uuid.UUID, sheet_id: int) -> None:
-    """记录玩家最后查看的表格 ID（尽力写，仅 flush，由 api 层 commit）。
+async def set_last_sheet(session: AsyncSession, player: Player, sheet_id: int) -> None:
+    """记录玩家最后查看的表格 ID（R-5 account 级：同步到同 account 全部 UUID）。
 
-    IS DISTINCT FROM 守卫：仅当 last_sheet_id 实际变化时才 UPDATE，避免 Web 详情
-    轮询（Frontend usePolling 默认 2s）每轮对同一张表产生写放大。对 NULL 安全
-    （NULL → N 首次设置亦命中）。
+    同 account 任一 UUID 打开表 → 该账号下所有 UUID 的 last_sheet_id 同步，
+    使 ``!!sheet`` / ``!!submit`` 无参重开在多 UUID 间共享（lidrem 打开的表，
+    LiuYuShen_06 也能重开）。未绑 account（web_account_id IS NULL）回退仅当前 UUID。
+    直接收 ``player``（调用方已持有，避免重复 SELECT）；IS DISTINCT FROM 守卫避免
+    Web 详情轮询（usePolling 默认 2s）写放大。
     """
+    scope = (
+        Player.web_account_id == player.web_account_id
+        if player.web_account_id is not None
+        else Player.uuid == player.uuid
+    )
     await session.execute(
         update(Player)
-        .where(Player.uuid == player_uuid)
+        .where(scope)
         .where(Player.last_sheet_id.is_distinct_from(sheet_id))
         .values(last_sheet_id=sheet_id)
     )

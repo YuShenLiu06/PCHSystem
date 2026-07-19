@@ -415,8 +415,11 @@ async def test_contribute_accumulates_and_transitions_to_done():
     # 这里在 done 之前先验证幂等：alice 两次 contribute 应只贡献一条记录
     async with async_session_factory() as s:
         contribs = await sheet_repo.list_contributors(s, [rid])
-        alice_entries = [pu for pu, _name in contribs.get(rid, []) if pu == alice]
-        assert len(alice_entries) == 1  # 幂等：同玩家多次只一条
+        alice_entries = [
+            aid for _aid, _dn, mids, _qty in contribs.get(rid, [])
+            if alice in mids
+        ]
+        assert len(alice_entries) == 1  # 幂等：同玩家多次只一条（account 聚合后仍一条）
 
 
 @pytest.mark.asyncio
@@ -502,7 +505,7 @@ async def test_set_row_progress_overrides_delivered_and_keeps_contributors():
         assert row.status == "open"
         contribs = await sheet_repo.list_contributors(s, [rid])
         assert len(contribs.get(rid, [])) == 1
-        assert contribs[rid][0][0] == alice
+        assert alice in contribs[rid][0][2]  # member_uuids 含 alice（4 元组第 3 位）
 
 
 @pytest.mark.asyncio
@@ -636,16 +639,16 @@ async def test_list_contributors_aggregates_multiple_rows_ordered_by_joined_at()
         contribs = await sheet_repo.list_contributors(s, [rid_a, rid_b])
         # 两行都有结果
         assert set(contribs.keys()) == {rid_a, rid_b}
-        # rid_a 顺序：alice, bob, carol
-        names_a = [name for _pu, name in contribs[rid_a]]
+        # rid_a 顺序：alice, bob, carol（每玩家独立 account → 聚合后各一条，按 joined_at 升序）
+        names_a = [dn for _aid, dn, _mids, _qty in contribs[rid_a]]
         assert names_a == ["alice", "bob", "carol"]
         # rid_b 顺序：carol, alice
-        names_b = [name for _pu, name in contribs[rid_b]]
+        names_b = [dn for _aid, dn, _mids, _qty in contribs[rid_b]]
         assert names_b == ["carol", "alice"]
-        # 返回的 uuid 与 name 配对一致
+        # member_uuids 元素为 UUID（account 聚合后每条至少含一个 member uuid）
         for entries in contribs.values():
-            for pu, name in entries:
-                assert isinstance(pu, uuid.UUID)
+            for _aid, _dn, member_uuids, _qty in entries:
+                assert member_uuids and isinstance(member_uuids[0], uuid.UUID)
 
 
 @pytest.mark.asyncio
