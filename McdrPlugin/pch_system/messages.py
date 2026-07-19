@@ -505,6 +505,11 @@ def format_owner_footer(sheet_id, status: str = "collecting", *, is_owner: bool 
         ))
         if is_owner:
             buttons.append(rtext_button(
+                "[协管]", f"!!PCH sheet manager {sheet_id} ",
+                color=RColor.aqua,
+                hover="协管员管理（续输：list / add <玩家名> / remove <玩家名>）",
+            ))
+            buttons.append(rtext_button(
                 "[改标题]", f"!!PCH sheet rename {sheet_id} ",
                 color=RColor.aqua, hover="修改表标题（续输新标题）",
             ))
@@ -521,6 +526,7 @@ def format_owner_footer(sheet_id, status: str = "collecting", *, is_owner: bool 
 #   sheet_claimed / sheet_delivered / sheet_done / sheet_released /
 #   sheet_rejected / sheet_qty_changed / sheet_row_deleted /
 #   sheet_progress_changed（owner 调整 progress 进度→贡献者）/ sheet_progress_reset（owner 解除/换模式清贡献者→贡献者）
+#   sheet_manager_granted（owner 授予协管员→被授予者）
 # §码：成功 §a、提醒 §e、打回/删除 §c
 _NOTIFY_TEMPLATES = {
     "sheet_claimed": "§a{actor} 认领了 [{sheet_title}] 的 [{item}]",
@@ -532,6 +538,7 @@ _NOTIFY_TEMPLATES = {
     "sheet_row_deleted": "§c[{sheet_title}] 的 [{item}] 已被拥有者删除，认领取消",
     "sheet_progress_changed": "§e[{sheet_title}] 的 [{item}] 进度已被 {actor} 调整为 {new}/{need}（原 {old}）",
     "sheet_progress_reset": "§e[{sheet_title}] 的 [{item}] 进度已被 {actor} 重置，贡献清空",
+    "sheet_manager_granted": "§a{granted_by_name} 将你设为 [{sheet_title}] 的协管员",
 }
 _NOTIFY_DEFAULT = "§7{title}"
 
@@ -556,6 +563,7 @@ def format_notification(n: dict) -> Any:
                 need=format_qty_safe(payload.get("need", "?")),
                 old=format_qty_safe(payload.get("old", "?")),
                 new=format_qty_safe(payload.get("new", "?")),
+                granted_by_name=payload.get("granted_by_name") or "拥有者",
             )
         except Exception:
             text = n.get("title") or _NOTIFY_DEFAULT.format(title="(通知)")

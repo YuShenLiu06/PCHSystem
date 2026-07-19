@@ -18,6 +18,7 @@ from app.models.user import Player
 from app.repositories import sheet_manager_repo
 from app.repositories import player_repo
 from app.schemas.sheet import ManagerGrantRequest, SheetManagerEntry
+from app.services import notification_service
 
 router = APIRouter()
 
@@ -78,13 +79,29 @@ async def grant_manager(
             "目标玩家不存在，需至少登录过一次",
         )
     try:
-        await sheet_manager_repo.add_manager(
+        added = await sheet_manager_repo.add_manager(
             session,
             sheet_id,
             body.player_uuid,
             owner_uuid=sheet.owner_uuid,
             granted_by_uuid=player.uuid,
         )
+        # 新授予（非幂等重复）→ 通知被授予者「你现在是 X 项目的协管员」。
+        # 同事务落库（R-10：commit 后才投递，rollback 则通知不落库）；幂等重授不重复打扰。
+        if added:
+            await notification_service.notify(
+                session,
+                recipient_uuid=body.player_uuid,
+                category="sheet_manager_granted",
+                title="你被设为项目协管员",
+                body=f"[{sheet.title}] 的拥有者 {player.current_name} 将你设为协管员",
+                payload={
+                    "sheet_id": sheet.id,
+                    "sheet_title": sheet.title,
+                    "granted_by_uuid": str(player.uuid),
+                    "granted_by_name": player.current_name,
+                },
+            )
         await session.commit()
     except sheet_manager_repo.SheetOwnerCannotBeManager:
         raise HTTPException(
