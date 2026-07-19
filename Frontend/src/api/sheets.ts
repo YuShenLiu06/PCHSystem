@@ -266,3 +266,15 @@ export async function revokeSheetManager(id: number, playerUuid: string): Promis
   const { data } = await http.delete<SheetManagerEntry[]>(`/sheets/${id}/managers/${playerUuid}`)
   return data
 }
+
+/** 玩家简要信息（协管员授予联想用） */
+export interface PlayerBrief {
+  player_uuid: string
+  player_name: string
+}
+
+/** GET /players?q=<prefix> —— 按玩家名前缀联想（任意登录玩家可调）。前端选中后内部传 uuid 调 grant。 */
+export async function searchPlayers(q: string): Promise<PlayerBrief[]> {
+  const { data } = await http.get<PlayerBrief[]>('/players', { params: { q } })
+  return data
+}

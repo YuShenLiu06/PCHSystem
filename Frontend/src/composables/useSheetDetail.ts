@@ -16,8 +16,10 @@ import {
   advanceSheet,
   grantSheetManager,
   revokeSheetManager,
+  searchPlayers,
   type SheetDetail,
   type RowDetail,
+  type PlayerBrief,
 } from '../api/sheets'
 import { useAuthStore } from '../stores/auth'
 import { useSheetStore } from '../stores/sheet'
@@ -92,7 +94,9 @@ export interface UseSheetDetailHandle {
   onReject: (row: RowDetail) => Promise<void>
   onSubRowPopoverShow: (parentRow: RowDetail) => void
   // 协管员（manager，迁移 0014）
-  managerInputUuid: Ref<string>
+  managerInputName: Ref<string>
+  managerPickedUuid: Ref<string>
+  searchPlayers: (q: string) => Promise<PlayerBrief[]>
   onGrantManager: () => Promise<void>
   onRevokeManager: (playerUuid: string) => Promise<void>
 }
@@ -154,8 +158,10 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     return (sheet.value.managers ?? []).some((m) => m.player_uuid === p.uuid)
   })
 
-  // 协管员授予输入框（UUID——前端无 name→uuid 解析，MCDR 端用 uuid_api_remake 解析）
-  const managerInputUuid = ref('')
+  // 协管员授予输入：玩家名联想（el-autocomplete 远程搜索）+ 选中后存 uuid。
+  // 必须从联想下拉选中（保证 uuid 有效）；纯文本未选中 → 警告。
+  const managerInputName = ref('')
+  const managerPickedUuid = ref('')
 
   // 已归档 = 只读终态：隐藏所有写操作。R-9：仅可见性，真实拒绝在后端 409
   const isReadOnly = computed(() => sheet.value?.status === 'archived')
@@ -636,16 +642,17 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
   }
 
   // 协管员管理（迁移 0014）—— grant/revoke 返回刷新后的 managers 列表，直接并入 sheet.value
+  // 授予：必须从联想下拉选中玩家（保证 uuid 有效），纯文本未选中 → 警告
   async function onGrantManager(): Promise<void> {
-    const uuid = managerInputUuid.value.trim()
-    if (!uuid) {
-      ElMessage.warning('请输入玩家 UUID')
+    if (!managerPickedUuid.value) {
+      ElMessage.warning('请从下拉列表选择玩家')
       return
     }
     try {
-      const managers = await grantSheetManager(sheetId.value, uuid)
+      const managers = await grantSheetManager(sheetId.value, managerPickedUuid.value)
       if (sheet.value) sheet.value = { ...sheet.value, managers }
-      managerInputUuid.value = ''
+      managerInputName.value = ''
+      managerPickedUuid.value = ''
       ElMessage.success('已添加协管员')
     } catch (e: unknown) {
       ElMessage.error(sheetErrorMessage(e))
@@ -706,7 +713,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     onRelease,
     onReject,
     onSubRowPopoverShow,
-    managerInputUuid,
+    managerInputName,
+    managerPickedUuid,
+    searchPlayers,
     onGrantManager,
     onRevokeManager,
   }

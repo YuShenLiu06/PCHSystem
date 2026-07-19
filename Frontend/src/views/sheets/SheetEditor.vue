@@ -64,7 +64,9 @@ const {
   onRelease,
   onReject,
   onSubRowPopoverShow,
-  managerInputUuid,
+  managerInputName,
+  managerPickedUuid,
+  searchPlayers,
   onGrantManager,
   onRevokeManager,
 } = useSheetDetail({ sheetId, auth, sheetTableRef })
@@ -180,7 +182,16 @@ function back(): void {
           @close="onRevokeManager(m.player_uuid)"
         >{{ m.player_name }}</el-tag>
         <template v-if="canManage">
-          <el-input v-model="managerInputUuid" placeholder="玩家 UUID" style="width: 280px;" size="small" />
+          <el-autocomplete
+            v-model="managerInputName"
+            :fetch-suggestions="(q: string, cb: (r: { player_uuid: string; player_name: string }[]) => void) => searchPlayers(q).then(cb).catch(() => cb([]))"
+            placeholder="玩家名（输入联想）"
+            value-key="player_name"
+            size="small"
+            style="width: 220px;"
+            @select="(item: { player_uuid: string }) => { managerPickedUuid = item.player_uuid }"
+            @input="managerPickedUuid = ''"
+          />
           <el-button size="small" type="primary" plain @click="onGrantManager">添加协管员</el-button>
         </template>
       </div>
