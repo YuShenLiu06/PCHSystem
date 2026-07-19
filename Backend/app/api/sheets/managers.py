@@ -129,6 +129,23 @@ async def revoke_manager(
     _assert_not_archived(sheet)
     try:
         await sheet_manager_repo.remove_manager(session, sheet_id, player_uuid)
+        # 通知被撤销者（镜像授予通知）。self-revoke（主动卸任）不打扰——发起方即受影响方，
+        # 命令回执已告知，与 sheet_claimed 等只通知「非发起方的受影响者」一致。
+        # 同事务落库（R-10：commit 后才投递，rollback 则通知不落库）。
+        if not is_self_revoke:
+            await notification_service.notify(
+                session,
+                recipient_uuid=player_uuid,
+                category="sheet_manager_revoked",
+                title="你不再是项目协管员",
+                body=f"[{sheet.title}] 的 {player.current_name} 移除了你的协管员身份",
+                payload={
+                    "sheet_id": sheet.id,
+                    "sheet_title": sheet.title,
+                    "revoked_by_uuid": str(player.uuid),
+                    "revoked_by_name": player.current_name,
+                },
+            )
         await session.commit()
     except sheet_manager_repo.SheetManagerNotFound:
         raise HTTPException(

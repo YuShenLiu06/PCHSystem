@@ -268,6 +268,65 @@ async def test_owner_revoke_manager(client):
     assert resp.json() == []
 
 
+async def _notifications_for(player_uuid: uuid.UUID) -> list:
+    """直查 notifications 表，返回该玩家名下全部通知（用于验证通知落库）。"""
+    from sqlalchemy import select
+
+    from app.core.db import async_session_factory
+    from app.models.notification import Notification
+
+    async with async_session_factory() as s:
+        rows = (
+            await s.execute(
+                select(Notification).where(Notification.recipient_uuid == player_uuid)
+            )
+        ).scalars().all()
+        return [(r.category, r.title, r.body) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_revoke_sends_notification_to_revoked_player(client):
+    """owner 撤销协管员 → 被撤销者收到 sheet_manager_revoked 通知（镜像授予）。"""
+    _, owner_bearer = await _make_player("alice")
+    mgr_u, _ = await _make_player("bob")
+    sid = await _create_sheet(client, owner_bearer, "MyProj")
+    await _grant(client, owner_bearer, sid, mgr_u)
+
+    resp = await client.delete(
+        f"/sheets/{sid}/managers/{mgr_u}", headers=_auth(owner_bearer)
+    )
+    assert resp.status_code == 200
+
+    notes = await _notifications_for(mgr_u)
+    # 授予 + 撤销各一条
+    categories = [c for c, _, _ in notes]
+    assert "sheet_manager_granted" in categories
+    assert "sheet_manager_revoked" in categories
+    revoked = [(c, t, b) for c, t, b in notes if c == "sheet_manager_revoked"][0]
+    assert revoked[1] == "你不再是项目协管员"
+    assert "MyProj" in revoked[2] and "alice" in revoked[2]
+
+
+@pytest.mark.asyncio
+async def test_self_revoke_does_not_notify(client):
+    """manager 主动卸任（self-revoke）不打扰自己——发起方即受影响方，命令回执已告知。"""
+    _, owner_bearer = await _make_player("alice")
+    mgr_u, mgr_bearer = await _make_player("bob")
+    sid = await _create_sheet(client, owner_bearer)
+    await _grant(client, owner_bearer, sid, mgr_u)
+
+    resp = await client.delete(
+        f"/sheets/{sid}/managers/{mgr_u}", headers=_auth(mgr_bearer)
+    )
+    assert resp.status_code == 200
+
+    notes = await _notifications_for(mgr_u)
+    # 仅有授予那一条，无 revoked（self-revoke 不通知）
+    categories = [c for c, _, _ in notes]
+    assert "sheet_manager_granted" in categories
+    assert "sheet_manager_revoked" not in categories
+
+
 # ---------- archived 守卫 ----------
 @pytest.mark.asyncio
 async def test_archived_rejects_manager_mutation(client):

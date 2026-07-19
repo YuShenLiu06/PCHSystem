@@ -79,6 +79,22 @@ class FormatNotificationTest(unittest.TestCase):
         self.assertIn("[清单D] 的 [铁锭]", s)
         self.assertTrue(s.startswith("§c"), s)
 
+    def test_sheet_manager_granted(self):
+        n = {"category": "sheet_manager_granted", "payload": {"sheet_title": "202工程", "granted_by_name": "玩家A"}}
+        s = str(format_notification(n))
+        self.assertIn("玩家A", s)
+        self.assertIn("[202工程]", s)
+        self.assertIn("协管员", s)
+        self.assertTrue(s.startswith("§a"), s)  # 正向事件绿色
+
+    def test_sheet_manager_revoked(self):
+        n = {"category": "sheet_manager_revoked", "payload": {"sheet_title": "202工程", "revoked_by_name": "玩家A"}}
+        s = str(format_notification(n))
+        self.assertIn("玩家A", s)
+        self.assertIn("[202工程]", s)
+        self.assertIn("协管员", s)
+        self.assertTrue(s.startswith("§e"), s)  # 提醒事件黄色
+
     def test_unknown_category_falls_back_to_title(self):
         n = {"category": "some_future_event", "title": "某未来事件", "body": "详情"}
         s = str(format_notification(n))

@@ -526,7 +526,7 @@ def format_owner_footer(sheet_id, status: str = "collecting", *, is_owner: bool 
 #   sheet_claimed / sheet_delivered / sheet_done / sheet_released /
 #   sheet_rejected / sheet_qty_changed / sheet_row_deleted /
 #   sheet_progress_changed（owner 调整 progress 进度→贡献者）/ sheet_progress_reset（owner 解除/换模式清贡献者→贡献者）
-#   sheet_manager_granted（owner 授予协管员→被授予者）
+#   sheet_manager_granted（owner 授予协管员→被授予者）/ sheet_manager_revoked（owner 撤销协管员→被撤销者；self-revoke 不通知）
 # §码：成功 §a、提醒 §e、打回/删除 §c
 _NOTIFY_TEMPLATES = {
     "sheet_claimed": "§a{actor} 认领了 [{sheet_title}] 的 [{item}]",
@@ -539,6 +539,7 @@ _NOTIFY_TEMPLATES = {
     "sheet_progress_changed": "§e[{sheet_title}] 的 [{item}] 进度已被 {actor} 调整为 {new}/{need}（原 {old}）",
     "sheet_progress_reset": "§e[{sheet_title}] 的 [{item}] 进度已被 {actor} 重置，贡献清空",
     "sheet_manager_granted": "§a{granted_by_name} 将你设为 [{sheet_title}] 的协管员",
+    "sheet_manager_revoked": "§e{revoked_by_name} 取消了你 [{sheet_title}] 的协管员身份",
 }
 _NOTIFY_DEFAULT = "§7{title}"
 
@@ -564,6 +565,7 @@ def format_notification(n: dict) -> Any:
                 old=format_qty_safe(payload.get("old", "?")),
                 new=format_qty_safe(payload.get("new", "?")),
                 granted_by_name=payload.get("granted_by_name") or "拥有者",
+                revoked_by_name=payload.get("revoked_by_name") or "某人",
             )
         except Exception:
             text = n.get("title") or _NOTIFY_DEFAULT.format(title="(通知)")
