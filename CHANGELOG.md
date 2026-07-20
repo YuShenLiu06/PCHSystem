@@ -37,6 +37,17 @@
 - **`.env` 增量补全**：老用户从旧版升级后，新版新增的 `.env` 配置项（如 `WEB_PROBE_URL`）不会自动补全，导致 `!!PCH status` 不显示前端版本号。`install.sh` / `update.sh` 现按 `.env.example` 幂等补全缺失键（密钥类不补、值优先让用户确认）；同批缺失键曾使 `env_get` 在 `set -e` 下打假报警 trap，已加 `|| true` 消除。
 - **重新安装/更新撞 web 端口不再裸退出**：已装机器重跑 `install.sh` / `update.sh` 时，web 容器宿主端口（默认 5173）若被遗留进程（如 `npm run dev`）或本项目残留 web 容器占用，`docker compose up -d` 不再以不透明的 `set -e` 退出——改为自动清理本项目残留 web 容器、对占用者提前说明并询问是否停掉；所有 `dcc up -d` 失败改干净退出并提示。绝不 `down -v` / 碰 postgres 数据卷。
 
+### Security
+
+- **身份认证链路 CR 安全加固**：身份主锚升级（见下 Added）后的代码审查修复轮，补齐 `/auth/login` 与 JWT 校验的安全/健壮性缺口。
+  - **密码登录双维度限频**（`WindowRateLimiter`，后端）：IP 维度（窗口内总尝试上限，防撞库扫号）+ `(username, ip)` 维度（单账号上限，防针对爆破），配合 bcrypt 慢哈希；登录成功后清零计数，正常用户不累积触发。入口先计数再校验，账号不存在也消耗额度（避免账号枚举侧信道）。新增配置 `login_rate_limit_*`（`window` / `max_per_ip` / `max_per_credential`，均有默认值，见 `.env.example`）。
+  - **JWT 复验 `active_uuid` 仍属 `sub` 账号**（后端 `deps._player_from_jwt`，M1）：access token 被窃后，若 player 迁到别的 account，旧 token 立即失效（401），防代写。
+  - **`/auth/login` active_uuid 取首绑 player**（后端，H1）：原留空导致依赖 `get_active_uuid` 的 `/me` 等端点立即 401 踢回登录。
+  - **`register` 兜底 `IntegrityError`**（后端，H3）：预检与 flush 间并发 race 撞 username UNIQUE 约束，原仅捕 `ValueError` 漏出 500，现统一 409。
+  - **前端 `AuthResponse.player` 改可空 + 4 处 null guard**（`AuthExchange` / `ClaimBind` / `Login` / `Register`）：防御 register / claim 边界场景后端无 player 的异常态，显式提示「账号数据异常」而非崩溃。
+  - **限制**：`WindowRateLimiter` 为单进程内存实现（MVP，与既有 `rate_limiter` 一致，RS-6）；多 worker 部署需换 Redis，生产前待补。
+  - 测试：后端 `test_auth_service` +3（上限 / key 独立 / reset）、`test_identity` +4（H1 active_uuid / H2 限频 429 / M1 迁账号失效 / H3 race 409）。
+
 ### Docs
 
 - `Scripts/README.md` 增补「`.env` 增量补全」小节与 `!!PCH status` 前端无版本号排错条目。
