@@ -47,7 +47,7 @@ docker compose logs -f mc-test
 1. Minecraft Java Edition 1.20.1 客户端，添加服务器：
    - 地址：`localhost` 或 `127.0.0.1`
    - 离线模式（无需正版账号）
-2. 进服后聊天框输入：`!!login`
+2. 进服后聊天框输入：`!!PCH login`
 3. 应收到一条带 `[点击此处打开网页登录]` 的可点击消息
 4. 点击链接 → 浏览器打开 `http://localhost:5173/auth?token=<uuid>`（前端 dev server）
 5. 前端用 token 调 `/auth/exchange` → 拿到 JWT → 跳 `/me` 显示 UUID/名称/角色
@@ -77,7 +77,7 @@ docker compose -f /home/yushen/opt/PCHSystem/docker-compose.yml exec backend pyt
 import asyncio; from app.core.db import async_session_factory; from sqlalchemy import text
 async def f():
     async with async_session_factory() as s:
-        await s.execute(text('TRUNCATE users.auth_tokens; TRUNCATE users.jwt_revocations; TRUNCATE users.players CASCADE;'))
+        await s.execute(text('TRUNCATE users.auth_tokens, users.jwt_revocations, users.bind_tokens, users.web_accounts, users.players, sheets.sheet_managers CASCADE;'))
         await s.commit()
 asyncio.run(f())
 "
@@ -85,6 +85,6 @@ asyncio.run(f())
 
 ## 注意
 
-- MCDR 配置文件 `config.yml` 通过 volume 挂载，**不要在容器内手动改**
+- MCDR 配置文件 `mcdr_config.yml` 通过 volume 挂载，**不要在容器内手动改**
 - Fabric 第一次启动需要外网（下载 MC server）
 - 后端 `WEB_BASE_URL=http://localhost:5173` 是给玩家浏览器看的，由后端拼接到 token URL；MCDR 给玩家发的链接也用这个值（玩家在宿主跑浏览器）

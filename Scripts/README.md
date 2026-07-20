@@ -39,7 +39,8 @@ bash Scripts/install.sh [选项]
 | `--mcdr-root DIR` | MCDR 根目录（含 `plugins/` 和 `config/`），等价 `PCH_MCDR_ROOT` |
 | `--mcdr-api-url URL` | 插件访问后端的 URL，等价 `PCH_MCDR_API_URL` |
 | `--mcdr-overwrite-config` | 强制覆盖玩家已有的 `pch_system/config.json` |
-| `--no-frontend` | 跳过前端构建 |
+| `--no-frontend` | 跳过前端构建（宿主 npm） |
+| `--no-web` | 不启用 compose web 服务（默认启用 nginx 托管前端；禁用后走非容器自管 nginx，见 §10） |
 | `--no-mcdr` | 跳过 MCDR 插件拷贝 |
 | `--no-sync` | 跳过版本同步（用当前工作树，开发/测试用） |
 | `-h` / `--help` | 帮助 |
@@ -278,7 +279,7 @@ docker compose restart backend
 - **每个非密钥缺失键会提示确认/覆盖**（与 `WEB_BASE_URL` 同样的交互）：回车采用默认值，或输入自定义值；`--yes` / `PCH_YES=1` 全用默认（无人值守）。
 - **密钥类**（`POSTGRES_PASSWORD` / `JWT_SECRET` / `MCDR_SERVICE_TOKEN`）**不自动补**——缺失只告警，请手动设强随机值（R-11，绝不把 `change_me_*` 占位写进生产 `.env`）。
 - `WEB_PROBE_URL` 默认值按部署拓扑推断：`COMPOSE_PROFILES` 含 `web` → `http://web`（compose 服务名）；否则取 `WEB_BASE_URL`，非 `localhost`/`127.0.0.1` → 回退为 `WEB_BASE_URL`（并告警：后端容器未必能探到该外部地址）；`localhost` → 留空（并告警：前端版本探测不可用）。
-- `COMPOSE_PROFILES` 默认留空（保守，避免与既有外部 nginx 端口冲突/重复托管）；想改用 compose 托管前端，提示时输入 `web`。
+- `COMPOSE_PROFILES` 默认 `web`（启用 compose 托管前端，对齐 `.env.example`）；若你已有外部 nginx 想自管前端，改空即禁用 web 服务（见 §10）。
 - 其余键（端口 / `NPM_REGISTRY` 等）默认用 `.env.example` 的值。
 
 补全完成后脚本会提示**查阅 `.env.example`（同目录）的行内注释**了解各键含义；如需再改，编辑 `.env` 后 `docker compose up -d --force-recreate backend` 重新注入。
