@@ -212,7 +212,7 @@ flowchart LR
 
 ```mermaid
 erDiagram
-    players ||--o{ web_account_links : has
+    players ||--o{ web_accounts : has
     players ||--o{ submissions : makes
     players ||--o{ score_ledger : owns
     players ||--o{ player_titles : holds
@@ -225,7 +225,7 @@ erDiagram
 关键表：`players`、`web_accounts`、`bind_tokens`、`projects`、`material_lists`、`submissions`、`placement_records`、`score_ledger`、`titles`、`player_titles`、`wiki_sync_log`、`alerts`。
 
 **设计要点**：
-- **主键**：玩家用 `UUID`（离线 OfflinePlayer 推导），Web 账号独立主键 + 关联表。
+- **主键**：Web 账号作身份主锚（已落地，迁移 0014），MC UUID 为子身份（`web_accounts.id` + `players.web_account_id` FK）。
 - **积分流水 `score_ledger`**：append-only，任何积分变动都记一条，`balance_after` 便于审计与重建榜单。
 - **防重复提交**：`submissions` 上 `(project_id, player_id, item_id, batch_token)` 唯一约束。
 - **block→item 归一化**：材料清单与提交均以 **registry id** 存储（`create:warehouse`），存储前剥离 BlockState properties。
@@ -274,6 +274,7 @@ sequenceDiagram
 ```
 
 > 关键：**扫描 → 上报 → 后端事务入库 → 成功后才清箱**，避免清箱后上报失败导致材料丢失。
+> **注意**：R-3/R-4 已废弃清箱功能，本流程仅作历史参考。
 
 ### 7.3 称号解锁与公告
 
@@ -324,6 +325,8 @@ sequenceDiagram
 ```
 
 > 详细：[`api/sheets.md`](./architecture/api/sheets.md) §11/§12、[`services/notification-service.md`](./architecture/services/notification-service.md)、[`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md)「通知轮询」。
+>
+> **v0.8.0 起**，owner/claimant/manager 判定均升 account 级，`viewer_uuids` = 同 account 所有 UUID 集合；聚合查询 `GROUP BY web_account_id`。
 
 ---
 
@@ -357,3 +360,4 @@ sequenceDiagram
 ---
 
 *本文档与各子文档随项目演进持续更新。所有技术结论附调研证据 URL，可点击复核。*
+**最后更新：2026-07-21**

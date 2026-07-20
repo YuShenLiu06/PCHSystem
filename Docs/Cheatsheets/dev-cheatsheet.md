@@ -7,6 +7,15 @@
 
 ## MCDR / 测试服
 
+### 调试命令
+
+```bash
+!!PCH status                  # 前后端连接自检（plugin/backend/token/frontend 四探针）
+!!PCH bind                    # 游戏内出绑定短码（game_init）
+!!PCH bind <code>             # 消费 Web 端出的短码（web_init）
+!!PCH sheet manager <id> list # 查项目协管员列表
+```
+
 ### 接管 MCDR 控制台
 
 ```bash
@@ -41,6 +50,8 @@ docker attach pchsystem-mc-test-1
 | `JWT_SECRET` | **是** | `""`（空） | JWT 签名密钥，须设长随机串 |
 | `JWT_ACCESS_TTL_SECONDS` | 否 | `3600` | access token 有效期（秒） |
 | `JWT_REFRESH_TTL_SECONDS` | 否 | `604800`（7 天） | refresh token 有效期（秒） |
+
+> ⚠️ **身份主锚升级（v0.8.0）**：JWT `sub` 字段已改 `web_account_id`（原 `player_uuid`）。**旧 token 全部失效需重新 `!!PCH login` 登录**。 |
 | `AUTH_TOKEN_TTL_SECONDS` | 否 | `600`（10 分钟） | 一次性登录 token 有效期（秒） |
 | `AUTH_TOKEN_RATE_LIMIT_SECONDS` | 否 | `30` | 同 UUID 登录 token 限频窗口（秒） |
 | `MCDR_SERVICE_TOKEN` | **是** | `""`（**fail-fast**） | MCDR 代玩家写通道共享密钥；空则后端启动报错（`config.py` 校验，R-11） |
@@ -123,3 +134,7 @@ cd Frontend && npx vitest             # 跑单测（package.json 无 test script
 > - **改 `vite.config.ts` / `package.json` 不热重载**：需 Ctrl+C 重启 dev server（HMR 只覆盖 `.vue` / `.ts` 源码）。
 > - **后台 dev server 停不掉时**：`lsof -ti :5173 | xargs -r kill`（或停掉拉起它的后台任务）。
 > - **外部域名访问被 Vite 拦截**（`Blocked request. This host (...) is not allowed.`）：经反代 / tunnel 域名（如 `dev-git.xxx.nyat.app`）访问 dev server 时，需在 `vite.config.ts` 的 `server.allowedHosts` 显式加该域名（防 DNS rebinding）；改 config 不热重载，需重启 dev server。
+
+---
+
+*最后更新：2026-07-21*

@@ -7,13 +7,13 @@
 ## 0. 设计约定
 
 - **玩家主键 = MC UUID**（离线模式 OfflinePlayer 确定性推导，见 [`services/user-service.md`](./services/user-service.md)）。`UUID` 类型为 PostgreSQL 原生 `uuid`。
-- **身份主锚 = MC UUID**（R-5）：当前实现以 `players.uuid` 为身份锚；Web 账号绑定（`web_accounts` / `players.web_account_id`）为**规划中**（见 §2.4，未落地），落地后离线改名通过更新映射做过户，不丢积分。
+- **身份主锚 = Web 账号（R-5，迁移 0014 落地）**；MC UUID 为子身份（离线模式 UUID 由玩家名确定性推导，改名即换身份）。Web 账号绑定（`web_accounts` / `players.web_account_id`）已实现，见 §2.4/§2.1。
 - **物品 id = registry id**：统一 `namespace:path`（如 `create:warehouse`、`minecraft:chest`），存储前剥离 BlockState properties。
 - **时间戳**：`TIMESTAMPTZ`，统一存 UTC。
 - **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单（**规划中**，未落地）。
 - **schema 划分与实现状态**：
-  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations`，迁移 0001-0003 + 0011，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors`，迁移 0004/0005/0007/0008/0009/0010，§10）、`notifications`（`notifications`，迁移 0006，§11）
-  - 🚧 **规划中（未落地）**：`projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 schema 中的 5 个，§3-§7 为设计预案）；`web_accounts` / `bind_tokens`（§2.4/§2.5，`!!bind` 流程）
+  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations` / `web_accounts` / `bind_tokens`，迁移 0001-0003 + 0011 + 0014-0015，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors` / `sheet_managers`，迁移 0004/0005/0007/0008/0009/0010/0016，§10）、`notifications`（`notifications`，迁移 0006，§11）
+  - 🚧 **规划中（未落地）**：`projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 schema 中的 5 个，§3-§7 为设计预案）
 
 ## 1. 全局 ER 图
 
@@ -48,8 +48,9 @@ erDiagram
 | `first_seen_at` | timestamptz | not null default now() | 首次入服 |
 | `last_seen_at` | timestamptz | not null default now() | 最近在线 |
 | `last_sheet_id` | integer | null（迁移 0011） | 玩家最后查看的 sheet id（best-effort：`GET /sheets/{id}` JSON 详情路径写入；csv 导出与 404 不记）。**故意无 FK**——表被删后自然失效（下次查看任意表覆盖），对齐 `sheet_rows.registry_id` 先例；**无索引**（只按 PK `uuid` 单行查/写，`last_sheet_id` 无独立查询用途） |
+| `web_account_id` | bigint | null（迁移 0014） | Web 账号绑定（FK→users.web_accounts.id ON DELETE SET NULL）；**不回填历史数据**，首次 `!!PCH login` 自动建临时 web_account 挂接。NULL = 未绑定（临时账号，见 §2.4）。 |
 
-> 规划列（**未实现**，依赖对应 schema 落地后补）：`web_account_id`（FK→web_accounts.id，§2.4）、`total_score`（冗余累计积分，由 score_ledger 重建，§4）、`current_title_id`（FK→titles.id，§5）、`credit_score`（负责人信用分）。
+> 规划列（**未实现**，依赖对应 schema 落地后补）：`total_score`（冗余累计积分，由 score_ledger 重建，§4）、`current_title_id`（FK→titles.id，§5）、`credit_score`（负责人信用分）。
 
 ### 2.2 `auth_tokens`（一次性登录令牌）✅ 已实现（迁移 `0002_auth_jwt` + `0003_auth_tokens_revoked_at`）
 
@@ -81,33 +82,45 @@ erDiagram
 
 > refresh token 吊销接入待办（当前 `POST /auth/refresh` 未查本表，源码注释标注扩展点）。
 
-### 2.4 `web_accounts`（Web 账号）🚧 规划中（未实现）
+### 2.4 `web_accounts`（Web 账号）✅ 已实现（迁移 0014 + 0015）
 
-> 计划用于 `!!bind` Web 账号绑定后的身份主锚迁移（R-5 终态）。当前身份锚是 MC UUID（§0）。表结构预案：
+> **身份主锚（R-5）**：账号可绑定多个 MC UUID（离线改名换 UUID 不丢账号），JWT `sub` 锚此字段。NULL 字段 = 临时账号（`!!PCH login` 自动创建，后续可升级）。
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | bigserial | PK | |
-| `username` | text | unique not null | 登录名/邮箱 |
-| `password_hash` | text | not null | bcrypt/argon2 |
-| `role` | text | not null default 'user' | user/admin/owner |
-| `created_at` | timestamptz | not null | |
+| `username` | text | unique null | 登录名/邮箱；NULL = 临时账号 |
+| `password_hash` | text | null | bcrypt；NULL = 临时账号（与 username 一致性见下 CHECK） |
+| `role` | text | not null default 'user' | user/admin/owner（account 级权限，取代 `players.role`） |
+| `wiki_user_id` | text | null | wiki.js 用户 id（预留） |
+| `display_name` | text | null（迁移 0015 加） | 玩家自定义昵称；空串视同 NULL（CHECK `length(btrim(display_name)) > 0`）。三端统一显示名来源（owner/contributor/通知 actor）；为空则回退该账号下最新 UUID 的 current_name |
+| `created_at` | timestamptz | not null default now() | |
+| `last_active_at` | timestamptz | not null default now() | 最近活动时间 |
 
-### 2.5 `bind_tokens`（游戏内绑定令牌）🚧 规划中（未实现）
+> **约束**：`CHECK ((username IS NULL) = (password_hash IS NULL))` → NULL = 临时账号（无密码，只能 `!!bind` 或凭已有账号凭据升级）；非 NULL = 永久账号（可登录）。`display_name` 空 CHECK：`CHECK (display_name IS NULL OR length(btrim(display_name)) > 0)`。
 
-> 计划用于 `!!bind` 流程。当前已实现的登录令牌是 `auth_tokens`（§2.2，用于 `!!PCH login`），与本表**不是同一张表**。表结构预案：
+### 2.5 `bind_tokens`（双向绑定短码）✅ 已实现（迁移 0014）
+
+> **与 `auth_tokens` 不是同一张表**（§2.2 用于 `!!PCH login`）。本表专用于 `!!bind` Web 账号绑定流程。
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| `token` | uuid | PK | 一次性随机 token |
-| `player_uuid` | uuid | FK→players.uuid, not null | 申请绑定的玩家 |
-| `expires_at` | timestamptz | not null | 短有效期（如 10 分钟） |
-| `used_at` | timestamptz | null | 已使用时间 |
-| `created_at` | timestamptz | not null | |
+| `token` | uuid | PK | 内部随机 token（全系统唯一，防止双发碰撞） |
+| `short_code` | text | not null unique | **6 位 Crockford Base32 短码**（剔除易混字符 `0OI1`），玩家游戏内/ Web 端输入 |
+| `direction` | text | not null CHECK IN ('game_init', 'web_init') | 方向：`game_init`（游戏内发起，`!!PCH bind`） / `web_init`（Web 端发起） |
+| `player_uuid` | uuid | null（仅 game_init 非空） | **方向一致性**：`game_init` 时非 NULL，`web_init` 时 NULL；FK→players.uuid ON DELETE SET NULL |
+| `target_account_id` | bigint | null（仅 web_init 非空） | **方向一致性**：`web_init` 时非 NULL，`game_init` 时 NULL；FK→web_accounts.id ON DELETE CASCADE |
+| `expires_at` | timestamptz | not null | 短有效期（默认 10 分钟） |
+| `used_at` | timestamptz | null | 已使用时间（双方确认后置位） |
+| `created_at` | timestamptz | not null default now() | |
 
-索引：`idx(player_uuid)`；定期清理过期 token。
-
-> 规划流程：玩家游戏内 `!!bind` → 生成 `bind_tokens` → 后端返回短码 → 玩家 Web 端输入 → 写 `players.web_account_id` + `used_at`。
+> **约束**：`CHECK ((direction='game_init' AND player_uuid IS NOT NULL AND target_account_id IS NULL) OR (direction='web_init' AND target_account_id IS NOT NULL AND player_uuid IS NULL))`（方向一致性，防状态机错乱）。
+>
+> **索引**：`ix_bind_tokens_active ON (direction, short_code) WHERE used_at IS NULL`（部分索引，快速查找可用短码）。
+>
+> **绑定流程**：
+> - **game_init**：玩家游戏内 `!!PCH bind` → 后端生成 `direction=game_init` + `player_uuid=当前UUID` + `short_code` → 返回短码 → 玩家 Web 端输入 → 消费 `web_init` 短码确认绑定。
+> - **web_init**：Web 端登录后「绑定游戏内账号」→ 后端生成 `direction=web_init` + `target_account_id=当前account` + `short_code` → 玩家游戏内 `!!PCH bind <code>` 消费 → 绑定成功。
 
 ---
 
@@ -352,18 +365,22 @@ erDiagram
 > **权限（RBAC，后端为准）**：JWT 已登录可读所有表；写权限分两层（迁移 0016）——**tier A 高危**（删项目/改名/授予撤销协管员/归档）仅 owner 或全局 admin/owner；**tier B 常规**（增删改行/子物品/进度/解除/打回/进入施工）owner、全局 admin/owner，或本表协管员（见 §10.5 `sheet_managers`）。CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。
 
-### 10.5 `sheet_managers`（项目协管员，迁移 0016）
+### 10.5 `sheet_managers`（项目协管员，迁移 0016）✅ 已实现
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `sheet_id` | bigint | FK→sheets.id `ON DELETE CASCADE`, PK 组成 | 项目删除级联清协管员 |
-| `player_uuid` | uuid | FK→players.uuid `ON DELETE CASCADE`, PK 组成 | 协管员身份锚（R-5） |
+| `web_account_id` | bigint | FK→users.web_accounts.id `ON DELETE CASCADE`, PK 组成 | **协管员身份锚（R-5，account 级）**；同账号下任一 UUID 都继承 manager 权限。授予目标必须已绑 Web 账号（列 NOT NULL，应用层未绑 → 422） |
 | `granted_at` | timestamptz | not null default now() | 授予时间 |
-| `granted_by_uuid` | uuid | FK→players.uuid `ON DELETE SET NULL`, nullable | 审计字段（授予者），不参与权限判定 |
+| `granted_by_uuid` | uuid | FK→users.players.uuid `ON DELETE SET NULL`, nullable | 审计字段（授予者），不参与权限判定 |
 
-约束：`PRIMARY KEY (sheet_id, player_uuid)`（天然幂等——重复授予不报错）；索引 `ix_sheet_managers_player`（按 player 反查其协管的项目，供 `list_sheets` 参与优先排序第 4 源 UNION）。
-
-> **语义**：owner 可授予任意已登录玩家为其项目的协管员；协管员拥有 tier B 常规写权限（协助日常协作），无 tier A 高危权限（不能删项目/改名/授权/归档）。关系 **per-sheet**（同一玩家在不同项目各自独立），不复用全局 `players.role`（admin/owner 是全服超管，语义不同）。owner 不能被设为自己项目的协管员（app 层守卫，422）。协管员可 self-revoke（`DELETE /sheets/{id}/managers/{self_uuid}`，无需 owner）。归档终态下协管员关系保留可读但不可增删（RS-10 archived 只读）。
+> **约束**：`PRIMARY KEY (sheet_id, web_account_id)`（天然幂等——重复授予不报错，同账号不重复授予）。
+>
+> **索引**：`ix_sheet_managers_account`（按 web_account_id 反查其协管的全部项目，供 `list_sheets` 参与优先排序第 4 源 UNION）。
+>
+> **语义**：owner 可授予任意已绑定 Web 账号的玩家为其项目的协管员；协管员拥有 tier B 常规写权限（协助日常协作），无 tier A 高危权限（不能删项目/改名/授权/归档）。关系 **per-sheet**（同一账号在不同项目各自独立），不复用全局 `web_accounts.role`（admin/owner 是全服超管，语义不同）。owner 与其自己账号的其他 UUID 不能被设为协管员（应用层守卫，422）。协管员可 self-revoke（`DELETE /sheets/{id}/managers?web_account_id={self_web_account_id}`，无需 owner）。**web_account 删除 → sheet_managers CASCADE → 该账号所有 UUID 立即失权**（R-5 一致）。归档终态下协管员关系保留可读但不可增删（RS-10 archived 只读）。
+>
+> **API 响应结构 `SheetManagerEntry`**：`{web_account_id, display_name, member_uuids, granted_at}`（与 `RowContributor` 对齐；`member_uuids` 列出该账号下全部绑定 UUID）。
 
 
 ### 10.4 项目生命周期状态机（迁移 0009）
@@ -420,3 +437,55 @@ collecting ─────────────────────▶ co
 索引：`ix_notifications_recipient_delivered (recipient_uuid, delivered_at)`（服务 MCDR `GET /pending` 轮询拉取 `delivered_at IS NULL`）。
 
 > 投递/已读端点（`GET /pending` / `POST /ack` / `POST /{id}/read`）均带 `player_uuid` 归属校验防越权（C-1，见 [`api/sheets.md`](./api/sheets.md) §12）。
+
+---
+
+## 12. 增量日志
+
+### 2026-07-19：迁移链重编号 + Web 账号主锚落地 + sheet_managers 升 account 级
+
+**迁移链**：`0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（单 head 0016）。
+
+**身份主锚升级（R-5 落地）**：
+- **Web 账号成为身份主锚**（§0 改）：`users.web_accounts`（迁移 0014，新增 `id` / `username UNIQUE NULL` / `password_hash NULL` / `role` / `wiki_user_id` / `display_name`（迁移 0015） / timestamps）。CHECK `((username IS NULL) = (password_hash IS NULL))` → NULL = 临时账号（`!!PCH login` 自动创建，后续可升级），非 NULL = 永久账号（可登录）。
+- **MC UUID 降级为子身份**（§0 改）：离线模式下 UUID 由玩家名确定性推导，改名即换身份；但 Web 账号不变（积分不丢）。
+- **players.web_account_id**（§2.1 改）：BIGINT FK→web_accounts.id ON DELETE SET NULL；**不回填历史数据**，首次 `!!PCH login` 自动建临时账号挂接。NULL = 未绑定。
+- **bind_tokens 表**（§2.5 改）：双向绑定短码（`direction` ∈ `game_init`|`web_init`；方向一致性 CHECK；`short_code` 6 位 Crockford Base32 剔除易混字符；部分索引 `ix_bind_tokens_active WHERE used_at IS NULL`）。支持游戏内 `!!PCH bind` 出短码与 Web 端绑定双向发起。
+
+**sheet_managers 升 account 级（R-5 一致）**：
+- **PK 变更**（§10.5 改）：`PRIMARY KEY (sheet_id, web_account_id)` 替代原 `player_uuid`（迁移 0016）。
+- **语义变更**：**同账号任一 UUID 继承 manager 权限**（不再 per-UUID，per-account）。`web_accounts` 删除 → `sheet_managers` CASCADE → 该账号所有 UUID 立即失权（E5）。
+- **API 响应结构**：`SheetManagerEntry = {web_account_id, display_name, member_uuids, granted_at}`（与 `RowContributor` 对齐）。
+- **权限矩阵**：tier A 高危（删项目/改名/授权/归档）仅 owner/superuser；tier B 常规（增删改行/子物品/进度/解除/打回/进入施工）含 manager。**行为变化**：`advance ?to=constructing` 由原 tier A 改采 tier B（manager 也能推进施工）。详见 [`api/sheets.md`](./api/sheets.md) §7.1。
+
+**架构文档同步**：本文档 §0/§2.1/§2.4/§2.5/§10.5 已同步为「✅ 已实现」；`web_accounts` / `bind_tokens` / `sheet_managers` 从「🚧 规划中」移除。
+
+### 2026-07-09：子物品嵌套 + sheets.py 包化重构
+
+**迁移 0012_issue_19_sub_items**：`sheet_rows` 加 `parent_row_id`（FK 自引用 ON DELETE CASCADE，NULL = 顶层行）+ `qty_per_unit`（numeric(10,2)，迁移 0013 放宽小数支持）。**单层**：子物品只能挂顶层行下（repo 校验 `parent.parent_row_id IS NULL`）。**模式继承**：父行 lock→子行只能 lock；父行 progress→子行可 lock/progress（默认继承）。**级联重算**：子行 `need_qty = ceil(qty_per_unit × 父行 need_qty)`。部分唯一索引：顶层 `uq_sheet_rows_top_name`(sheet_id+item_name WHERE parent_row_id IS NULL) / 子行 `uq_sheet_rows_sub_registry`(parent_row_id+registry_id WHERE parent_row_id NOT NULL)。
+
+**Phase 1 重构**：`Backend/app/api/sheets/` 包（`__init__.py` + `_shared.py` + `sheets_crud.py` + `rows.py` + `collab.py` + `lifecycle.py`）。新增 `app/services/translation.py`（`get_translator()` / `resolve_item_name()`）。修正 sheets→parsing 反向依赖。
+
+### 2026-07-03：项目三阶段生命周期 + 归档自动化
+
+**迁移 0009_sheets_lifecycle**：`sheets.sheets` 加 `status` ∈ collecting/constructing/archived + `archived_path`/`archived_at`（双 CHECK `ck_sheets_status_*` + 索引 `ix_sheets_status`）。`archived` = **终态只读**（repo `_assert_writable` 统一守卫 → 409）。
+
+**归档服务**：`services/archive/archive_sheet()` 渲染 md（`services/markdown_render/` 抽象：`SectionRenderer` Protocol + `TemplateSection`/`FunctionSection` frozen + `MarkdownDocument` 不可变）→ matplotlib 渲染 `contributions.png`（CJK 字体 **Noto Sans CJK SC**）→ 原子写盘 `ARCHIVE_ROOT/projects/{id}/index.md` → DB 置 archived 三字段 + `notify(category="sheet_archived")` → commit；**失败 cleanup + rollback**。归档产物 = 每项目独立文件夹（`index.md` + `contributions.png`）。**wiki git publisher**（默认 off，best-effort）：归档成功后把 `projects/<id>/` 整目录 `git commit + push` 到独立 wiki 内容 git 仓（subprocess git，token 内嵌 push URL 不落盘）。
+
+### 2026-07-03：sheet registry_id 字段 + 一键提交
+
+**迁移 0010**：`sheet_rows.registry_id TEXT NULL`（隐式可空；`item_name` / `registry_id` 至少一个非空，否则 422）。**一键提交按此精确匹配**（`scanner.py` 扫背包含潜影盒嵌套）。block→item 归一化集中在 project-service（R-6 不覆盖 sheets）。
+
+### 2026-07-06：sheet 快速重开 + list 增强
+
+**迁移 0011**：`users.players` 加 `last_sheet_id INTEGER NULL`（**故意无 FK**，表删后自然失效）。`GET /me/last_sheet`（双通道鉴权）。MCDR `!!PCH sheet last` 无参重开上次。
+
+**list_sheets 加 `player_uuid` 过滤**：参与优先排序（owner / lock 行 claimant / progress 行 contributor / sheet_managers 4 源 UNION 置顶）。`status` 过滤（默认 `active`=collecting+constructing）。MCDR `sheet list` 简写旗标（`-m`(mine)/`-c`(collecting)/`-t`(constructing)/`-a`(archived)/`-l`(all)）。
+
+### 2026-07-19：Web 账号绑定多 MC UUID + 完善 `!!PCH bind`
+
+**本节内容已归档至「2026-07-19：迁移链重编号 + Web 账号主锚落地 + sheet_managers 升 account 级」，条目合并**。
+
+---
+
+*最后更新：2026-07-21*

@@ -96,6 +96,14 @@ refactor(backend)!: 重命名 players 主键字段
 > **MCDR tag 改名（2026-07-06）**：`mcdr-vX.Y.Z` → `htcmc_auth-vX.Y.Z`，符合 [MCDR PluginCatalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html#release) 的合法 tag 格式（`<plugin_id>-<version>`，四选一）。历史 `mcdr-v0.3.0` 前向兼容保留、不重打。背景与决策见 [`Docs/Reports/mcdr-publishing-strategy.md`](./Docs/Reports/mcdr-publishing-strategy.md)。
 >
 > **MCDR plugin id 改名（2026-07-12）**：plugin id 由 `htcmc_auth` 改为 `pch_system`（与项目名 PCHSystem 一致，且不止 auth——含 sheets/submit/notify + 规划中 score/title），tag 前缀随之 `htcmc_auth-vX.Y.Z` → `pch_system-vX.Y.Z`。MCDR 硬性要求 `mcdreforged.plugin.json` 的 `id` = 文件夹名 = 内部包名（联网核实 catalogue/metadata 文档），故 `McdrPlugin/htcmc_auth/htcmc_auth/` 同步改名 `McdrPlugin/pch_system/pch_system/`，类 `HtcmcAuthConfig → PchSystemConfig`。**已部署实例需迁移**：旧 `plugins/htcmc_auth/` 删除（否则与新 `pch_system` 双注册 `!!PCH` 冲突）、`config/htcmc_auth/` 搬到 `config/pch_system/`（`Scripts/lib/common.sh::migrate_legacy_plugin_name()` 自动处理）。历史 `htcmc_auth-v*` / `mcdr-v*` tag 保留不重打。
+>
+> **破坏性变更 release notes 指引**：凡涉及会话失效 / 数据迁移 / API 契约变更的版本，CHANGELOG 段开头必须加粗标注，例：
+> >
+> > **破坏性变更：所有玩家需重新 `!!PCH login` 登录。**
+> >
+> > 参考 `pch_system-v0.8.0` 段（JWT `sub` 由 `player_uuid` 改 `web_account_id`）。前端 / 后端同理。
+> >
+> **MCDR tag 发布经验（2026-07-20）**：plugin.json version bump 即可触发 release workflow，无需依赖或元数据变更。
 
 ---
 
@@ -120,4 +128,4 @@ refactor(backend)!: 重命名 players 主键字段
 
 ---
 
-*最后更新：2026-07-06*
+*最后更新：2026-07-21*

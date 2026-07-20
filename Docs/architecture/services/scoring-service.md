@@ -51,7 +51,7 @@ def submit(project_id, player_uuid, items: list[Item], batch_token):
         write_ledger(player_uuid, project_id, delta, reason="submit")
     return delta
 ```
-- **顺序保证**：MCDR 端「上报成功 → 才清箱」（见 [`mcdr-plugin.md`](./mcdr-plugin.md) §3.2），本服务事务失败则回滚，玩家可重试。
+- **顺序保证**：MCDR 端 `!!PCH sheet submit` 为**纯申报**（不清背包，v0.8.0 起清箱已废弃，见 [`mcdr-plugin.md`](./mcdr-plugin.md) §3.2）；本服务事务失败则回滚，玩家可重试。
 
 ### 3.2 黄皮子积分公式
 

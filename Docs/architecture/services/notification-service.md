@@ -267,7 +267,7 @@ alert-service 文档（[`alert-service.md`](./alert-service.md) §3.1）曾有 `
 | 红线 | 落地 |
 |---|---|
 | **R-1** | 后端独占 DB；MCDR 经 HTTP 拉取，不直连。 |
-| **R-5** | `recipient_uuid` FK→`users.players.uuid`；当前身份锚 = MC UUID，与未来 Web 账号主锚平滑迁移。 |
+| **R-5** | **已升 account 级（v0.8.0）**：pending/ack/read 端点的 `player_uuid` 参数在后端解析为该 account 下所有 UUID（同账号通知聚合）；C-1 防越权（body 必带 `player_uuid`）不变。`notifications` 表结构不变（`recipient_uuid` 仍按 UUID 记录）。 |
 | **R-10** | notification 是模块化单体的新 schema（`notifications`），单库事务保证「改库+记通知」原子。 |
 | **R-11** | 无新密钥；`/notifications/*` 端点复用 `MCDR_SERVICE_TOKEN`；运维红线见 §7。 |
 | **RS-5** | 玩家硬删（`ON DELETE CASCADE`）则通知随之消失，无审计残留。 |
@@ -289,4 +289,4 @@ alert-service 文档（[`alert-service.md`](./alert-service.md) §3.1）曾有 `
 
 ---
 
-*最后更新：2026-07-02（service-token 安全运维要点 §7 + 加固项：审计日志 / ack-read 归属校验 / title-body 限长清洗 / payload 8KB / pending limit 上限 50）*
+*最后更新：2026-07-21*

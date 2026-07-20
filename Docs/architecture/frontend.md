@@ -23,7 +23,7 @@
 ```mermaid
 flowchart LR
     subgraph 前端模块
-        AUTH[登录/注册]
+        AUTH[身份管理]
         USER[玩家·账号管理]
         PROJ[项目管理]
         SCORE[提交·积分·榜单]
@@ -32,9 +32,9 @@ flowchart LR
         ALERT[告警中心]
         SYS[系统设置]
     end
-    AUTH -->|/auth/*| U[user-service]
+    AUTH -->|/auth/*,/web-accounts/*,/bind/*| U[user-service]
     USER -->|/players,/web-accounts| U
-    PROJ -->|/projects/*| P[project-service]
+    PROJ -->|/sheets/*,/sheets/{id}/managers| P[project-service]
     SCORE -->|/submissions,/scores| S[scoring-service]
     TITLE -->|/titles/*| T[title-service]
     WIKI -->|/wiki/sync-log| W[wiki-service]
@@ -44,9 +44,9 @@ flowchart LR
 
 | 模块 | 关键页面 | 对接服务 |
 |---|---|---|
-| 登录/注册 | 登录、注册、绑定确认（`/bind/confirm`） | user-service |
+| 身份管理 | `Login.vue`（密码登录）/ `Register.vue`（临时→永久）/ `BindConfirm.vue`（game_init 短码确认）/ `ClaimBind.vue`（web_init 挂接）/ `Me.vue`（账号 + 绑定 UUID 列表 + 昵称）/ `AuthExchange.vue`（token 兑换 + 临时/永久分流） | user-service |
 | 玩家·账号 | 玩家列表、改名过户、白名单状态、Web 账号 | user-service |
-| 项目管理 | 项目列表、立项（上传 `.litematic`）、材料清单、CSV 导出、状态流转 | project-service |
+| 项目管理 | 项目列表、立项（上传 `.litematic`）、材料清单、CSV 导出、状态流转、协管员管理面板（`SheetEditor` 内联，owner 增/撤销 + 全员可见列表） | project-service |
 | 提交·积分·榜单 | 提交审计、手动修正、榜单（总/赛季/分类） | scoring-service |
 | 称号管理 | 称号梯度配置、玩家已解锁称号、前缀预览 | title-service |
 | Wiki 同步 | 同步日志、失败重试 | wiki-service |
@@ -73,37 +73,109 @@ sequenceDiagram
 - `.litematic` 用 `multipart/form-data` 上传，Element Plus `el-upload` 组件。
 - 后端解析后回显材料清单，负责人确认才激活。
 
-### 3.2 绑定确认（游戏内 !!bind 的 Web 侧闭环）
+### 3.2 绑定确认（双向流程）
 
-- 玩家游戏内 `!!bind` → 拿到短码 → Web 端「绑定确认」页输入短码 → `POST /bind/confirm`。
+```mermaid
+sequenceDiagram
+    participant P as 玩家
+    participant M as MCDR
+    participant W as Web
+    participant API as user-service
+    Note over P,API: game_init 方向（游戏发起）
+    P->>M: !!PCH bind
+    M->>API: POST /bind/token (service-token)
+    API-->>M: short_code (6位短码)
+    M-->>P: 显示短码
+    P->>W: 访问 /bind/confirm，输入短码
+    W->>API: POST /bind/confirm {short_code} (JWT)
+    API-->>W: 绑定成功（player 挂接到当前 account）
+    W-->>P: 成功提示，跳转 /me
+    Note over P,API: web_init 方向（Web 发起）
+    W->>API: POST /bind/issue (JWT)
+    API-->>W: short_code (6位短码)
+    W-->>P: 显示短码
+    P->>M: !!PCH bind <code>
+    M->>API: POST /bind/consume {short_code} (service-token + X-Player-UUID)
+    API-->>M: 绑定成功（当前 UUID 挂接到 account）
+    M-->>P: 成功提示
+    Note over W: 临时会话可凭永久账号凭据经 /bind/claim 挂接
+```
 
-### 3.3 告警处理
+**两种方向**：
+- **game_init**：玩家游戏内 `!!PCH bind` 出短码 → Web `/bind/confirm` 输码确认
+- **web_init**：Web `/bind/issue` 出短码 → 玩家游戏内 `!!PCH bind <code>` 消费 → Web `/bind/claim` 挂接（临时会话挂永久账号）
+
+**关键端点**：
+- `POST /bind/token`（service-token，game_init 出码）
+- `POST /bind/confirm`（JWT，消费 game_init 码）
+- `POST /bind/issue`（JWT，web_init 出码）
+- `POST /bind/consume`（service-token + X-Player-UUID，消费 web_init 码）
+- `POST /bind/claim`（临时会话 JWT，凭永久账号凭据挂接）
+
+**临时账号引导**（`isTemporaryAccount` getter → `Me.vue` 横幅）：
+- 横幅显示「当前是临时账号」+「注册永久账号」/「绑定已有账号」按钮
+- `AuthExchange.vue` 按 `is_temporary` 分流到 `/register` 或 `/me`
+
+### 3.3 协管员管理（三层 RBAC）
+
+**权限层级**（`useSheetDetail` composable）：
+- **Tier A（canManage）**：表 owner 或 superuser（admin/owner）——高危操作（改名/删表/归档/授予撤销协管员）
+- **Tier B（canEdit）**：Tier A ∨ 协管员（isManager）——常规写操作（增删改行/子物品/进度/解除/打回/进入施工）
+- **isManager 判定**：`managers.some(m => m.member_uuids.some(u => viewer_uuids.includes(u)))`（同账号任一 UUID 继承）
+
+**关键概念**：
+- **viewer_uuids**：后端按当前查看者的 account 解析返回，= 同 account 所有 UUID（`auth store 绑定 UUIDs + 当前 UUID`）
+- **account 级**：manager 与 owner 锚定 `web_account_id`，同账号任一 UUID 继承权限（R-5 一致）
+
+**协管员管理面板**（`SheetEditor` 内联）：
+- **Owner 可见**：协管员列表 + 增/撤销按钮
+- **全员可见**：协管员列表（display_name 展示）
+- **授予流程**：玩家名联想（el-autocomplete 远程搜索）→ 选中后存 uuid → `POST /sheets/{id}/managers {player_uuid}`
+- **撤销流程**：`DELETE /sheets/{id}/managers {web_account_id}`（self-revoke 需 `player.web_account_id is not null`）
+- **权限矩阵**：详见 [`Docs/architecture/api/sheets.md`](./api/sheets.md) §7.1（M01-M26 全覆盖）
+
+**阶段按钮分流**：
+- **Tier A**：归档、改名、删表按钮（owner 专属）
+- **Tier B**：进入施工按钮（owner + 协管员）
+
+### 3.4 告警处理
 
 - 告警中心列表（按 severity/status 过滤）→ 详情查看 evidence → ack/resolve / 转白名单复核。
 
 ## 4. 鉴权与路由守卫
 
 ```js
-// router/index.js
+// router/index.ts
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  if (to.meta.requiresAuth && !auth.token) return '/login'
-  if (to.meta.roles && !to.meta.roles.includes(auth.role)) return '/403'
+  if (!to.meta.public && !auth.isAuthenticated) return '/auth'
 })
 ```
 ```js
-// axios 拦截器
+// axios 拦截器（utils/http.ts）
 instance.interceptors.request.use(cfg => {
-  if (auth.token) cfg.headers.Authorization = `Bearer ${auth.token}`
+  if (auth.accessToken) cfg.headers.Authorization = `Bearer ${auth.accessToken}`
   return cfg
 })
 instance.interceptors.response.use(r => r, err => {
-  if (err.response?.status === 401) router.push('/login')
+  if (err.response?.status === 401) {
+    auth.clear()
+    router.push('/auth')
+  }
   return Promise.reject(err)
 })
 ```
-- JWT 存 Pinia + localStorage；401 自动跳登录。
-- 路由 meta 标注 `roles`（user/admin/owner）做前端可见性控制（**真实权限以后端为准**）。
+
+**鉴权机制**：
+- JWT 存 Pinia + localStorage（accessToken/refreshToken + player + account）
+- 路由 `meta.public` 二分：公开路由（`/auth`、`/login`、`/register`）无需登录，其余需登录
+- 401 由 axios 拦截器统一处理（`auth.clear()` + 跳 `/auth`）
+
+**权限架构**（R-5 一致）：
+- **前端权限仅可见性**（R-9）：真实权限以**后端 RBAC 为准**，前端只控展示
+- **account 级权威源**：`auth.account.role`（未绑玩家回退 `auth.player.role`）
+- **viewer_uuids**：同 account 所有 UUID（后端按当前查看者的 account 解析返回）
+- **三层 RBAC**：`canManage`（tier A）/ `isManager` / `canEdit`（tier B = canManage ∨ isManager）
 
 ## 5. 构建与部署
 
@@ -119,10 +191,16 @@ instance.interceptors.response.use(r => r, err => {
 
 | 项 | 说明 | 缓解 |
 |---|---|---|
-| 前端权限仅可见性 | 绕过前端直接调 API | **后端 RBAC 为准**，前端只控展示 |
+| 前端权限仅可见性 | 绕过前端直接调 API | **后端 RBAC 为准**，前端只控展示（R-9） |
 | 大文件上传 | `.litematic` 较大 | 限制大小 + 分块/进度条 |
 | 榜单实时性 | 高频刷新压力 | 轮询限频 / WebSocket（后续） |
-| Token 存储 | localStorage 易 XSS | 配合 CSP + HttpOnly cookie（待确认） |
+| Token 存储 | localStorage 易 XSS | 配合 CSP + 输入转义缓解；后续若改 HttpOnly cookie 需重做鉴权链路（RS-4） |
 | 参数误改 | 系统设置改坏积分参数 | 改前确认 + 审计日志 + 灰度 |
 
-> 待确认：前端是否首版就做玩家自助页（个人积分/称号），还是纯管理后台（玩家全走游戏内）。建议首版纯管理后台，玩家侧全走 MCDR `!!` 命令。
+> **已落地**：玩家自助页（`Me.vue`：账号 + 绑定 UUID 列表 + 昵称编辑 + 绑定新身份）
+>
+> **待办**：`Identities.vue`（账号下多 UUID 列表 + active_uuid 切换 UI）尚未实现
+
+---
+
+**最后更新：2026-07-21（v0.7.0：身份管理模块 + 协管员管理面板 + account 级三层 RBAC）**
