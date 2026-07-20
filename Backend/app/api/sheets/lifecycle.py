@@ -1,11 +1,12 @@
 """项目阶段 advance + 归档读（原 sheets.py 块5）。"""
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_player
+from app.api.deps import get_current_account_uuids, get_current_player
 from app.api.sheets._shared import (
     _can_manage,
     _can_operate,
@@ -21,7 +22,6 @@ from app.models.sheet import (
 )
 from app.models.user import Player
 from app.repositories import sheet_repo
-from app.repositories import sheet_manager_repo
 from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 from app.schemas.sheet import SheetDetail
 from app.services.archive import (
@@ -54,7 +54,9 @@ def _infer_advance_target(current_status: str) -> str:
     return SHEET_PHASE_ARCHIVED
 
 
-async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int):
+async def _sheet_detail_or_404(
+    session: AsyncSession, sheet_id: int, *, viewer_uuids: set[uuid.UUID]
+):
     """重新构造 SheetDetail（advance 后取最新 sheet + rows + contributors + managers）。"""
     result = await sheet_repo.get_sheet(session, sheet_id)
     if result is None:
@@ -64,8 +66,14 @@ async def _sheet_detail_or_404(session: AsyncSession, sheet_id: int):
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
-    managers = await sheet_manager_repo.list_managers(session, sheet_id)
-    return _to_detail(sheet, rows_with_names, owner_name, contributors_map, managers)
+    return await _to_detail(
+        session,
+        sheet,
+        rows_with_names,
+        owner_name,
+        contributors_map,
+        viewer_uuids=viewer_uuids,
+    )
 
 
 @router.post("/{sheet_id}/advance", response_model=SheetDetail)
@@ -76,6 +84,7 @@ async def advance_sheet_phase(
     ),
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
     """项目阶段流转。
 
@@ -92,10 +101,10 @@ async def advance_sheet_phase(
     sheet = await _load_sheet_or_404(session, sheet_id)
     target = to if to is not None else _infer_advance_target(sheet.status)
     if target == SHEET_PHASE_ARCHIVED:
-        if not _can_manage(sheet, player):
+        if not _can_manage(sheet, player, account_uuids):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     else:
-        if not _can_operate(sheet, player):
+        if not _can_operate(sheet, player, account_uuids):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
 
     if target == SHEET_PHASE_ARCHIVED:
@@ -133,7 +142,7 @@ async def advance_sheet_phase(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
         await session.commit()
         await session.refresh(advanced)
-    return await _sheet_detail_or_404(session, sheet_id)
+    return await _sheet_detail_or_404(session, sheet_id, viewer_uuids=account_uuids)
 
 
 @router.get("/{sheet_id}/archive", response_class=PlainTextResponse)

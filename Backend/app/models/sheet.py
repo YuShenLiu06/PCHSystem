@@ -176,11 +176,12 @@ class SheetManager(Base):
     owner 可授予某玩家为其项目的 manager；manager 拥有「除删项目/改名/授予撤销协管员/
     归档以外」的全部写权限（tier B），协助 owner 日常协作。
 
-    - 关系 per-sheet：同一玩家可在不同项目各任 manager（PK = sheet_id + player_uuid）。
+    - 关系 per-sheet：同一 Web 账号可在不同项目各任 manager（PK = sheet_id + web_account_id）。
+    - R-5 身份主锚 = Web 账号：manager 锚 web_account_id，同账号任一 UUID 都继承 manager；
+      授予目标必须已绑 Web 账号（NOT NULL，应用层未绑 → 422）。
     - 不复用全局 players.role（admin/owner 是全服超管，语义不同）。
-    - owner 不能被设为自己项目的 manager（app 层 sheet_manager_repo 守卫）。
-    - granted_by_uuid 是审计字段（ON DELETE SET NULL），不参与权限判定。
-    - 身份锚 = player_uuid（FK→users.players.uuid，红线 R-5）。
+    - owner 不能被设为自己项目的 manager（app 层 sheet_manager_repo 守卫，按 account 比对）。
+    - granted_by_uuid 是审计字段（FK→players.uuid，ON DELETE SET NULL），不参与权限判定。
     """
 
     __tablename__ = "sheet_managers"
@@ -191,9 +192,9 @@ class SheetManager(Base):
         ForeignKey("sheets.sheets.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    player_uuid: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.players.uuid", ondelete="CASCADE"),
+    web_account_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.web_accounts.id", ondelete="CASCADE"),
         primary_key=True,
     )
     granted_at: Mapped[datetime] = mapped_column(

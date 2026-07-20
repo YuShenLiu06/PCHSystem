@@ -5,15 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_active_uuid, get_current_account, get_current_player
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.jwt import create_access_token, create_refresh_token, decode_token
-from app.api.deps import get_current_player, require_service_token
+from app.api.deps import require_service_token
 from app.core.web_probe import probe_web
-from app.models.user import Player
+from app.models.user import Player, WebAccount
 from app.repositories.auth_token_repo import exchange as exchange_token, issue
+from app.repositories import web_account_repo
 from app.repositories.player_repo import get_or_create, get_last_sheet
 from app.schemas.auth import (
+    AccountBrief,
     LastSheetResponse,
     MeResponse,
     PlayerBrief,
@@ -28,6 +31,21 @@ from app.services.auth_service import check_whitelist, rate_limiter
 router = APIRouter(prefix="/auth", tags=["auth"])
 top_router = APIRouter(tags=["me"])
 _settings = get_settings()
+
+
+def _account_brief(account: WebAccount) -> AccountBrief:
+    """构造 AccountBrief（含 display_name）。
+
+    exchange / refresh / /me 三端点共用，避免逐处手搓遗漏字段
+    （display_name 曾在 /me 漏传 → 刷新后昵称回退显示「未设置」，bug 2026-07-19）。
+    """
+    return AccountBrief(
+        id=account.id,
+        is_temporary=account.is_temporary,
+        username=account.username,
+        display_name=account.display_name,
+        role=account.role,
+    )
 
 
 @router.post("/token", response_model=TokenIssueResponse)
@@ -67,12 +85,19 @@ async def post_exchange(
     if player is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or used token")
     await session.commit()
-    access = create_access_token(player.uuid, player.role)
-    refresh, _ = create_refresh_token(player.uuid, player.role)
+
+    # get_or_create 已确保 player 有 web_account_id
+    account = player.web_account
+    if account is None:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "account missing")
+
+    access = create_access_token(account.id, account.role, active_uuid=player.uuid)
+    refresh, _ = create_refresh_token(account.id, account.role, active_uuid=player.uuid)
     return TokenExchangeResponse(
         access_token=access,
         refresh_token=refresh,
-        player=PlayerBrief(uuid=player.uuid, name=player.current_name, role=player.role),
+        player=PlayerBrief(uuid=player.uuid, name=player.current_name, role=account.role),
+        account=_account_brief(account),
     )
 
 
@@ -87,24 +112,57 @@ async def post_refresh(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid refresh")
     if payload.get("type") != "refresh":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong token type")
-    # MVP：refresh 未接入 jwt_revocations 吊销表校验；后续可扩展
-    player = (
-        await session.execute(select(Player).where(Player.uuid == uuid.UUID(payload["sub"])))
-    ).scalar_one_or_none()
+
+    # sub 现在是 account_id
+    try:
+        account_id = int(payload["sub"])
+    except (ValueError, KeyError):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token subject")
+
+    account = await web_account_repo.get_by_id(session, account_id)
+    if account is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "account not found")
+
+    # active_uuid 可能不存在（旧 token），拒绝让其重登
+    active_uuid_str = payload.get("active_uuid")
+    if not active_uuid_str:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "legacy token, please re-login")
+    active_uuid = uuid.UUID(active_uuid_str)
+
+    # 验证 UUID 仍属于该账号
+    player_stmt = select(Player).where(
+        Player.uuid == active_uuid, Player.web_account_id == account_id
+    )
+    player = (await session.execute(player_stmt)).scalar_one_or_none()
     if player is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "player not found")
-    access = create_access_token(player.uuid, player.role)
-    refresh, _ = create_refresh_token(player.uuid, player.role)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "player not bound to account")
+
+    access = create_access_token(account.id, account.role, active_uuid=active_uuid)
+    refresh, _ = create_refresh_token(account.id, account.role, active_uuid=active_uuid)
     return TokenExchangeResponse(
         access_token=access,
         refresh_token=refresh,
-        player=PlayerBrief(uuid=player.uuid, name=player.current_name, role=player.role),
+        player=PlayerBrief(uuid=player.uuid, name=player.current_name, role=account.role),
+        account=_account_brief(account),
     )
 
 
 @top_router.get("/me", response_model=MeResponse)
-async def get_me(player: Player = Depends(get_current_player)) -> MeResponse:
-    return MeResponse(uuid=player.uuid, name=player.current_name, role=player.role)
+async def get_me(
+    account: WebAccount = Depends(get_current_account),
+    active_uuid: uuid.UUID = Depends(get_active_uuid),
+    session: AsyncSession = Depends(get_session),
+) -> MeResponse:
+    """返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。"""
+    players = await web_account_repo.list_players(session, account.id)
+    return MeResponse(
+        account=_account_brief(account),
+        players=[
+            PlayerBrief(uuid=p.uuid, name=p.current_name, role=account.role)
+            for p in players
+        ],
+        active_uuid=active_uuid,
+    )
 
 
 @top_router.get("/me/last_sheet", response_model=LastSheetResponse)

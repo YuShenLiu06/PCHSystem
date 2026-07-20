@@ -11,9 +11,7 @@ import pytest
 
 import app.api.deps as deps
 from app.core.config import get_settings
-from app.core.db import async_session_factory
-from app.core.jwt import create_access_token
-from app.models.user import Player
+from tests.conftest import seed_player_with_account
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "机械动力仓库_1.litematic"
 _NBT_FIXTURE = Path(__file__).parent / "fixtures" / "create_blueprint_sample.nbt"
@@ -28,11 +26,8 @@ def _svc_token(monkeypatch):
 
 
 async def _make_player(name: str = "alice", role: str = "user") -> tuple[uuid.UUID, str]:
-    u = uuid.uuid4()
-    async with async_session_factory() as s:
-        s.add(Player(uuid=u, current_name=name, role=role))
-        await s.commit()
-    return u, f"Bearer {create_access_token(u, role)}"
+    """seed player + 临时 WebAccount，返回 (uuid, bearer)。"""
+    return await seed_player_with_account(name=name, role=role)
 
 
 def _auth(bearer: str) -> dict[str, str]:

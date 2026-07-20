@@ -15,16 +15,38 @@
 
 ### Added
 
-- **项目级协管员（manager）角色**：项目拥有者现可授予其他玩家「协管员」身份，协助日常协作。协管员拥有除「删除项目 / 改项目名 / 授予撤销协管员 / 归档」以外的全部写权限（增删改行、子物品、改物品 id、调整进度、解除锁定、打回、进入施工阶段），分担 owner 管理负担。权限按项目独立授予（A 可为项目 #1 的协管员、对项目 #2 仍是普通玩家），不复用全局超管角色。全局 admin/owner 超管保留对任意项目的全部权限。
-  - 后端：新表 `sheets.sheet_managers`（迁移 0014，PK 幂等）+ `_can_manage`（tier A 高危）/ `_can_operate`（tier B 常规）双层 helper（ORM 关系预加载，保持 sync）+ `GET/POST/DELETE /sheets/{id}/managers` 端点（owner 授予/撤销，manager 可 self-revoke）+ `SheetDetail` 响应增 `managers` 字段。授予/撤销均经统一通知层给受影响方投递（`sheet_manager_granted` 绿色正向 / `sheet_manager_revoked` 黄色提醒；self-revoke 主动卸任不通知，命令回执已告知）。
-  - 游戏端：`!!PCH sheet manager <表id> [list|add <玩家名>|remove <玩家名>]`；行级 `[改][-][子][调]` 与底部 `[进入施工][新增物品]` 按钮对协管员可见，归档/改名/删表按钮仅 owner 可见。
-  - 前端：详情页协管员管理面板（owner 可按 UUID 增删，所有人可见列表）；改名/删表/归档按钮改为 owner 专属（原 `canEdit` 拆为 `canManage` tier A + `canEdit` tier B）。
+- **项目级协管员（manager）角色（account 级，R-5 一致）**：项目拥有者现可授予其他玩家「协管员」身份，协助日常协作。协管员拥有除「删除项目 / 改项目名 / 授予撤销协管员 / 归档」以外的全部写权限（增删改行、子物品、改物品 id、调整进度、解除锁定、打回、进入施工阶段），分担 owner 管理负担。权限按项目独立授予（A 可为项目 #1 的协管员、对项目 #2 仍是普通玩家），不复用全局超管角色。全局 admin/owner 超管保留对任意项目的全部权限。
+  - **account 锚定（与 main 原方案的差异）**：SheetManager 锚 `web_account_id`（重做 main 原 per-UUID 措辞）——同账号下任一 UUID 都继承 manager；授予目标必须已绑 Web 账号（未绑 → 422，B7）；与 owner 同账号拒（409 `SheetOwnerCannotBeManager`，B7）；self-revoke 显式 NULL 守卫（`web_account_id IS NULL` 玩家不能 self-revoke，拒 403，B6）。协管员列表元素含 `member_uuids`，前端 / MCDR 用 `managers[].member_uuids ∩ viewer_uuids` 判定 `is_manager`，无需感知 account_id。
+  - 后端：新表 `sheets.sheet_managers`（迁移 `0016_sheet_managers`，`web_account_id BIGINT FK→web_accounts.id` + PK `(sheet_id, web_account_id)` 幂等 + 索引 `ix_sheet_managers_account` + `granted_by_uuid` 审计）+ `_can_manage`（tier A 高危）/ `_can_operate`（tier B 常规，内含 `_is_account_manager`）双层 helper（ORM selectin 关系预加载，保持 sync；`_is_superuser` 切 `_resolve_role` 与全局 RBAC 一致，B1；`_is_account_manager` 删 `getattr` 兜底，B5）+ `GET/POST/DELETE /sheets/{id}/managers` 端点（owner 授予/撤销，manager 可 self-revoke）+ `SheetDetail` 响应增 `managers` 字段（`{web_account_id, display_name, member_uuids, granted_at}`，与 `RowContributor` 结构对齐）。**迁移链重编号**（两侧都占 0014）：`0013 → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（main 原 `0014_sheet_managers` 重编号为 `0016`；HEAD 的 0014/0015 保持原号）。**行为变化（PR 必写）**：`advance ?to=constructing` 由 HEAD 的 tier A 改采 main 的 tier B（manager 也能推进施工，M07 必测）。授予/撤销均经统一通知层给受影响方投递（`sheet_manager_granted` 绿色正向 / `sheet_manager_revoked` 黄色提醒；self-revoke 主动卸任不通知，命令回执已告知）。**权限契约表 M01–M26 + E1–E5** 同步落 `Backend/tests/` 与 [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) §7.1（三端权限对账权威）。
+  - 游戏端：`!!PCH sheet manager <表id> [list|add <玩家名>|remove <玩家名>]`；行级 `[改][-][子][调]` 与底部 `[进入施工][新增物品]` 按钮对协管员可见（用 `managers[].member_uuids ∩ viewer_uuids` 判定，N2 DRY `_is_manager` 单一 helper），归档/改名/删表按钮仅 owner 可见。
+  - 前端：详情页协管员管理面板（owner 可增删，所有人可见列表，`display_name` 展示、revoke 传 `web_account_id`）；改名/删表/归档按钮改为 owner 专属（原 `canEdit` 拆为 `canManage` tier A + `canOperate` tier B）；`isManager` 单一 computed 用 viewer 绑定 UUIDs 与 `member_uuids` 求交（N2 DRY）。
+
+- **sheets 业务全面升 account 级 + 自定义昵称（R-5 落地深化）**：身份主锚升级（见下）让一个 Web 账号可绑多 MC UUID，但 sheets 业务表仍按 `player_uuid` 隔离——同一人多 UUID 的贡献被拆成多条、彼此无法操作对方建的表 / 认领的行。本次把权限判定 / contributors 聚合 / 「我参与的行」高亮 / 显示名 全部升到 account 级；**存储层不动**（保留 `player_uuid` 作审计锚，零回填风险）。
+  - **后端**（migration `0015_web_account_display_name`（HEAD 原号保持，display_name 仍 0015））：`web_accounts` 加 `display_name`（玩家自定义昵称，sheets 三端显示名主源；空则回退该账号下最近活跃 UUID 的游戏名）。sheets 权限层 `_can_edit`（已删，B4） / collab(delivery/release/reject) / rows / lifecycle 改用 account UUID 集合判断——同 account 任一 UUID 建的表 / 认领的 lock 行，其他 UUID 可编辑、deliver、release、reject（lock 语义从「单人锁定」变「账号锁定」）。contributors 按 account 聚合（同账号多 UUID 合并为一条、贡献量合并）；`SheetDetail` 新增 `viewer_uuids`（当前账号全部 UUID，下发前端/MCDR 做可见性判断）；新增 `PATCH /web-accounts/me`（设昵称）+ `resolve_display_name(s)` 批量解析（避免 N+1）。`/me` / `/auth/exchange` / `/auth/refresh` 统一经 helper 构造 `AccountBrief`（不再漏传 display_name）。业务表零迁移。
+  - **前端**：`SheetEditor` 的 owner / 认领人按钮可见性改用 `viewer_uuids`（同 account 共享，lidrem 能管理 LiuYuShen_06 建的表）；`/me` 加昵称编辑入口，删除多 UUID 下无意义的「激活/未激活」状态列；contributors / owner 显示名统一取 display_name（设昵称后刷新不再回退「未设置」）。
+  - **游戏端**（MCDR）：`!!PCH sheet view` 的 owner 特权按钮 + 行按钮（认领/交付/解除/打回）、`!!submit` 一键提交的认领人匹配，全部改用 `viewer_uuids`（同 account 任一 UUID 都算 owner / 认领人）；contributors 显示 display_name。scanner 测试 51 条全绿。
+
+- **身份主锚升级：Web 账号绑定多 MC UUID（完善 `!!PCH bind`）**：解决多服务器 / 离线改名 / 多账号场景下身份与积分无法统一的问题。一个 Web 账号（主锚）可绑定多个 MC UUID（子身份），积分与贡献按账号聚合（R-5 落地）。
+  - **后端**（migration `0014_web_accounts_bind`（HEAD 原号保持，web_accounts 仍 0014））：新表 `users.web_accounts`（username/password_hash；`username IS NULL` = 临时账号，`!!PCH login` 仍可直接用，给出临时账号引导注册或绑定）+ `users.bind_tokens`（双向绑定短码，方向 `game_init`/`web_init`）；`players` 加 `web_account_id` FK（不回填，下次 login 自动挂临时账号）。JWT `sub` 由 `player_uuid` 改为 `web_account_id`（+ `active_uuid` claim）——**breaking：现有会话失效需重登**；`role` 权威源迁到 account 级。新端点：`POST /auth/login`（密码登录）、`POST /web-accounts/register`（临时→永久）、`GET /web-accounts/me`、`POST /bind/{token,issue,confirm,consume,claim}`（双向绑定闭环；game_init 走 service-token、web_init 走 JWT）。聚合查询（sheets 参与优先 / notifications / 归档贡献排行）改 `JOIN players → GROUP BY web_account_id`，业务表零迁移；`score_ledger`（未建）将来建时直接加 `owner_account_id`。新增依赖 `bcrypt`。26 条 identity 集成测试。
+  - **游戏端**（MCDR）：`!!PCH bind`（无参 → game_init 出短码）+ `!!PCH bind <code>`（消费 web_init 码）；新增 `bind_client.py`（`/bind/token` 单头 + `/bind/consume` 双头，哨兵复用），命令树替换原 stub；短码回执灰色（敏感信息规则）。11 条 bind_client 测试，覆盖率 100%。
+  - **前端**：新增身份管理（`/register` 注册永久账号、`/login` 密码登录、`/bind/confirm` 输码确认、`/bind/claim` 临时会话绑到已有账号、`/identities` 绑定列表+出码）；`/me` 升级为账号 + 绑定 UUID 列表 + 临时账号引导横幅；`AuthExchange` 按账号临时/永久状态分流到 `/register` 或 `/me`；`api/identity.ts` 统一封装（顺手把原 inline 的 `/auth/exchange`、`/me` 也补进封装）。14 条新增测试，vue-tsc + build 通过。
 
 ### Fixed
 
 - **归档项目写操作返回「项目已归档，只读」（issue #7）**：归档终态项目执行认领 / 交付 / 解除 / 打回 / 上交 / 调整进度 / 改名时，后端 collab 写端点此前未捕获 `SheetArchived` → HTTP 500，游戏端因此显示「表格服务暂不可用，请稍后重试」。现 collab 6 端点（claim/delivery/release/reject/contribute/progress）+ `patch_sheet`（改名）统一补归档守卫返 409「项目已归档，只读」；MCDR `_resolve` 按 detail 含「归档」/「archiv」识别归档态、显示只读回执（与行状态非法的通用 409 区分），`!!PCH sheet submit` 在拉到归档项目时整体短路、不再逐行 409 刷屏。后端补 7 条归档 409 回归用例，MCDR 补 claim 中文/英文文案 + submit 短路用例。
 - **`.env` 增量补全**：老用户从旧版升级后，新版新增的 `.env` 配置项（如 `WEB_PROBE_URL`）不会自动补全，导致 `!!PCH status` 不显示前端版本号。`install.sh` / `update.sh` 现按 `.env.example` 幂等补全缺失键（密钥类不补、值优先让用户确认）；同批缺失键曾使 `env_get` 在 `set -e` 下打假报警 trap，已加 `|| true` 消除。
 - **重新安装/更新撞 web 端口不再裸退出**：已装机器重跑 `install.sh` / `update.sh` 时，web 容器宿主端口（默认 5173）若被遗留进程（如 `npm run dev`）或本项目残留 web 容器占用，`docker compose up -d` 不再以不透明的 `set -e` 退出——改为自动清理本项目残留 web 容器、对占用者提前说明并询问是否停掉；所有 `dcc up -d` 失败改干净退出并提示。绝不 `down -v` / 碰 postgres 数据卷。
+
+### Security
+
+- **身份认证链路 CR 安全加固**：身份主锚升级（见下 Added）后的代码审查修复轮，补齐 `/auth/login` 与 JWT 校验的安全/健壮性缺口。
+  - **密码登录双维度限频**（`WindowRateLimiter`，后端）：IP 维度（窗口内总尝试上限，防撞库扫号）+ `(username, ip)` 维度（单账号上限，防针对爆破），配合 bcrypt 慢哈希；登录成功后清零计数，正常用户不累积触发。入口先计数再校验，账号不存在也消耗额度（避免账号枚举侧信道）。新增配置 `login_rate_limit_*`（`window` / `max_per_ip` / `max_per_credential`，均有默认值，见 `.env.example`）。
+  - **JWT 复验 `active_uuid` 仍属 `sub` 账号**（后端 `deps._player_from_jwt`，M1）：access token 被窃后，若 player 迁到别的 account，旧 token 立即失效（401），防代写。
+  - **`/auth/login` active_uuid 取首绑 player**（后端，H1）：原留空导致依赖 `get_active_uuid` 的 `/me` 等端点立即 401 踢回登录。
+  - **`register` 兜底 `IntegrityError`**（后端，H3）：预检与 flush 间并发 race 撞 username UNIQUE 约束，原仅捕 `ValueError` 漏出 500，现统一 409。
+  - **前端 `AuthResponse.player` 改可空 + 4 处 null guard**（`AuthExchange` / `ClaimBind` / `Login` / `Register`）：防御 register / claim 边界场景后端无 player 的异常态，显式提示「账号数据异常」而非崩溃。
+  - **限制**：`WindowRateLimiter` 为单进程内存实现（MVP，与既有 `rate_limiter` 一致，RS-6）；多 worker 部署需换 Redis，生产前待补。
+  - 测试：后端 `test_auth_service` +3（上限 / key 独立 / reset）、`test_identity` +4（H1 active_uuid / H2 限频 429 / M1 迁账号失效 / H3 race 409）。
 
 ### Docs
 

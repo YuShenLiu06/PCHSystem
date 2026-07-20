@@ -415,8 +415,11 @@ async def test_contribute_accumulates_and_transitions_to_done():
     # 这里在 done 之前先验证幂等：alice 两次 contribute 应只贡献一条记录
     async with async_session_factory() as s:
         contribs = await sheet_repo.list_contributors(s, [rid])
-        alice_entries = [pu for pu, _name in contribs.get(rid, []) if pu == alice]
-        assert len(alice_entries) == 1  # 幂等：同玩家多次只一条
+        alice_entries = [
+            _aid for _aid, _dn, mids, _qty in contribs.get(rid, [])
+            if alice in mids
+        ]
+        assert len(alice_entries) == 1  # 幂等：同玩家多次只一条（account 聚合后仍一条）
 
 
 @pytest.mark.asyncio
@@ -502,7 +505,7 @@ async def test_set_row_progress_overrides_delivered_and_keeps_contributors():
         assert row.status == "open"
         contribs = await sheet_repo.list_contributors(s, [rid])
         assert len(contribs.get(rid, [])) == 1
-        assert contribs[rid][0][0] == alice
+        assert alice in contribs[rid][0][2]  # member_uuids 含 alice（4 元组第 3 位）
 
 
 @pytest.mark.asyncio
@@ -599,8 +602,8 @@ async def test_upsert_progress_mode_change_resets_and_same_mode_preserves():
 
 
 @pytest.mark.asyncio
-async def test_list_contributors_aggregates_multiple_rows_ordered_by_joined_at():
-    """多行 × 多贡献者聚合，每行内部按 joined_at 升序。"""
+async def test_list_contributors_aggregates_multiple_rows_ordered_by_qty_then_name():
+    """多行 × 多贡献者聚合，每行内部按 contributed_qty desc、display_name 升序（account 聚合）。"""
     sid, rid_a = await _make_progress_row(need_qty=100)
     # 同表再加一个 progress 行
     async with async_session_factory() as s:
@@ -636,16 +639,16 @@ async def test_list_contributors_aggregates_multiple_rows_ordered_by_joined_at()
         contribs = await sheet_repo.list_contributors(s, [rid_a, rid_b])
         # 两行都有结果
         assert set(contribs.keys()) == {rid_a, rid_b}
-        # rid_a 顺序：alice, bob, carol
-        names_a = [name for _pu, name in contribs[rid_a]]
+        # rid_a：alice/bob/carol 各上交 1（qty 相同）→ display_name 升序
+        names_a = [dn for _aid, dn, _mids, _qty in contribs[rid_a]]
         assert names_a == ["alice", "bob", "carol"]
-        # rid_b 顺序：carol, alice
-        names_b = [name for _pu, name in contribs[rid_b]]
-        assert names_b == ["carol", "alice"]
-        # 返回的 uuid 与 name 配对一致
+        # rid_b：carol/alice 各上交 1（qty 相同）→ display_name 升序（account 聚合排序）
+        names_b = [dn for _aid, dn, _mids, _qty in contribs[rid_b]]
+        assert names_b == ["alice", "carol"]
+        # member_uuids 元素为 UUID（account 聚合后每条至少含一个 member uuid）
         for entries in contribs.values():
-            for pu, name in entries:
-                assert isinstance(pu, uuid.UUID)
+            for _aid, _dn, member_uuids, _qty in entries:
+                assert member_uuids and isinstance(member_uuids[0], uuid.UUID)
 
 
 @pytest.mark.asyncio
@@ -1400,9 +1403,9 @@ async def test_list_sheets_involved_first_ordering():
         await sheet_repo.contribute_row(s, s4.id, row.id, alice, 10)
         await s.commit()
 
-    # Act：查询 alice 的列表（player_uuid=alice）
+    # Act：查询 alice 的列表（player_uuids=[alice]；账号级聚合传 UUID 列表）
     async with async_session_factory() as s:
-        sheets = await sheet_repo.list_sheets(s, player_uuid=alice)
+        sheets = await sheet_repo.list_sheets(s, player_uuids=[alice])
 
     # Assert：alice 参与的表（s1, s2, s3, s4）应在前面，未参与的（s5）在后面
     # 组内按 id 升序
@@ -1716,7 +1719,7 @@ def test_sort_sheet_rows_keeps_children_under_parent():
     child = mk(2, "子", parent=1, mode=1, status="open", need=5)  # my-progress → 档 1
     rows = [(parent, None), (child, None)]
 
-    out = sort_sheet_rows(rows, viewer, my_row_ids={2})
+    out = sort_sheet_rows(rows, {viewer}, my_row_ids={2})
     assert [r.item_name for r, _ in out] == ["父", "子"]  # 子紧跟父，不排到上方
 
 

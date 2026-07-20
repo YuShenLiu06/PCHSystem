@@ -145,14 +145,15 @@ def _to_int(value, default: int = 0) -> int:
         return default
 
 
-def match_rows(rows: list, inventory: dict, player_uuid: str = "") -> list:
+def match_rows(rows: list, inventory: dict, player_uuid: str = "", *, viewer_uuids=None) -> list:
     """按 registry_id 精确匹配表行 → ``list[MatchAction]``。
 
     无 registry_id 的行不参与（不产生 action）；每个匹配行恰好一个 action（含 skip）。
 
-    lock 模式必须**已是认领人**才进入提交：``player_uuid`` 与行的 ``claimant_uuid`` 匹配
-    且 status=claimed、have≥need → ``deliver``；其余 lock 行 → ``skip``。
-    ``player_uuid`` 默认空串（等价于"非认领人"），保持向后兼容。
+    lock 模式必须**已是认领人**才进入提交（R-5 account 级）：``viewer_uuids`` 含行的
+    ``claimant_uuid``（同 account 任一 UUID 认领即算本人）且 status=claimed、have≥need →
+    ``deliver``；其余 lock 行 → ``skip``。
+    ``viewer_uuids`` 默认 None → 回退 ``{player_uuid}``（单 UUID，向后兼容旧调用/测试）。
     """
     actions: list = []
     for r in rows:
@@ -170,10 +171,14 @@ def match_rows(rows: list, inventory: dict, player_uuid: str = "") -> list:
         have = _to_int(inventory.get(rid, 0))
 
         if mode == 0:  # lock
-            is_claimant = (
-                bool(player_uuid)
-                and str(r.get("claimant_uuid") or "") == player_uuid
+            # R-5 account 级：viewer_uuids 含 claimant_uuid → 同 account 任一 UUID 认领都算本人
+            _viewer = (
+                viewer_uuids
+                if viewer_uuids is not None
+                else ({player_uuid} if player_uuid else set())
             )
+            claimant_uuid = str(r.get("claimant_uuid") or "")
+            is_claimant = bool(claimant_uuid) and claimant_uuid in _viewer
             if is_claimant and status == "claimed" and need > 0 and have >= need:
                 actions.append(MatchAction(row_id, rid, item_name, mode, "deliver", need, is_claimant=is_claimant))
             else:

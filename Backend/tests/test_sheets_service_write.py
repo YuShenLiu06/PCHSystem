@@ -14,10 +14,10 @@ import pytest
 import app.api.deps as deps
 from app.core.config import get_settings
 from app.core.db import async_session_factory
-from app.core.jwt import create_access_token
 from app.models.notification import Notification
-from app.models.user import Player
+from app.models.user import Player, WebAccount
 from sqlalchemy import select
+from tests.conftest import seed_player_with_account
 
 
 @pytest.fixture(autouse=True)
@@ -26,16 +26,22 @@ def _svc_token(monkeypatch):
     deps._settings.mcdr_service_token = "svc"
 
 
+_BEARER_CACHE: dict[uuid.UUID, str] = {}
+
+
 async def _seed(name: str, role: str = "user") -> uuid.UUID:
-    u = uuid.uuid4()
-    async with async_session_factory() as s:
-        s.add(Player(uuid=u, current_name=name, role=role))
-        await s.commit()
-    return u
+    """seed player + 临时 WebAccount，返回 player UUID。
+
+    JWT bearer 缓存到 _BEARER_CACHE，供 _jwt_headers(uuid) 同步取用。
+    """
+    player_uuid, bearer = await seed_player_with_account(name=name, role=role)
+    _BEARER_CACHE[player_uuid] = bearer
+    return player_uuid
 
 
 def _jwt_headers(u: uuid.UUID, role: str = "user") -> dict[str, str]:
-    return {"Authorization": f"Bearer {create_access_token(u, role)}"}
+    """从缓存取 bearer（_seed 已写入）。"""
+    return {"Authorization": _BEARER_CACHE[u]}
 
 
 def _svc_headers(u: uuid.UUID) -> dict[str, str]:
@@ -458,7 +464,11 @@ async def test_service_token_channel_contribute_equivalent(client):
     body = resp.json()
     assert body["delivered_qty"] == 4
     assert body["status"] == "claimed"
-    assert body["contributors"] == [{"player_uuid": str(bob), "player_name": "bob"}]
+    assert len(body["contributors"]) == 1
+    c = body["contributors"][0]
+    assert str(bob) in c["member_uuids"]
+    assert c["display_name"] == "bob"
+    assert c["contributed_qty"] == 4
 
 
 @pytest.mark.asyncio

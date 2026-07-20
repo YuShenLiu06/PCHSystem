@@ -1,4 +1,9 @@
-"""行 upsert/delete + 编辑通知（原 sheets.py 块3）。"""
+"""行 upsert/delete + 编辑通知（原 sheets.py 块3）。
+
+account 级统一（R-5 主锚，2026-07-19）：tier B 权限经 ``_can_operate``
+（owner/超管/manager）；通知显示名用 ``resolve_display_name``；contributors 按
+account 聚合后展开 ``member_uuids``。
+"""
 import logging
 import uuid
 
@@ -6,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_player
+from app.api.deps import get_current_account_uuids, get_current_player
 from app.api.sheets._shared import (
     _can_operate,
     _load_sheet_or_404,
@@ -18,17 +23,20 @@ from app.api.sheets._shared import (
 from app.core.db import get_session
 from app.models.sheet import Sheet, SheetRow
 from app.models.user import Player
-from app.repositories import sheet_repo
+from app.repositories import sheet_repo, web_account_repo
 from app.repositories.sheet_repo import SheetArchived
 from app.schemas.sheet import RowDetail, RowUpsertRequest
 
 router = APIRouter(prefix="")
 logger = logging.getLogger(__name__)
 
+# contributors account 聚合后的元素类型：(account_id, display_name, member_uuids, qty)
+ContributorAgg = tuple[int | None, str, list[uuid.UUID], int]
+
 
 async def _collect_progress_contributors(
     session: AsyncSession, row: SheetRow
-) -> list[tuple[uuid.UUID, str]]:
+) -> list[ContributorAgg]:
     """mode 从 progress 变走时，repo 会 clear_contributors —— 预取名单用于事后通知。"""
     _contrib_map = await sheet_repo.list_contributors(session, [row.id])
     return _contrib_map.get(row.id, [])
@@ -39,6 +47,8 @@ async def _dispatch_row_edit_notifications(
     *,
     sheet: Sheet,
     player: Player,
+    actor_name: str,
+    account_uuids: set[uuid.UUID],
     row: SheetRow,
     item_name: str,
     mode_changed: bool,
@@ -46,7 +56,7 @@ async def _dispatch_row_edit_notifications(
     old_need: int | None,
     new_need: int,
     claimant_uuid: uuid.UUID | None,
-    progress_contributors: list[tuple[uuid.UUID, str]],
+    progress_contributors: list[ContributorAgg],
 ) -> None:
     """行编辑后的通知派发（新建/更新两路径共用，DRY）。"""
     sheet_id = sheet.id
@@ -55,6 +65,8 @@ async def _dispatch_row_edit_notifications(
             session,
             [claimant_uuid],
             actor=player,
+            actor_name=actor_name,
+            account_uuids=account_uuids,
             category="sheet_released",
             title="模式变更，认领已重置",
             body=f"[{item_name}] 拥有者调整了模式，认领/进度已重置",
@@ -64,11 +76,13 @@ async def _dispatch_row_edit_notifications(
             item_name=item_name,
         )
     if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS:
-        for contrib_uuid, _cname in progress_contributors:
+        for _aid, _dn, member_uuids, _qty in progress_contributors:
             await notify_uuids(
                 session,
-                [contrib_uuid],
+                member_uuids,
                 actor=player,
+                actor_name=actor_name,
+                account_uuids=account_uuids,
                 category="sheet_progress_reset",
                 title="贡献已被拥有者清空",
                 body=f"拥有者调整了 [{item_name}] 的模式，进度与贡献已重置",
@@ -87,6 +101,8 @@ async def _dispatch_row_edit_notifications(
             session,
             [claimant_uuid],
             actor=player,
+            actor_name=actor_name,
+            account_uuids=account_uuids,
             category="sheet_qty_changed",
             title="所需数量已调整",
             body=f"[{item_name}] 所需数量变为 {new_need}（原 {old_need}）",
@@ -128,7 +144,13 @@ async def _create_row_by_item(
 
 
 async def _update_row_by_id(
-    session: AsyncSession, sheet: Sheet, player: Player, body: RowUpsertRequest
+    session: AsyncSession,
+    sheet: Sheet,
+    player: Player,
+    *,
+    actor_name: str,
+    account_uuids: set[uuid.UUID],
+    body: RowUpsertRequest,
 ) -> SheetRow:
     """更新路径（带 row_id）：按主键部分更新。"""
     prev = await sheet_repo.get_row(session, sheet.id, body.row_id)
@@ -139,7 +161,7 @@ async def _update_row_by_id(
     claimant_uuid = prev_row.claimant_uuid
     prev_mode = prev_row.mode
     mode_changed = body.mode is not None and prev_mode != body.mode
-    progress_contributors: list[tuple[uuid.UUID, str]] = (
+    progress_contributors: list[ContributorAgg] = (
         await _collect_progress_contributors(session, prev_row)
         if mode_changed and prev_mode == sheet_repo.MODE_PROGRESS
         else []
@@ -166,6 +188,8 @@ async def _update_row_by_id(
         session,
         sheet=sheet,
         player=player,
+        actor_name=actor_name,
+        account_uuids=account_uuids,
         row=row,
         item_name=item_name,
         mode_changed=mode_changed,
@@ -184,14 +208,23 @@ async def upsert_row(
     body: RowUpsertRequest,
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> RowDetail:
     """行新建 / 更新（单端点按 ``row_id`` 分流）。"""
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_operate(sheet, player):
+    if not _can_operate(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
     try:
         if body.row_id is not None:
-            row = await _update_row_by_id(session, sheet, player, body)
+            row = await _update_row_by_id(
+                session,
+                sheet,
+                player,
+                actor_name=actor_name,
+                account_uuids=account_uuids,
+                body=body,
+            )
         else:
             row = await _create_row_by_item(session, sheet, body)
         await session.commit()
@@ -216,9 +249,10 @@ async def delete_row(
     row_id: int,
     session: AsyncSession = Depends(get_session),
     player: Player = Depends(get_current_player),
+    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ):
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_operate(sheet, player):
+    if not _can_operate(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:
@@ -235,10 +269,13 @@ async def delete_row(
         if progress_ids
         else {}
     )
+    actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
     await notify_rows_deleted(
         session,
         sheet=sheet,
         actor=player,
+        actor_name=actor_name,
+        account_uuids=account_uuids,
         rows_with_names=affected,
         contributors_map=contributors_map,
     )

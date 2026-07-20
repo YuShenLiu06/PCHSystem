@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import case, delete, func, or_, select, union_all
+from sqlalchemy import String, case, delete, func, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +29,7 @@ from app.models.sheet import (
     SheetRow,
     SheetRowContributor,
 )
-from app.models.user import Player
+from app.models.user import Player, WebAccount
 
 # mode（D-3）
 MODE_LOCK, MODE_PROGRESS = 0, 1
@@ -147,39 +147,46 @@ async def create_sheet(
 async def get_sheet(
     session: AsyncSession, sheet_id: int
 ) -> tuple[Sheet, str] | None:
-    """单表详情：inner join players 取 owner 游戏名。返回 (Sheet, owner_name) 或 None。"""
-    stmt = (
-        select(Sheet, Player.current_name)
-        .join(Player, Player.uuid == Sheet.owner_uuid)
-        .where(Sheet.id == sheet_id)
-    )
-    row = (await session.execute(stmt)).first()
-    if row is None:
+    """单表详情：返回 (Sheet, owner_name) 或 None。
+
+    owner_name 统一显示名（自定义昵称优先，否则该账号下最近活跃 UUID 游戏名），
+    经 ``web_account_repo.resolve_display_name`` 解析。
+    """
+    from app.repositories import web_account_repo
+
+    stmt = select(Sheet).where(Sheet.id == sheet_id)
+    sheet = (await session.execute(stmt)).scalar_one_or_none()
+    if sheet is None:
         return None
-    return row[0], row[1]
+    owner_name = await web_account_repo.resolve_display_name(session, sheet.owner_uuid)
+    return sheet, owner_name
 
 
 async def list_sheets(
     session: AsyncSession,
     owner_uuid: uuid.UUID | None = None,
     status_filter: str | None = None,
-    player_uuid: uuid.UUID | None = None,
+    player_uuids: list[uuid.UUID] | None = None,
+    viewer_web_account_id: int | None = None,
 ) -> list[tuple[Sheet, str]]:
-    """列所有表：inner join players 取 owner 游戏名。返回 [(Sheet, owner_name)]。
+    """列所有表：返回 [(Sheet, owner_name)]。
+
+    owner_name 统一显示名（自定义昵称优先，否则账号下最近活跃 UUID 游戏名），
+    批量经 ``web_account_repo.resolve_display_names`` 解析（避免 N+1）。
 
     status_filter（与 owner_uuid 可组合）：
     - None → 不过滤；
     - "active" → status ∈ (collecting, constructing)；
     - 单值（collecting/constructing/archived）→ status == 该值。
 
-    player_uuid（参与优先排序）：
-    - 非空时，该玩家参与过的表（owner/claimant/contributor/manager）排在前面，组内按 id 升序；
-    - None 时，按 sheet id 升序（与历史行为一致）。
+    player_uuids（参与优先排序，account 级聚合）+ viewer_web_account_id（manager 源）：
+    - player_uuids 非空时，该账号任一 UUID 参与过的表（owner/claimant/contributor）排在前面；
+    - viewer_web_account_id 非空时，额外纳入该账号任 manager 的表（第 4 源，account 锚）；
+    - 两者皆空时，按 sheet id 升序（与历史行为一致）。组内按 id 升序。
     """
-    stmt = (
-        select(Sheet, Player.current_name)
-        .join(Player, Player.uuid == Sheet.owner_uuid)
-    )
+    from app.repositories import web_account_repo
+
+    stmt = select(Sheet)
     if owner_uuid is not None:
         stmt = stmt.where(Sheet.owner_uuid == owner_uuid)
     if status_filter == "active":
@@ -187,31 +194,58 @@ async def list_sheets(
     elif status_filter is not None:
         stmt = stmt.where(Sheet.status == status_filter)
 
-    if player_uuid is not None:
-        # 构造「该玩家参与过的 sheet_id 集」复合 SELECT（四源 UNION，迁移 0014 加 manager 源）。
+    if player_uuids or viewer_web_account_id is not None:
+        # 构造「该账号参与过的 sheet_id 集」复合 SELECT：
+        # - player_uuids 三源（claimant/contributor/owner，account 级聚合）
+        # - viewer_web_account_id 一源（manager，account 锚；迁移 0014 重做为 web_account_id）
         # 直接以 CompoundSelect 传入 in_()——勿加 .subquery()，否则 SQLAlchemy 会
         # 触发「Coercing Subquery into select() for IN()」告警（2.x 行为）。
-        # UNION 默认 DISTINCT：同一 sheet 多源命中只算一次（如 owner 同时是别表 manager，
-        # 两表 sheet_id 不同各出现一次，不重复）。
+        # UNION 默认 DISTINCT：同一 sheet 多源命中只算一次。
+        union_parts = []
+        if player_uuids:
+            union_parts.extend(
+                [
+                    select(SheetRow.sheet_id).where(
+                        SheetRow.claimant_uuid.in_(player_uuids)
+                    ),
+                    select(SheetRow.sheet_id)
+                    .join(
+                        SheetRowContributor, SheetRowContributor.row_id == SheetRow.id
+                    )
+                    .where(SheetRowContributor.player_uuid.in_(player_uuids)),
+                    select(Sheet.id).where(Sheet.owner_uuid.in_(player_uuids)),
+                ]
+            )
+        if viewer_web_account_id is not None:
+            union_parts.append(
+                select(SheetManager.sheet_id).where(
+                    SheetManager.web_account_id == viewer_web_account_id
+                )
+            )
         involved_ids = (
-            select(SheetRow.sheet_id).where(SheetRow.claimant_uuid == player_uuid)
-        ).union(
-            select(SheetRow.sheet_id)
-            .join(SheetRowContributor, SheetRowContributor.row_id == SheetRow.id)
-            .where(SheetRowContributor.player_uuid == player_uuid),
-            select(Sheet.id).where(Sheet.owner_uuid == player_uuid),
-            select(SheetManager.sheet_id).where(SheetManager.player_uuid == player_uuid),
+            union_parts[0].union(*union_parts[1:])
+            if len(union_parts) > 1
+            else union_parts[0]
         )
         stmt = stmt.order_by(Sheet.id.in_(involved_ids).desc(), Sheet.id.asc())
     else:
         stmt = stmt.order_by(Sheet.id.asc())
-    return [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
+    sheets = list((await session.execute(stmt)).scalars().all())
+    if not sheets:
+        return []
+    owner_names = await web_account_repo.resolve_display_names(
+        session, [s.owner_uuid for s in sheets]
+    )
+    return [(s, owner_names[s.owner_uuid]) for s in sheets]
 
 
 async def list_rows(
     session: AsyncSession, sheet_id: int, *, search: str | None = None
 ) -> list[tuple[SheetRow, str | None]]:
-    """列单表所有行：left join players 取认领人游戏名。返回 [(SheetRow, claimant_name|None)]。
+    """列单表所有行：返回 [(SheetRow, claimant_name|None)]。
+
+    claimant_name 统一显示名（自定义昵称优先，否则账号下最近活跃 UUID 游戏名），
+    批量经 ``web_account_repo.resolve_display_names`` 解析（避免 N+1）。
 
     ``search`` 非空时按 ``item_name`` / ``registry_id`` 大小写不敏感子串过滤。
     分组排序：所有父行（parent_row_id IS NULL）排在前面（组内按 sort_order, id），
@@ -219,9 +253,10 @@ async def list_rows(
     注意：子行并非紧跟各自父行，而是父行段与子行段分两段（archive 不渲染行清单、CSV
     依赖此稳定顺序，勿改 SQL）。
     """
+    from app.repositories import web_account_repo
+
     stmt = (
-        select(SheetRow, Player.current_name)
-        .outerjoin(Player, Player.uuid == SheetRow.claimant_uuid)
+        select(SheetRow)
         .where(SheetRow.sheet_id == sheet_id)
         .order_by(
             # 父行（parent_row_id IS NULL）排在前面
@@ -247,22 +282,37 @@ async def list_rows(
                 func.lower(SheetRow.registry_id).like(pat, escape="\\"),
             )
         )
-    return [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
+    rows = list((await session.execute(stmt)).scalars().all())
+    claimant_uuids = [r.claimant_uuid for r in rows if r.claimant_uuid is not None]
+    names_map = (
+        await web_account_repo.resolve_display_names(session, claimant_uuids)
+        if claimant_uuids
+        else {}
+    )
+    return [(r, names_map.get(r.claimant_uuid)) for r in rows]
 
 
 async def get_row(
     session: AsyncSession, sheet_id: int, row_id: int
 ) -> tuple[SheetRow, str | None] | None:
-    """单行：left join players 取认领人名。给端点构造单行响应/权限判断用。"""
-    stmt = (
-        select(SheetRow, Player.current_name)
-        .outerjoin(Player, Player.uuid == SheetRow.claimant_uuid)
-        .where(SheetRow.sheet_id == sheet_id, SheetRow.id == row_id)
+    """单行：返回 (SheetRow, claimant_name|None)。给端点构造单行响应/权限判断用。
+
+    claimant_name 统一显示名，经 ``web_account_repo.resolve_display_name`` 解析。
+    """
+    from app.repositories import web_account_repo
+
+    stmt = select(SheetRow).where(
+        SheetRow.sheet_id == sheet_id, SheetRow.id == row_id
     )
-    row = (await session.execute(stmt)).first()
+    row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         return None
-    return row[0], row[1]
+    name = (
+        await web_account_repo.resolve_display_name(session, row.claimant_uuid)
+        if row.claimant_uuid is not None
+        else None
+    )
+    return row, name
 
 
 async def upsert_row(
@@ -804,24 +854,73 @@ async def contribute_row(
 
 async def list_contributors(
     session: AsyncSession, row_ids: list[int]
-) -> dict[int, list[tuple[uuid.UUID, str]]]:
-    """批量取多行贡献者：返回 {row_id: [(player_uuid, player_name), ...]}，按 joined_at 升序。"""
+) -> dict[int, list[tuple[int | None, str, list[uuid.UUID], int]]]:
+    """批量取多行贡献者（按 Web 账号聚合）。
+
+    返回 ``{row_id: [(account_id|None, display_name, member_uuids, contributed_qty)]}``，
+    组内按 contributed_qty 降序、display_name 升序兜底。
+
+    同一 WebAccount 的多 UUID 在同一行合并为一条（``SUM(qty)`` + 收集 ``member_uuids``）。
+    ``account_id IS NULL``（未绑账号的历史数据）按 player_uuid 退化成一对一。
+    ``display_name`` 优先取 ``WebAccount.display_name``，否则取组内 ``last_seen_at``
+    最新 UUID 的 ``current_name``（与 :func:`resolve_display_name` 回退策略一致）。
+    """
     if not row_ids:
         return {}
+
     stmt = (
-        select(SheetRowContributor.row_id, Player.uuid, Player.current_name)
-        .join(Player, Player.uuid == SheetRowContributor.player_uuid)
-        .where(SheetRowContributor.row_id.in_(row_ids))
-        .order_by(
+        select(
             SheetRowContributor.row_id,
-            SheetRowContributor.contributed_qty.desc(),
-            SheetRowContributor.joined_at,
-            SheetRowContributor.id,
+            SheetRowContributor.player_uuid,
+            SheetRowContributor.contributed_qty,
+            Player.web_account_id,
+            Player.current_name,
+            Player.last_seen_at,
+            WebAccount.display_name,
         )
+        .select_from(SheetRowContributor)
+        .join(Player, Player.uuid == SheetRowContributor.player_uuid)
+        .outerjoin(WebAccount, WebAccount.id == Player.web_account_id)
+        .where(SheetRowContributor.row_id.in_(row_ids))
     )
-    result: dict[int, list[tuple[uuid.UUID, str]]] = {}
-    for row_id, player_uuid, player_name in (await session.execute(stmt)).all():
-        result.setdefault(row_id, []).append((player_uuid, player_name))
+    raw = (await session.execute(stmt)).all()
+
+    # 按 (row_id, group_key) 聚合；group_key = COALESCE(web_account_id, player_uuid)
+    groups: dict[tuple[int, str], dict] = {}
+    for r in raw:
+        group_key = (
+            str(r.web_account_id)
+            if r.web_account_id is not None
+            else str(r.player_uuid)
+        )
+        key = (r.row_id, group_key)
+        g = groups.setdefault(
+            key,
+            {
+                "row_id": r.row_id,
+                "account_id": r.web_account_id,
+                "member_uuids": [],
+                "total_qty": 0,
+                "display_name": r.display_name,  # 优先（account 级唯一）
+                "fallback_name": None,
+                "fallback_ts": None,
+            },
+        )
+        g["member_uuids"].append(r.player_uuid)
+        g["total_qty"] += r.contributed_qty
+        # 回退候选：组内 last_seen_at 最新 UUID 的 current_name
+        if g["fallback_ts"] is None or r.last_seen_at > g["fallback_ts"]:
+            g["fallback_name"] = r.current_name
+            g["fallback_ts"] = r.last_seen_at
+
+    result: dict[int, list[tuple[int | None, str, list[uuid.UUID], int]]] = {}
+    for g in groups.values():
+        name = g["display_name"] or g["fallback_name"] or f"account#{g['account_id']}"
+        result.setdefault(g["row_id"], []).append(
+            (g["account_id"], name, g["member_uuids"], g["total_qty"])
+        )
+    for members in result.values():
+        members.sort(key=lambda x: (-x[3], x[1]))
     return result
 
 
@@ -835,20 +934,25 @@ async def clear_contributors(session: AsyncSession, row_id: int) -> None:
 async def aggregate_contributor_totals(
     session: AsyncSession, sheet_id: int
 ) -> list[tuple[uuid.UUID, str, int]]:
-    """聚合该 sheet 每个玩家的贡献总量（lock 交付 + progress 上交合并按人）。
+    """聚合该 sheet 每个账号的贡献总量（lock 交付 + progress 上交合并按账号）。
 
-    返回 ``[(player_uuid, player_name, total_qty)]``，按 total_qty 降序、
-    player_name 升序兜底（同贡献量下名字字母序）。
+    返回 ``[(represent_uuid, display_name, total_qty)]``，按 total_qty 降序、
+    display_name 升序兜底。
 
-    两支 union_all 后外层再 GROUP BY player：
-    - lock 支：``SUM(delivered_qty)`` GROUP BY ``claimant_uuid``（mode=LOCK 且 claimant 非空）。
-    - progress 支：``SUM(contributed_qty)`` GROUP BY ``player_uuid``（mode=PROGRESS，
-      join sheet_row_contributors）。
-    - 外层 ``HAVING SUM(qty) > 0``：剔除 lock 认领但 delivered=0、以及任何零和玩家。
-      同一玩家既是 lock claimant 又是 progress 贡献者 → 两支合并求和。
-    空 → []。
+    按 web_account_id 分组（NULL 回退按 player.uuid，用 COALESCE）：
+    - 同一账号多个 UUID 的贡献合并为一条。
+    - represent_uuid：账号绑定的首个 UUID（标识用，``MIN(uuid::text)::uuid``）。
+    - display_name：经 ``resolve_display_name`` 解析（自定义昵称优先，否则账号下
+      ``last_seen_at`` 最新 UUID 的 ``current_name``）——与 list_contributors 回退一致。
+
+    两支 union_all 后 JOIN Player 按 web_account_id GROUP BY：
+    - lock 支：``SUM(delivered_qty)`` GROUP BY ``claimant_uuid``（mode=LOCK）。
+    - progress 支：``SUM(contributed_qty)`` GROUP BY ``player_uuid``（mode=PROGRESS）。
+    - 外层 ``HAVING SUM(qty) > 0``：剔除零贡献玩家。
     """
-    # lock 支：claimant_uuid 是 Player.uuid 子集（FK），复用为统一 player_uuid 列。
+    from app.repositories import web_account_repo
+
+    # lock 支：claimant_uuid 是 Player.uuid 子集（FK）
     lock_part = (
         select(
             SheetRow.claimant_uuid.label("player_uuid"),
@@ -876,18 +980,37 @@ async def aggregate_contributor_totals(
     combined = union_all(lock_part, progress_part).subquery()
 
     total = func.sum(combined.c.qty).label("total_qty")
+    # 按 account 分组（NULL web_account_id 时退化为按 uuid 分组）：
+    # 两参数类型须一致，统一 cast 为 text。PG 无 min(uuid)，故 uuid 也 cast 为 text 取 MIN。
+    # represent_uuid 用 MIN(uuid::text)::uuid 还原；display_name 在 Python 层批量 resolve。
+    group_key = func.coalesce(
+        Player.web_account_id.cast(String), Player.uuid.cast(String)
+    )
     stmt = (
-        select(Player.uuid, Player.current_name, total)
+        select(
+            func.min(Player.uuid.cast(String)).label("represent_uuid_str"),
+            total,
+        )
         .select_from(combined)
         .join(Player, Player.uuid == combined.c.player_uuid)
-        .group_by(Player.uuid, Player.current_name)
+        .group_by(group_key)
         .having(total > 0)
-        .order_by(total.desc(), Player.current_name.asc())
+        .order_by(total.desc())
     )
-    return [
-        (pu, pn, qty)
-        for pu, pn, qty in (await session.execute(stmt)).all()
+    rows = (await session.execute(stmt)).all()
+    represent_uuids = [uuid.UUID(r.represent_uuid_str) for r in rows]
+    names = await web_account_repo.resolve_display_names(session, represent_uuids)
+    result = [
+        (
+            represent_uuids[i],
+            names.get(represent_uuids[i], str(represent_uuids[i])),
+            int(rows[i].total_qty),
+        )
+        for i in range(len(rows))
     ]
+    # SQL 已按 total desc；补 display_name 升序兜底 tiebreaker
+    result.sort(key=lambda x: (-x[2], x[1]))
+    return result
 
 
 async def delete_row(session: AsyncSession, sheet_id: int, row_id: int) -> int:

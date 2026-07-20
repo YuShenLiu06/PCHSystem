@@ -18,6 +18,22 @@ class Settings(BaseSettings):
     auth_token_ttl_seconds: int = 600
     auth_token_rate_limit_seconds: int = 30
 
+    # 密码登录限频（/auth/login；bcrypt 慢哈希 + 双维度滑窗防爆破/撞库）
+    login_rate_limit_window_seconds: int = 300
+    login_rate_limit_max_per_ip: int = 20        # 单 IP 窗口内总尝试上限（防撞库扫号）
+    login_rate_limit_max_per_credential: int = 5  # 单用户名窗口内尝试上限（防针对爆破）
+
+    # 绑定短码 TTL（秒，默认 10 分钟）
+    bind_token_ttl_seconds: int = 600
+
+    # 密码策略
+    password_min_length: int = 8
+    password_max_length: int = 128
+
+    # 用户名策略
+    username_min_length: int = 3
+    username_max_length: int = 32
+
     mcdr_service_token: str = ""
     web_base_url: str = "http://localhost:5173"
     # web 可达性探测地址：后端与 web 同 compose 网络时探服务名（如 http://web）最可靠——

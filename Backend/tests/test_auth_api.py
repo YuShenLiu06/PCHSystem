@@ -68,10 +68,18 @@ async def test_exchange_returns_jwt_and_me(client):
     body = ex.json()
     assert body["token_type"] == "Bearer"
     assert body["player"]["uuid"] == str(u)
+    assert body["player"]["name"] == "alice"
+    # account 块含 role（契约：AccountBrief {id, is_temporary, username, role}）
+    assert body["account"]["is_temporary"] is True
+    assert body["account"]["role"] == "user"
 
     me = await client.get("/me", headers={"Authorization": f"Bearer {body['access_token']}"})
     assert me.status_code == 200
-    assert me.json()["name"] == "alice"
+    me_body = me.json()
+    # /me shape：{account, players, active_uuid}
+    assert me_body["active_uuid"] == str(u)
+    assert me_body["account"]["is_temporary"] is True
+    assert any(p["uuid"] == str(u) and p["name"] == "alice" for p in me_body["players"])
 
 
 @pytest.mark.asyncio

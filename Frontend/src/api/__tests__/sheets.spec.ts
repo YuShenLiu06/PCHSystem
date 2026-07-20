@@ -300,7 +300,7 @@ describe('sheets API client', () => {
         mode: 1,
         status: 'claimed',
         delivered_qty: 32,
-        contributors: [{ player_uuid: 'me', player_name: 'Me' }],
+        contributors: [{ account_id: null, display_name: 'Me', member_uuids: ['me'], contributed_qty: 32 }],
       }
       mocked.post.mockResolvedValue({ data: contributed })
       const result = await contributeRow(1, 10, 32)
@@ -316,7 +316,7 @@ describe('sheets API client', () => {
         mode: 1,
         status: 'done',
         delivered_qty: 64,
-        contributors: [{ player_uuid: 'me', player_name: 'Me' }],
+        contributors: [{ account_id: null, display_name: 'Me', member_uuids: ['me'], contributed_qty: 64 }],
       }
       mocked.patch.mockResolvedValue({ data: adjusted })
       const result = await setRowProgress(1, 10, 64)
@@ -396,10 +396,24 @@ describe('sheets API client', () => {
 
   describe('协管员（manager）API', () => {
     it('listSheetManagers: GET /sheets/{id}/managers', async () => {
-      mocked.get.mockResolvedValue({ data: [{ player_uuid: 'u1', player_name: 'bob', granted_at: 't' }] })
+      mocked.get.mockResolvedValue({
+        data: [
+          {
+            web_account_id: 101,
+            display_name: 'bob',
+            member_uuids: ['u1'],
+            granted_at: 't',
+          },
+        ],
+      })
       const result = await listSheetManagers(3)
       expect(mocked.get).toHaveBeenCalledWith('/sheets/3/managers')
       expect(result).toHaveLength(1)
+      expect(result[0]).toMatchObject({
+        web_account_id: 101,
+        display_name: 'bob',
+        member_uuids: ['u1'],
+      })
     })
 
     it('grantSheetManager: POST /sheets/{id}/managers {player_uuid}', async () => {
@@ -408,10 +422,12 @@ describe('sheets API client', () => {
       expect(mocked.post).toHaveBeenCalledWith('/sheets/3/managers', { player_uuid: 'uuid-bob' })
     })
 
-    it('revokeSheetManager: DELETE /sheets/{id}/managers/{uuid}', async () => {
+    it('revokeSheetManager: DELETE /sheets/{id}/managers body {web_account_id}（account 锚定）', async () => {
       mocked.delete.mockResolvedValue({ data: [] })
-      await revokeSheetManager(3, 'uuid-bob')
-      expect(mocked.delete).toHaveBeenCalledWith('/sheets/3/managers/uuid-bob')
+      await revokeSheetManager(3, 101)
+      expect(mocked.delete).toHaveBeenCalledWith('/sheets/3/managers', {
+        data: { web_account_id: 101 },
+      })
     })
   })
 })

@@ -2,8 +2,9 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { http } from '../utils/http'
+import { exchangeToken } from '../api/identity'
 import { useAuthStore } from '../stores/auth'
+import { extractApiError } from '../utils/error'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,15 +14,33 @@ const errorMsg = ref('')
 
 onMounted(async () => {
   const token = route.query.token as string | undefined
-  if (!token) { status.value = 'error'; errorMsg.value = '缺少 token'; return }
+  if (!token) {
+    // 无 token（非 !!PCH login 回链：直接访问/书签/手输）→ 转账号密码登录
+    router.replace('/login')
+    return
+  }
   try {
-    const { data } = await http.post('/auth/exchange', { token })
-    auth.set({ access_token: data.access_token, refresh_token: data.refresh_token }, data.player)
-    ElMessage.success(`欢迎，${data.player.name}`)
-    router.replace('/me')
-  } catch (e: any) {
+    const resp = await exchangeToken(token)
+    if (!resp.player) {
+      status.value = 'error'
+      errorMsg.value = '账号数据异常：无绑定玩家，请联系管理员'
+      return
+    }
+    auth.set(
+      { access_token: resp.access_token, refresh_token: resp.refresh_token },
+      resp.player,
+      resp.account,
+    )
+    ElMessage.success(`欢迎，${resp.player.name}`)
+    // 临时账号引导注册，否则进 /me
+    if (resp.account.is_temporary) {
+      router.replace('/register')
+    } else {
+      router.replace('/me')
+    }
+  } catch (e: unknown) {
     status.value = 'error'
-    errorMsg.value = e.response?.data?.detail ?? '兑换失败'
+    errorMsg.value = extractApiError(e) ?? '兑换失败'
   }
 })
 </script>

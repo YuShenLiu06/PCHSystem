@@ -42,6 +42,7 @@ from .messages import (
     SHEET_LAST_EMPTY,
     rtext_button,
     format_row_clickable,
+    _is_manager,
     format_owner_footer,
     format_submit_footer,
     format_view_footer,
@@ -434,15 +435,20 @@ def _render_sheet_detail(server, player_name, player_uuid, sheet_id, *, page: in
         rows = data.get("rows") or []
         status = str(data.get("status") or "collecting")
         # 软判断拥有者：仅控按钮可见性；真实 RBAC 以后端 403 为准（R-9）。
-        # 身份锚 = UUID（owner_uuid 为主），名字兜底兼容历史数据 / 缺 uuid 场景。
+        # R-5 account 级：viewer_uuids 含当前玩家 → 同 account 任一 UUID 建的表都算 owner；
+        # 名字兜底兼容历史数据 / 缺 uuid 场景。
         owner_uuid = str(data.get("owner_uuid") or "")
         owner_name = data.get("owner_name") or ""
-        is_owner = (bool(player_uuid) and owner_uuid == player_uuid) or (owner_name == player_name)
-        # 协管员判定（迁移 0014）：查看者是否在 managers 列表中（tier B 行级/进入施工按钮）
+        viewer_uuids = {str(u) for u in (data.get("viewer_uuids") or [])}
+        # R-5 account 级 owner 判定：表的 owner_uuid 在我的 account UUID 集合里 →
+        # 同 account 任一 UUID 建的表都算 owner。注意方向：viewer_uuids 是「我的」集，
+        # 判断 owner 在不在此集（不是「我」在不在集——后者恒真）。名字兜底兼容历史数据。
+        is_owner = (bool(owner_uuid) and owner_uuid in viewer_uuids) or (owner_name == player_name)
+        # R-5 account 级 manager 判定（迁移 0014 升 account 锚）：
+        # managers[].member_uuids 与 viewer_uuids 有交集 → 同 account 任一 UUID 即 manager。
+        # 经 messages._is_manager 单一 helper 收口（N2 DRY），无需知 web_account_id。
         managers_list = data.get("managers") or []
-        is_manager = bool(player_uuid) and any(
-            str(m.get("player_uuid") or "") == player_uuid for m in managers_list
-        )
+        is_manager = _is_manager(managers_list, viewer_uuids)
         parts = [RText(SHEET_DETAIL_TITLE.format(
             id=data.get("id"),
             title=data.get("title") or "",
@@ -472,6 +478,7 @@ def _render_sheet_detail(server, player_name, player_uuid, sheet_id, *, page: in
                     r, sheet_id,
                     is_owner=is_owner,
                     is_manager=is_manager,
+                    viewer_uuids=viewer_uuids,
                     player_name=player_name,
                     player_uuid=player_uuid,
                 ))
@@ -638,18 +645,21 @@ def _sheet_delete(src, ctx):
     _do()
 
 
-# === 协管员（manager，迁移 0014）===
+# === 协管员（manager，迁移 0014，account 锚）===
 
 def _format_manager_list(data) -> RTextList:
-    """把 GET/POST/DELETE managers 的响应（list[{player_uuid, player_name, granted_at}]）
-    渲染为中文回执：空列表提示「无协管员」，否则逐行列出名字。"""
+    """把 GET/POST/DELETE managers 响应（account 级 SheetManagerEntry list：
+    ``{web_account_id, display_name, member_uuids:[UUID], granted_at}``）
+    渲染为中文回执：空列表提示「无协管员」，否则逐行列出 display_name。"""
     if not data:
         return RTextList(RText("（此项目暂无协管员）", color=RColor.gray))
     seg = [RText("协管员列表：", color=RColor.gold)]
     for i, m in enumerate(data):
         if i > 0:
             seg.append(RText("、", color=RColor.gray))
-        seg.append(RText(str(m.get("player_name") or m.get("player_uuid") or "?"), color=RColor.aqua))
+        # display_name = 自定义昵称优先，否则账号下最近活跃 UUID 游戏名（后端解析）
+        name = m.get("display_name") or str(m.get("web_account_id") or "?")
+        seg.append(RText(str(name), color=RColor.aqua))
     return RTextList(*seg)
 
 
@@ -702,7 +712,12 @@ def _sheet_manager_add(src, ctx):
 
 
 def _sheet_manager_remove(src, ctx):
-    """!!PCH sheet manager <sheet_id> remove <player_name> —— owner/超管撤销（或 self-revoke）。"""
+    """!!PCH sheet manager <sheet_id> remove <player_name> —— owner/超管撤销（或 self-revoke）。
+
+    account 级（迁移 0014 升 account 锚）：玩家名 → UUID → 经 UUID 推导该玩家所属
+    web_account_id（先 list_managers 找 member_uuids 含此 UUID 的条目）→ DELETE body
+    ``{web_account_id}`` 撤销。self-revoke（自己移除自己）走相同路径（后端放行）。
+    """
     player_name = _require_player(src)
     if not player_name:
         return
@@ -722,7 +737,20 @@ def _sheet_manager_remove(src, ctx):
         except Exception as e:
             server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
             return
-        outcome = sheet_client.revoke_manager(CONFIG, player_uuid, sheet_id, target_uuid)
+        # 先读 manager 列表找 target_uuid 所属的 web_account_id（account 级）
+        list_outcome = sheet_client.list_managers(CONFIG, player_uuid, sheet_id)
+        if not isinstance(list_outcome, list):
+            _resolve(server, player_name, list_outcome)
+            return
+        target_account_id = None
+        for m in list_outcome:
+            if target_uuid in [str(u) for u in (m.get("member_uuids") or [])]:
+                target_account_id = m.get("web_account_id")
+                break
+        if target_account_id is None:
+            server.tell(player_name, SHEET_NOT_FOUND)
+            return
+        outcome = sheet_client.revoke_manager(CONFIG, player_uuid, sheet_id, int(target_account_id))
         _resolve(server, player_name, outcome, on_success=lambda d: server.tell(player_name, _format_manager_list(d)))
 
     _do()
@@ -1300,7 +1328,8 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
         server.tell(player_name, SHEET_ARCHIVED_READONLY)
         return
     rows = view.get("rows") or []
-    actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid)
+    viewer_uuids = {str(u) for u in (view.get("viewer_uuids") or [])}
+    actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid, viewer_uuids=viewer_uuids)
 
     done_lines: list = []
     shown_skips: list = []

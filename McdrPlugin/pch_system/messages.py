@@ -52,6 +52,17 @@ LOGIN_REMOVED = "§c你已被移出白名单"
 LOGIN_UUID_FAIL = "§c获取 UUID 失败: {err}"
 PLAYER_ONLY = "§c{cmd} 只能玩家在游戏内执行"
 
+# === bind 命令回执 ===
+BIND_RATE_LIMITED = "§e操作太频繁，请稍后再试"
+BIND_SERVICE_DOWN = "§c绑定服务暂不可用，请稍后重试"
+BIND_REMOVED = "§c你已被移出白名单"
+BIND_UUID_FAIL = "§c获取 UUID 失败: {err}"
+# 短码模板：整行 §7 灰色（敏感信息禁 § 高亮），有效期分钟
+BIND_OK_TEMPLATE = "§7收到绑定请求，你的短码是 {code}（有效期 {minutes} 分钟）"
+# /bind/consume 成功回执：username 来自 AccountBrief，uuid 来自 PlayerBrief（方案 §一.10）
+BIND_CONSUME_OK = "§a绑定成功！你的 Web 账号: {username}（UUID: {uuid}）"
+BIND_CONSUME_FAIL = "§c绑定失败：{reason}"
+
 # === sheets 命令回执 ===
 SHEET_SERVICE_DOWN = "§c表格服务暂不可用，请稍后重试"
 SHEET_RATE_LIMITED = "§e操作太频繁，请稍后再试"
@@ -149,8 +160,12 @@ _CONTRIB_DISPLAY_MAX = 2
 
 
 def _format_contributors(contributors: list) -> str:
-    """progress 行认领者列：按贡献量降序取前 N 位 + 省略号；无贡献者显「未认领」。"""
-    names = [c.get("player_name") for c in (contributors or []) if c.get("player_name")]
+    """progress 行认领者列：按贡献量降序取前 N 位 + 省略号；无贡献者显「未认领」。
+
+    贡献者按 Web 账号聚合（后端 contributors 元素含 ``display_name`` 而非 ``player_name``）；
+    display_name = 自定义昵称优先，否则账号下最近活跃 UUID 游戏名。
+    """
+    names = [c.get("display_name") for c in (contributors or []) if c.get("display_name")]
     if not names:
         return "未认领"
     if len(names) <= _CONTRIB_DISPLAY_MAX:
@@ -220,20 +235,37 @@ def format_section_separator(title: str = "物品列表") -> RText:
 
 
 
+def _is_manager(managers: list, viewer_uuids) -> bool:
+    """判定当前查看者是否为该项目的协管员（account 级，R-5 + 迁移 0014）。
+
+    managers 元素结构（后端 SheetManagerEntry，account 级）：
+    ``{web_account_id, display_name, member_uuids:[UUID], granted_at}``。
+    判定 = managers 任一条目的 member_uuids 与 viewer_uuids 有交集 →
+    同 account 任一 UUID 即 manager（无需知 account_id）。
+    """
+    _viewer = viewer_uuids or set()
+    return any(
+        str(uuid) in _viewer
+        for m in (managers or [])
+        for uuid in (m.get("member_uuids") or [])
+    )
+
+
 def format_row_clickable(
     row: dict,
     sheet_id,
     *,
     is_owner: bool = False,
     is_manager: bool = False,
+    viewer_uuids: set[str] | None = None,
     player_name: str = "",
     player_uuid: str = "",
 ) -> RTextList:
     """格式化单行为可点击 RTextList：行文本 + 按状态/模式/查看者权限追加尾部操作按钮。
 
     按钮显隐对齐后端 RBAC（红线 R-9：真实权限以后端 403 为准，此处仅控可见性）。
-    查看者身份用 UUID 为主、名字兜底（离线模式名↔UUID 1:1，见 R-5）：
-      is_claimant = (claimant_uuid == player_uuid) or (claimant_name == player_name)
+    查看者身份用 account 级（viewer_uuids 含行的 claimant_uuid → 同 account 任一 UUID 认领都算自己，R-5）；
+    名字兜底兼容历史数据 / 缺 uuid 场景。
     lock 模式（单认领人状态机）：
       open      → [认]（任意）
       claimed   → [完]（仅认领人）/ [释]（认领人 or owner）
@@ -250,10 +282,12 @@ def format_row_clickable(
     status = str(row.get("status", ""))
     mode = int(row.get("mode", 0))
     parent_row_id = row.get("parent_row_id")
-    # 身份锚 = UUID（行上存的 claimant_uuid 是权威锚；claimant_name 仅展示，可变）；
-    # 名字兜底防 payload 偶发缺 uuid。默认 player_*="" → is_claimant=False（fails closed）。
+    # R-5 account 级：viewer_uuids 含行的 claimant_uuid → 同 account 任一 UUID 认领的行都算自己；
+    # 名字兜底防 payload 偶发缺 uuid。默认 viewer_uuids/player_* 空 → is_claimant=False（fails closed）。
+    _viewer_uuids = viewer_uuids or set()
+    claimant_uuid = str(row.get("claimant_uuid") or "")
     is_claimant = (
-        (bool(player_uuid) and str(row.get("claimant_uuid") or "") == player_uuid)
+        (bool(claimant_uuid) and claimant_uuid in _viewer_uuids)
         or (bool(player_name) and row.get("claimant_name") == player_name)
     )
     can_release_or_reject = is_claimant or is_owner

@@ -31,7 +31,7 @@ describe('sheetHelpers', () => {
       claimant_uuid: null,
       claimant_name: null,
       delivered_qty: 0,
-      contributors: [{ player_uuid: 'uuid1', player_name: 'Steve' }],
+      contributors: [{ account_id: null, display_name: 'Steve', member_uuids: ['uuid1'], contributed_qty: 1 }],
       sort_order: 0,
       parent_row_id: null,
       qty_per_unit: null,
@@ -50,7 +50,7 @@ describe('sheetHelpers', () => {
     it('contributors 嵌套数组条目不同 → false', () => {
       const other = {
         ...baseRow,
-        contributors: [{ player_uuid: 'uuid2', player_name: 'Alex' }],
+        contributors: [{ account_id: null, display_name: 'Alex', member_uuids: ['uuid2'], contributed_qty: 1 }],
       }
       expect(rowEqual(baseRow, other)).toBe(false)
     })

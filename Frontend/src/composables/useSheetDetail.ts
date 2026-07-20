@@ -66,6 +66,7 @@ export interface UseSheetDetailHandle {
   // 派生
   canEdit: ComputedRef<boolean>
   canManage: ComputedRef<boolean>
+  isManager: ComputedRef<boolean>
   isReadOnly: ComputedRef<boolean>
   treeRows: ComputedRef<TreeNode[]>
   // 行/身份判定（依赖 sheet/auth）
@@ -93,12 +94,12 @@ export interface UseSheetDetailHandle {
   onRelease: (row: RowDetail) => Promise<void>
   onReject: (row: RowDetail) => Promise<void>
   onSubRowPopoverShow: (parentRow: RowDetail) => void
-  // 协管员（manager，迁移 0014）
+  // 协管员（manager，迁移 0014，account 锚定）
   managerInputName: Ref<string>
   managerPickedUuid: Ref<string>
   searchPlayers: (q: string) => Promise<PlayerBrief[]>
   onGrantManager: () => Promise<void>
-  onRevokeManager: (playerUuid: string) => Promise<void>
+  onRevokeManager: (webAccountId: number) => Promise<void>
 }
 
 /**
@@ -146,17 +147,26 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
   const canManage = computed(() => {
     const p = auth.player
     if (!p || !sheet.value) return false
-    return sheet.value.owner_uuid === p.uuid || p.role === 'admin' || p.role === 'owner'
+    // R-5 account 级：表的 owner_uuid 在我的 account UUID 集合里 → 同 account 任一 UUID 建的表都可编辑。
+    // 注意方向：viewer_uuids 是「我的」集，判断 owner 在不在此集（不是「我」在不在集——后者恒真）
+    return sheet.value.viewer_uuids.includes(sheet.value.owner_uuid) || p.role === 'admin' || p.role === 'owner'
   })
 
-  // tier B 常规写（增删改行/子物品/进度/解除/打回/进入施工）——owner、超管，或本表协管员（迁移 0014）。
-  // 现 canEdit 语义升级为 tier B（原 tier A 语义移至 canManage）；现有 v-if="canEdit" 自动继承。
-  const canEdit = computed(() => {
-    if (canManage.value) return true
-    const p = auth.player
-    if (!p || !sheet.value) return false
-    return (sheet.value.managers ?? []).some((m) => m.player_uuid === p.uuid)
+  // 当前查看者是否为本表协管员（account 级判定，DRY 单一入口）：
+  // managers[].member_uuids 与 viewer_uuids 任一交集即视为 manager（同账号下任一 UUID 继承）。
+  // viewer_uuids 由后端按 viewer 的 account 解析返回，已是权威集（= auth store 绑定 UUIDs + 当前 UUID）。
+  const isManager = computed(() => {
+    if (!sheet.value) return false
+    const viewerUuids = sheet.value.viewer_uuids
+    if (viewerUuids.length === 0) return false
+    return (sheet.value.managers ?? []).some((m) =>
+      m.member_uuids.some((u) => viewerUuids.includes(u)),
+    )
   })
+
+  // tier B 常规写（增删改行/子物品/进度/解除/打回/进入施工）——owner、超管，或本表协管员（迁移 0014，account 锚定）。
+  // 现 canEdit 语义升级为 tier B（原 tier A 语义移至 canManage）；现有 v-if="canEdit" 自动继承。
+  const canEdit = computed(() => canManage.value || isManager.value)
 
   // 协管员授予输入：玩家名联想（el-autocomplete 远程搜索）+ 选中后存 uuid。
   // 必须从联想下拉选中（保证 uuid 有效）；纯文本未选中 → 警告。
@@ -173,8 +183,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
 
   // 当前玩家是否为该行的认领人
   function isClaimant(row: RowDetail): boolean {
-    const p = auth.player
-    return !!p && !!row.claimant_uuid && p.uuid === row.claimant_uuid
+    // R-5 account 级：同 account 任一 UUID 认领的行都算自己（可 deliver/release/reject）
+    const uuids = sheet.value?.viewer_uuids ?? []
+    return !!row.claimant_uuid && uuids.includes(row.claimant_uuid)
   }
 
   // 获取父行模式（子行专用）
@@ -659,9 +670,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     }
   }
 
-  async function onRevokeManager(playerUuid: string): Promise<void> {
+  async function onRevokeManager(webAccountId: number): Promise<void> {
     try {
-      const managers = await revokeSheetManager(sheetId.value, playerUuid)
+      const managers = await revokeSheetManager(sheetId.value, webAccountId)
       if (sheet.value) sheet.value = { ...sheet.value, managers }
       ElMessage.success('已移除协管员')
     } catch (e: unknown) {
@@ -689,6 +700,7 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     subRowPopoverVisible,
     canEdit,
     canManage,
+    isManager,
     isReadOnly,
     treeRows,
     isClaimant,

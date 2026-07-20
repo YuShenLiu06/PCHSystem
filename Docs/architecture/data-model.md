@@ -349,10 +349,10 @@ erDiagram
 >
 > **排序**：`list_contributors` 按 `contributed_qty DESC, joined_at, id` 返回贡献者名单（贡献多者在前）。**注意（已知缺口）**：当前该列只用于排序，`list_contributors` 的 SELECT 与响应 schema `RowContributor` 均**未带出 `contributed_qty`** → 客户端只拿到排好序的名字列表、看不到每人具体量；归档统计 `aggregate_contributor_totals` 则会用到（见 §10.4）。
 
-> **权限（RBAC，后端为准）**：JWT 已登录可读所有表；写权限分两层（迁移 0014）——**tier A 高危**（删项目/改名/授予撤销协管员/归档）仅 owner 或全局 admin/owner；**tier B 常规**（增删改行/子物品/进度/解除/打回/进入施工）owner、全局 admin/owner，或本表协管员（见 §10.5 `sheet_managers`）。CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
+> **权限（RBAC，后端为准）**：JWT 已登录可读所有表；写权限分两层（迁移 0016）——**tier A 高危**（删项目/改名/授予撤销协管员/归档）仅 owner 或全局 admin/owner；**tier B 常规**（增删改行/子物品/进度/解除/打回/进入施工）owner、全局 admin/owner，或本表协管员（见 §10.5 `sheet_managers`）。CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。
 
-### 10.5 `sheet_managers`（项目协管员，迁移 0014）
+### 10.5 `sheet_managers`（项目协管员，迁移 0016）
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|

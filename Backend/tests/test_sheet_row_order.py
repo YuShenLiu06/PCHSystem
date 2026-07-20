@@ -61,41 +61,41 @@ def test_row_remaining_basic_and_clamp():
 
 
 def test_priority_lock_mine_claimed():
-    assert row_priority(_row(mode=0, status="claimed", claimant_uuid=ME), ME, set()) == 0
+    assert row_priority(_row(mode=0, status="claimed", claimant_uuid=ME), {ME}, set()) == 0
 
 
 def test_priority_lock_open_is_other():
-    assert row_priority(_row(mode=0, status="open", claimant_uuid=None), ME, set()) == 3
+    assert row_priority(_row(mode=0, status="open", claimant_uuid=None), {ME}, set()) == 3
 
 
 def test_priority_lock_claimed_by_other_is_other():
-    assert row_priority(_row(mode=0, status="claimed", claimant_uuid=OTHER), ME, set()) == 3
+    assert row_priority(_row(mode=0, status="claimed", claimant_uuid=OTHER), {ME}, set()) == 3
 
 
 def test_priority_lock_mine_but_done():
-    assert row_priority(_row(mode=0, status="done", claimant_uuid=ME), ME, set()) == 4
+    assert row_priority(_row(mode=0, status="done", claimant_uuid=ME), {ME}, set()) == 4
 
 
 # === row_priority: progress（玩家相关：我是否贡献过）===
 
 
 def test_priority_progress_my_contribution():
-    assert row_priority(_row(mode=1, status="claimed", id=42), ME, {42}) == 1
+    assert row_priority(_row(mode=1, status="claimed", id=42), {ME}, {42}) == 1
 
 
 def test_priority_progress_no_my_contribution():
-    assert row_priority(_row(mode=1, status="open", id=42), ME, set()) == 2
+    assert row_priority(_row(mode=1, status="open", id=42), {ME}, set()) == 2
 
 
 def test_priority_progress_done_ignores_contributors():
-    assert row_priority(_row(mode=1, status="done", id=42), ME, {42}) == 4
+    assert row_priority(_row(mode=1, status="done", id=42), {ME}, {42}) == 4
 
 
 def test_priority_progress_need_zero_claimed():
     # need=0 + delivered>0 → status=claimed（永不 done）；贡献判定仍看 my_row_ids
     r = _row(id=1, mode=1, status="claimed", need_qty=0, delivered_qty=5)
-    assert row_priority(r, ME, set()) == 2
-    assert row_priority(r, ME, {1}) == 1
+    assert row_priority(r, {ME}, set()) == 2
+    assert row_priority(r, {ME}, {1}) == 1
     assert row_remaining(r) == 0
 
 
@@ -108,7 +108,7 @@ def test_sort_full_tier_order():
     other_prog = (_row(id=3, mode=1, status="open"), None)
     other_lock = (_row(id=4, mode=0, status="open"), None)
     done = (_row(id=5, mode=0, status="done", claimant_uuid=ME), "me")
-    out = sort_sheet_rows([done, other_lock, other_prog, my_prog, mine_lock], ME, {2})
+    out = sort_sheet_rows([done, other_lock, other_prog, my_prog, mine_lock], {ME}, {2})
     assert [r.id for r, _ in out] == [1, 2, 3, 4, 5]
 
 
@@ -118,7 +118,7 @@ def test_sort_full_tier_order():
 def test_sort_secondary_remaining_desc():
     a = (_row(id=1, mode=1, status="open", need_qty=10, delivered_qty=0), None)  # rem 10
     b = (_row(id=2, mode=1, status="open", need_qty=10, delivered_qty=8), None)  # rem 2
-    assert [r.id for r, _ in sort_sheet_rows([a, b], ME, set())] == [1, 2]
+    assert [r.id for r, _ in sort_sheet_rows([a, b], {ME}, set())] == [1, 2]
 
 
 # === tiebreak: sort_order 升序，再 id ===
@@ -128,7 +128,7 @@ def test_sort_tiebreak_sort_order_then_id():
     a = (_row(id=2, mode=0, status="open", sort_order=1), None)
     b = (_row(id=1, mode=0, status="open", sort_order=1), None)
     c = (_row(id=3, mode=0, status="open", sort_order=0), None)
-    out = [r.id for r, _ in sort_sheet_rows([a, b, c], ME, set())]
+    out = [r.id for r, _ in sort_sheet_rows([a, b, c], {ME}, set())]
     assert out == [3, 1, 2]  # c(sort0) 先；sort1 内 id1<id2
 
 
@@ -139,9 +139,9 @@ def test_sort_viewer_change_swaps_progress_order():
     prog_a = (_row(id=1, mode=1, status="claimed", need_qty=10, delivered_qty=1), None)  # rem 9
     prog_b = (_row(id=2, mode=1, status="open", need_qty=10, delivered_qty=0), None)  # rem 10
     # ME 视角：a 我贡献过→档1；b 未贡献→档2 → a 先
-    assert [r.id for r, _ in sort_sheet_rows([prog_b, prog_a], ME, {1})] == [1, 2]
+    assert [r.id for r, _ in sort_sheet_rows([prog_b, prog_a], {ME}, {1})] == [1, 2]
     # OTHER 视角：a、b 都档2 → 按 remaining 降序：b(rem10) 先于 a(rem9)
-    assert [r.id for r, _ in sort_sheet_rows([prog_b, prog_a], OTHER, set())] == [2, 1]
+    assert [r.id for r, _ in sort_sheet_rows([prog_b, prog_a], {OTHER}, set())] == [2, 1]
 
 
 def test_sort_viewer_change_lock_mine_vs_other():
@@ -149,9 +149,9 @@ def test_sort_viewer_change_lock_mine_vs_other():
     my_lock = (_row(id=1, mode=0, status="claimed", claimant_uuid=ME), "me")
     other_prog = (_row(id=2, mode=1, status="open"), None)  # 对两人都档2
     # ME 视角：my_lock 档0 最前
-    assert [r.id for r, _ in sort_sheet_rows([other_prog, my_lock], ME, set())] == [1, 2]
+    assert [r.id for r, _ in sort_sheet_rows([other_prog, my_lock], {ME}, set())] == [1, 2]
     # OTHER 视角：my_lock 档3 > other_prog 档2 → other_prog 先
-    assert [r.id for r, _ in sort_sheet_rows([other_prog, my_lock], OTHER, set())] == [2, 1]
+    assert [r.id for r, _ in sort_sheet_rows([other_prog, my_lock], {OTHER}, set())] == [2, 1]
 
 
 # === 不可变：不改入参 ===
@@ -160,5 +160,5 @@ def test_sort_viewer_change_lock_mine_vs_other():
 def test_sort_does_not_mutate_input():
     src = [(_row(id=2, mode=0, status="open"), None), (_row(id=1, mode=0, status="open"), None)]
     snapshot = [r.id for r, _ in src]
-    sort_sheet_rows(src, ME, set())
+    sort_sheet_rows(src, {ME}, set())
     assert [r.id for r, _ in src] == snapshot  # 入参顺序不变

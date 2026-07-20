@@ -40,6 +40,7 @@ const {
   subRowPopoverVisible,
   canEdit,
   canManage,
+  isManager,
   isReadOnly,
   treeRows,
   isClaimant,
@@ -176,11 +177,11 @@ function back(): void {
         <span v-if="sheet.managers.length === 0" style="color: #aaa;">（无）</span>
         <el-tag
           v-for="m in sheet.managers"
-          :key="m.player_uuid"
+          :key="m.web_account_id"
           size="small"
-          :closable="canManage || m.player_uuid === auth.player?.uuid"
-          @close="onRevokeManager(m.player_uuid)"
-        >{{ m.player_name }}</el-tag>
+          :closable="canManage || isManager"
+          @close="onRevokeManager(m.web_account_id)"
+        >{{ m.display_name }}</el-tag>
         <template v-if="canManage">
           <el-autocomplete
             v-model="managerInputName"
@@ -303,11 +304,11 @@ function back(): void {
               <template v-if="row.contributors && row.contributors.length">
                 <el-tag
                   v-for="c in row.contributors"
-                  :key="c.player_uuid"
+                  :key="c.account_id ?? c.member_uuids[0]"
                   size="small"
                   style="margin: 2px;"
                 >
-                  {{ c.player_name }}
+                  {{ c.display_name }}
                 </el-tag>
               </template>
               <span v-else style="color: #aaa;">—</span>

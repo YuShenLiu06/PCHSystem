@@ -4,7 +4,7 @@ from mcdreforged.api.all import PluginServerInterface
 from mcdreforged.api.command import Literal, Text, Integer, Float, QuotableText, GreedyText
 
 from . import health, notifier
-from .commands import configure, _pch_root, _not_impl, _login, _status
+from .commands import configure, _pch_root, _not_impl, _login, _status, _bind, _bind_consume
 from .config import PchSystemConfig
 from .sheet_commands import (
     configure as sheet_configure,
@@ -115,7 +115,9 @@ def _register_commands(server: PluginServerInterface):
         .runs(_pch_root)
         .then(Literal("login").runs(_login))
         .then(Literal("status").runs(_status))
-        .then(Literal("bind").runs(_not_impl("bind")))
+        .then(Literal("bind")
+            .runs(_bind)
+            .then(Text("code").runs(_bind_consume)))
         .then(
             Literal("submit")
             .then(Literal("hand").then(Text("project").runs(_not_impl("submit hand"))))

@@ -18,24 +18,42 @@ export interface SheetSummary {
   updated_at: string
 }
 
-/** 项目级协管员（迁移 0014）：由 owner 授予，协助管理日常协作（tier B 写权限）。 */
+/**
+ * 项目级协管员（迁移 0014，account 锚定）：由 owner 授予，协助管理日常协作（tier B 写权限）。
+ * R-5 升 account 级：锚定 web_account_id（不再是 player_uuid），同账号下任一 UUID 继承 manager。
+ * display_name + member_uuids 由后端按 account 解析，前端做 member_uuids ∩ viewer_uuids 判定。
+ */
 export interface SheetManagerEntry {
-  player_uuid: string
-  player_name: string
+  web_account_id: number
+  display_name: string
+  member_uuids: string[]
   granted_at: string
 }
 
 export interface SheetDetail extends SheetSummary {
   rows: RowDetail[]
+  // 当前查看者所属 Web 账号的全部 UUID（R-5：account 级可见性，含同账号多 UUID 共享权限）
+  viewer_uuids: string[]
   managers: SheetManagerEntry[]
 }
 
 // mode: 0=lock（锁定/二元备齐），1=progress（进度/聚合众筹，多人贡献者列表）
 // status: open（未认领/未交付）| claimed（认领中/部分交付）| done（已备齐）
-// progress 行：claimant_uuid 恒为 null，contributors 列出所有贡献过的玩家（聚合）
+// progress 行：claimant_uuid 恒为 null，contributors 列出所有贡献过的账号（聚合）
 // lock 行：contributors 恒为空数组，由 claimant_uuid 单人锁定
 // parent_row_id: 非空表示子物品（父行 id），顶层行为 null
 // qty_per_unit: 子物品每件需求量（父行 need_qty × qty_per_unit = 子行 need_qty），顶层行为 null
+
+// progress 行贡献者（按 Web 账号聚合：同账号多 UUID 合并为一条）。
+// account_id 为 null = 未绑账号（历史数据）按 player 退化为一对一。
+// display_name = 自定义昵称优先，否则该账号下最近活跃 UUID 游戏名（与 owner_name 同源）。
+export interface RowContributor {
+  account_id: number | null
+  display_name: string
+  member_uuids: string[]
+  contributed_qty: number
+}
+
 export interface RowDetail {
   id: number
   item_name: string
@@ -48,7 +66,7 @@ export interface RowDetail {
   claimant_uuid: string | null
   claimant_name: string | null
   delivered_qty: number
-  contributors: { player_uuid: string; player_name: string }[]
+  contributors: RowContributor[]
   sort_order: number
   parent_row_id: number | null
   qty_per_unit: number | null
@@ -253,7 +271,7 @@ export async function listSheetManagers(id: number): Promise<SheetManagerEntry[]
   return data
 }
 
-/** POST /sheets/{id}/managers —— owner/超管授予协管员（body {player_uuid}），返回刷新后的列表 */
+/** POST /sheets/{id}/managers —— owner/超管授予协管员（body {player_uuid}，后端解析 target web_account），返回刷新后的列表 */
 export async function grantSheetManager(id: number, playerUuid: string): Promise<SheetManagerEntry[]> {
   const { data } = await http.post<SheetManagerEntry[]>(`/sheets/${id}/managers`, {
     player_uuid: playerUuid,
@@ -261,13 +279,15 @@ export async function grantSheetManager(id: number, playerUuid: string): Promise
   return data
 }
 
-/** DELETE /sheets/{id}/managers/{player_uuid} —— owner/超管撤销（或 manager self-revoke），返回刷新后的列表 */
-export async function revokeSheetManager(id: number, playerUuid: string): Promise<SheetManagerEntry[]> {
-  const { data } = await http.delete<SheetManagerEntry[]>(`/sheets/${id}/managers/${playerUuid}`)
+/** DELETE /sheets/{id}/managers —— owner/超管撤销（或 manager self-revoke），body {web_account_id}，返回刷新后的列表 */
+export async function revokeSheetManager(id: number, webAccountId: number): Promise<SheetManagerEntry[]> {
+  const { data } = await http.delete<SheetManagerEntry[]>(`/sheets/${id}/managers`, {
+    data: { web_account_id: webAccountId },
+  })
   return data
 }
 
-/** 玩家简要信息（协管员授予联想用） */
+/** 玩家简要信息（协管员授予联想用，/players 返回 shape） */
 export interface PlayerBrief {
   player_uuid: string
   player_name: string

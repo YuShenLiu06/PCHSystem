@@ -20,6 +20,7 @@ dependencies = [
   "nbtlib>=2.0.4",  # litemapy 已传递依赖；.nbt(structure) 解析直接使用（已实测解析 Create 蓝图）
   "python-multipart>=0.0.9",
   "matplotlib>=3.8",  # 归档贡献占比饼图（Agg 后端，免系统 GUI 包）
+  "bcrypt>=4.1",  # 密码哈希（Web 账号绑定功能）
 ]
 
 [project.optional-dependencies]

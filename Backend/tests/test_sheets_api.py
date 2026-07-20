@@ -7,7 +7,7 @@
 - CSV 全量导出：service token
 
 复用 test_auth_api.py 的 _svc_token fixture 模式（注入 service token 到 deps._settings）。
-JWT 用 app.core.jwt.create_access_token 直接签发（不经 /auth/exchange）。
+JWT 用 app.core.jwt.create_access_token 直接签发（不经 /auth/exchange），sub=account_id。
 """
 import uuid
 
@@ -16,8 +16,8 @@ import pytest
 import app.api.deps as deps
 from app.core.config import get_settings
 from app.core.db import async_session_factory
-from app.core.jwt import create_access_token
 from app.models.user import Player
+from tests.conftest import seed_player_with_account
 
 
 @pytest.fixture(autouse=True)
@@ -27,13 +27,8 @@ def _svc_token(monkeypatch):
 
 
 async def _make_player(name: str = "alice", role: str = "user") -> tuple[uuid.UUID, str]:
-    """seed player 并签 JWT，返回 (uuid, bearer)。"""
-    u = uuid.uuid4()
-    async with async_session_factory() as s:
-        s.add(Player(uuid=u, current_name=name, role=role))
-        await s.commit()
-    token = create_access_token(u, role)
-    return u, f"Bearer {token}"
+    """seed player + 临时 WebAccount 并签 JWT，返回 (uuid, bearer)。"""
+    return await seed_player_with_account(name=name, role=role)
 
 
 def _auth(bearer: str) -> dict[str, str]:
@@ -916,7 +911,7 @@ async def test_set_row_progress_by_owner_overrides_and_keeps_contributors(client
     assert body["claimant_uuid"] is None
     # contributors 保留（owner 调整不动贡献者名单）
     assert len(body["contributors"]) == 1
-    assert body["contributors"][0]["player_uuid"] == str(bob_uuid)
+    assert str(bob_uuid) in body["contributors"][0]["member_uuids"]
 
 
 @pytest.mark.asyncio
@@ -991,8 +986,8 @@ async def test_contribute_partial_accumulates_and_lists_contributor(client):
     assert body["claimant_uuid"] is None
     contribs = body["contributors"]
     assert len(contribs) == 1
-    assert contribs[0]["player_uuid"] == str(bob_uuid)
-    assert contribs[0]["player_name"] == "bob"
+    assert str(bob_uuid) in contribs[0]["member_uuids"]
+    assert contribs[0]["display_name"] == "bob"
 
 
 @pytest.mark.asyncio
@@ -1019,14 +1014,14 @@ async def test_contribute_multiple_players_accumulate(client):
 
     b1 = await _contribute(client, bearer_bob, sid, rid, 3)
     assert b1["delivered_qty"] == 3
-    assert {c["player_name"] for c in b1["contributors"]} == {"bob"}
+    assert {c["display_name"] for c in b1["contributors"]} == {"bob"}
 
     b2 = await _contribute(client, bearer_carol, sid, rid, 4)
     assert b2["delivered_qty"] == 7
-    names = {c["player_name"] for c in b2["contributors"]}
+    names = {c["display_name"] for c in b2["contributors"]}
     assert names == {"bob", "carol"}
-    uuids = {c["player_uuid"] for c in b2["contributors"]}
-    assert str(bob_uuid) in uuids and str(carol_uuid) in uuids
+    all_member_uuids = {u for c in b2["contributors"] for u in c["member_uuids"]}
+    assert str(bob_uuid) in all_member_uuids and str(carol_uuid) in all_member_uuids
 
 
 @pytest.mark.asyncio
@@ -1041,7 +1036,7 @@ async def test_contribute_same_player_idempotent_contributor(client):
     body = await _contribute(client, bearer_bob, sid, rid, 4)
     assert body["delivered_qty"] == 7
     assert len(body["contributors"]) == 1
-    assert body["contributors"][0]["player_name"] == "bob"
+    assert body["contributors"][0]["display_name"] == "bob"
 
 
 @pytest.mark.asyncio
@@ -1141,7 +1136,7 @@ async def test_progress_detail_includes_contributors_field(client):
     rows = {r["id"]: r for r in detail["rows"]}
     # progress 行 contributors 非空
     assert len(rows[rid_p]["contributors"]) == 1
-    assert rows[rid_p]["contributors"][0]["player_name"] == "bob"
+    assert rows[rid_p]["contributors"][0]["display_name"] == "bob"
     # lock 行 contributors 为空数组
     assert rows[rid_l]["contributors"] == []
 
@@ -1757,8 +1752,9 @@ async def test_sub_item_duplicate_registry_conflict(client):
 
 
 @pytest.mark.asyncio
-async def test_sub_item_on_archived_sheet_409(client):
+async def test_sub_item_on_archived_sheet_409(client, tmp_path, monkeypatch):
     """子物品：archived 表建子行 → 409。"""
+    _patch_archive_root(monkeypatch, tmp_path)
     _, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
     # 建父行

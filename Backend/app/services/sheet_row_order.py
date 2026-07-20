@@ -33,27 +33,34 @@ def row_remaining(row: SheetRow) -> int:
     return max(0, (row.need_qty or 0) - (row.delivered_qty or 0))
 
 
-def row_priority(row: SheetRow, player_uuid: UUID, my_row_ids: set[int]) -> int:
-    """计算行的五档优先级（玩家相关）。
+def row_priority(
+    row: SheetRow, account_uuids: set[UUID], my_row_ids: set[int]
+) -> int:
+    """计算行的五档优先级（account 级，R-5 主锚）。
 
     - done → 4
-    - lock（非 done）→ claimant_uuid == player_uuid ? 0 : 3（open 或他人认领都归 3）
+    - lock（非 done）→ claimant_uuid ∈ account_uuids ? 0 : 3（账号锁定：同 account 任一 UUID 认领即「我的」）
     - progress（非 done）→ row.id in my_row_ids ? 1 : 2
 
-    ``my_row_ids`` = 当前玩家贡献过的 progress 行 id 集（由调用方据 list_contributors 预算）。
+    ``account_uuids`` = 当前查看者同 WebAccount 的全部 UUID 集合（未绑账号 = {self.uuid}）。
+    ``my_row_ids`` = 当前账号贡献过的 progress 行 id 集（由调用方据 list_contributors 预算）。
     """
     if row.status == STATUS_DONE:
         return PRIORITY_DONE
     if row.mode == MODE_LOCK:
-        # lock 单认领人：claimant_uuid 即权威锚（progress 行恒 None，但此处已按 mode 分流）
-        return PRIORITY_MY_LOCK if row.claimant_uuid == player_uuid else PRIORITY_OTHER_LOCK
-    # progress（非 done）：是否当前玩家贡献过
+        # lock 账号锁定：同 account 任一 UUID 认领即归「我的」（progress 行恒 None，已按 mode 分流）
+        return (
+            PRIORITY_MY_LOCK
+            if row.claimant_uuid in account_uuids
+            else PRIORITY_OTHER_LOCK
+        )
+    # progress（非 done）：是否当前账号贡献过
     return PRIORITY_MY_PROGRESS if row.id in my_row_ids else PRIORITY_OTHER_PROGRESS
 
 
 def sort_sheet_rows(
     rows: list[tuple[SheetRow, str | None]],
-    player_uuid: UUID,
+    account_uuids: set[UUID],
     my_row_ids: set[int],
 ) -> list[tuple[SheetRow, str | None]]:
     """按 (priority, -remaining, sort_order, id) 稳定升序排序，**子行恒紧跟其父**，返回新列表。
@@ -66,7 +73,9 @@ def sort_sheet_rows(
       这修复了子行脱离父行、甚至排到父行上方的 bug（用户例：子 #1877 排在父 #1700 上方）。
     - 孤儿子行（父行不在结果中，理论 FK ON DELETE CASCADE 不会出现）兜底按 (sort_order, id) 追加末尾。
 
-    入参 ``rows`` = list_rows 返回的 ``[(SheetRow, claimant_name|None)]``；不改入参。
+    入参 ``rows`` = list_rows 返回的 ``[(SheetRow, claimant_name|None)]``；
+    ``account_uuids`` = 当前查看者同 WebAccount 的 UUID 集合（未绑账号回退 {self.uuid}）。
+    不改入参。
     """
     parents = [item for item in rows if item[0].parent_row_id is None]
     children_by_parent: dict[int, list[tuple[SheetRow, str | None]]] = {}
@@ -78,7 +87,7 @@ def sort_sheet_rows(
     sorted_parents = sorted(
         parents,
         key=lambda item: (
-            row_priority(item[0], player_uuid, my_row_ids),
+            row_priority(item[0], account_uuids, my_row_ids),
             -row_remaining(item[0]),
             item[0].sort_order,
             item[0].id,

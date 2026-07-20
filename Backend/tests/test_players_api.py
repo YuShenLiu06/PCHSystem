@@ -10,7 +10,7 @@ import app.api.deps as deps
 from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.jwt import create_access_token
-from app.models.user import Player
+from app.models.user import Player, WebAccount
 
 
 @pytest.fixture(autouse=True)
@@ -20,11 +20,16 @@ def _svc_token(monkeypatch):
 
 
 async def _make_player(name: str) -> tuple[uuid.UUID, str]:
+    # HEAD JWT 契约：sub=account_id（必须先建 WebAccount 再签 token）。
     u = uuid.uuid4()
     async with async_session_factory() as s:
-        s.add(Player(uuid=u, current_name=name))
+        account = WebAccount(role="user")
+        s.add(account)
+        await s.flush()
+        s.add(Player(uuid=u, current_name=name, role="user", web_account_id=account.id))
         await s.commit()
-    return u, f"Bearer {create_access_token(u, 'user')}"
+        account_id = account.id
+    return u, f"Bearer {create_access_token(account_id, 'user', active_uuid=u)}"
 
 
 def _auth(bearer: str) -> dict[str, str]:
