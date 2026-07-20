@@ -30,6 +30,10 @@ async function onLogin(): Promise<void> {
   loading.value = true
   try {
     const resp = await passwordLogin(trimmedUsername, password.value)
+    if (!resp.player) {
+      ElMessage.error('账号数据异常：无绑定玩家，请联系管理员')
+      return
+    }
     auth.set(
       { access_token: resp.access_token, refresh_token: resp.refresh_token },
       resp.player,

@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     auth_token_ttl_seconds: int = 600
     auth_token_rate_limit_seconds: int = 30
 
+    # 密码登录限频（/auth/login；bcrypt 慢哈希 + 双维度滑窗防爆破/撞库）
+    login_rate_limit_window_seconds: int = 300
+    login_rate_limit_max_per_ip: int = 20        # 单 IP 窗口内总尝试上限（防撞库扫号）
+    login_rate_limit_max_per_credential: int = 5  # 单用户名窗口内尝试上限（防针对爆破）
+
     # 绑定短码 TTL（秒，默认 10 分钟）
     bind_token_ttl_seconds: int = 600
 

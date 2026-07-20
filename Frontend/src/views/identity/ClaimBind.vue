@@ -31,6 +31,10 @@ async function onClaim(): Promise<void> {
   try {
     // claim 返回目标永久账号的 JWT（替换当前临时会话），同步到 store
     const resp = await claimBind(trimmedUsername, password.value)
+    if (!resp.player) {
+      ElMessage.error('账号数据异常：无绑定玩家，请联系管理员')
+      return
+    }
     auth.set(
       { access_token: resp.access_token, refresh_token: resp.refresh_token },
       resp.player,

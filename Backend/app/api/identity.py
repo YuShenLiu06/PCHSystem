@@ -14,7 +14,8 @@ JWT 契约：``sub=account_id``（str）、``active_uuid`` 可选 claim（会话
 """
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_account, require_service_token
@@ -22,6 +23,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.jwt import create_access_token, create_refresh_token
 from app.core.security import hash_password, verify_password
+from app.services.auth_service import login_by_credential, login_by_ip
 from app.models.user import Player, WebAccount
 from app.repositories import bind_token_repo, player_repo, web_account_repo
 from app.schemas.auth import AccountBrief, PlayerBrief, TokenExchangeResponse
@@ -76,13 +78,28 @@ def _issue_jwt_for_account(
 @auth_router.post("/login", response_model=TokenExchangeResponse)
 async def password_login(
     body: PasswordLoginRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> TokenExchangeResponse:
     """用户名+密码登录（必须永久账号）→ 完整 AuthResponse。
 
     契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久），
-    player 取该账号第一个绑定 player；active_uuid 留空（玩家后续可在身份管理页选/绑）。
+    player 取该账号首个绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。
+    限频：入口按 IP + (username, ip) 双维度滑窗（bcrypt 慢哈希配合防爆破/撞库）；成功后清零。
     """
+    ip = request.client.host if request.client else None
+    credential_key = (body.username.lower(), ip)
+
+    # 入口限频：先计数再校验（无论账号是否存在都消耗额度，避免账号枚举侧信道）
+    if not login_by_ip.check_and_record(ip):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, "too many login attempts from this IP"
+        )
+    if not login_by_credential.check_and_record(credential_key):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, "too many login attempts for this account"
+        )
+
     account = await web_account_repo.get_by_username(session, body.username)
     if account is None or account.is_temporary:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
@@ -95,7 +112,12 @@ async def password_login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "account has no bound player")
 
     first = players[0]
-    access, refresh = _issue_jwt_for_account(account, None)
+    access, refresh = _issue_jwt_for_account(account, first.uuid)
+
+    # 登录成功：清除该 IP / credential 的失败计数，正常用户不累积触发限频
+    login_by_ip.reset(ip)
+    login_by_credential.reset(credential_key)
+
     return TokenExchangeResponse(
         access_token=access,
         refresh_token=refresh,
@@ -125,7 +147,9 @@ async def register(
         updated = await web_account_repo.register(
             session, account.id, body.username, pwd_hash
         )
-    except ValueError as exc:
+    except (ValueError, IntegrityError) as exc:
+        # ValueError：repo 预检命中重复用户名；IntegrityError：预检与 flush 之间并发 race
+        # 撞同一 username 的 UNIQUE 约束（H3：仅捕 ValueError 会漏 race → 500）。
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await session.commit()
 

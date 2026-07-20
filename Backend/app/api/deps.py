@@ -106,11 +106,18 @@ async def _player_from_jwt(session: AsyncSession, token: str) -> Player:
     except ValueError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid active_uuid")
 
+    # M1：复验 active_uuid 仍属 JWT sub 账号（与 /auth/refresh 一致）——
+    # 防 access token 被窃后、player 迁到别的 account 仍能用旧 token 代写。
     player = (
-        await session.execute(select(Player).where(Player.uuid == player_uuid))
+        await session.execute(
+            select(Player).where(
+                Player.uuid == player_uuid,
+                Player.web_account_id == account_id,
+            )
+        )
     ).scalar_one_or_none()
     if player is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "player not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "player not bound to account")
     return player
 
 

@@ -18,12 +18,14 @@ export interface PlayerBrief {
   role: string
 }
 
-/** 认证响应（exchange / login / register / claim-bind 共用 shape） */
+/** 认证响应（exchange / login / register / claim-bind 共用 shape）
+ *  player 与后端 TokenExchangeResponse 对齐为可空（register/claim 边界场景无 player）；
+ *  消费方须 null guard 后再读 .name（auth.set 也要求非空）。 */
 export interface AuthResponse {
   access_token: string
   refresh_token: string
   token_type: 'Bearer'
-  player: PlayerBrief
+  player: PlayerBrief | null
   account: AccountBrief
 }
 

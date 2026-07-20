@@ -140,6 +140,108 @@ async def test_login_temporary_account_rejected(client):
     assert resp.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_login_jwt_carries_active_uuid_so_me_endpoint_works(client):
+    """H1 回归：login 签发的 JWT 必带 active_uuid，否则 /me（依赖 get_active_uuid）立即 401。"""
+    # Arrange
+    u = uuid.uuid4()
+    await _make_permanent_account("dave", "Secret123", u)
+
+    # Act
+    resp = await client.post(
+        "/auth/login", json={"username": "dave", "password": "Secret123"}
+    )
+    assert resp.status_code == 200, resp.text
+    access = resp.json()["access_token"]
+
+    # Assert — 带 active_uuid 的 JWT 能通过 /me（修复前 active_uuid=None → /me 401 → 踢回登录）
+    me = await client.get("/me", headers=_bearer(access))
+    assert me.status_code == 200, me.text
+    assert me.json()["active_uuid"] == str(u)
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limited_after_max_attempts(client, monkeypatch):
+    """H2：密码登录按 IP + credential 双维度限频，超限 429（bcrypt 慢哈希防爆破/撞库）。"""
+    # Arrange — 隔离全局限频器，替换为小阈值实例
+    from app.api import identity as ident_mod
+    from app.services.auth_service import WindowRateLimiter
+
+    monkeypatch.setattr(
+        ident_mod, "login_by_ip", WindowRateLimiter(window_seconds=300, max_count=2)
+    )
+    monkeypatch.setattr(
+        ident_mod,
+        "login_by_credential",
+        WindowRateLimiter(window_seconds=300, max_count=2),
+    )
+    await _make_permanent_account("rateuser", "Secret123", uuid.uuid4())
+
+    # Act — 两次错密码消耗额度（401），第三次被限频（429）
+    for _ in range(2):
+        r = await client.post(
+            "/auth/login", json={"username": "rateuser", "password": "WRONGpw9"}
+        )
+        assert r.status_code == 401
+
+    # Assert
+    r = await client.post(
+        "/auth/login", json={"username": "rateuser", "password": "WRONGpw9"}
+    )
+    assert r.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_jwt_rejected_when_active_uuid_player_moved_to_other_account(client):
+    """M1：access token 复验 active_uuid 仍属 sub 账号；player 迁到别的 account 后旧 token 失效。"""
+    # Arrange — account A 持有 player u 的 JWT
+    u = uuid.uuid4()
+    account_id = await _make_permanent_account("mover", "Secret123", u)
+    access = create_access_token(account_id, "user", active_uuid=u)
+
+    # 迁走前：旧 token 可用
+    before = await client.get("/me/last_sheet", headers=_bearer(access))
+    assert before.status_code == 200, before.text
+
+    # Act — 把 player u 迁到新临时账号 B
+    async with async_session_factory() as s:
+        new_account = WebAccount(role="user")
+        s.add(new_account)
+        await s.flush()
+        await web_account_repo.attach_player(s, new_account.id, u)
+        await s.commit()
+
+    # Assert — 迁走后旧 token 失效（_player_from_jwt 复验 web_account_id == sub account 失败）
+    after = await client.get("/me/last_sheet", headers=_bearer(access))
+    assert after.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_register_integrity_error_returns_409(client, monkeypatch):
+    """H3：register 并发撞 UNIQUE 约束（预检与 flush 之间 race）→ 409 而非 500。"""
+    # Arrange
+    from sqlalchemy.exc import IntegrityError
+
+    _, access, _ = await _issue_temp_account_token(client, name="racer")
+
+    async def _raise_integrity(*args, **kwargs):
+        raise IntegrityError(
+            "INSERT INTO web_accounts", {}, Exception("duplicate key")
+        )
+
+    monkeypatch.setattr(web_account_repo, "register", _raise_integrity)
+
+    # Act
+    resp = await client.post(
+        "/web-accounts/register",
+        json={"username": "racer_name", "password": "SecurePass1"},
+        headers=_bearer(access),
+    )
+
+    # Assert — 修复前仅捕 ValueError → IntegrityError 漏出 → 500；修复后 409
+    assert resp.status_code == 409
+
+
 # ===== POST /web-accounts/register =====
 
 

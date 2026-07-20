@@ -31,6 +31,10 @@ async function onRegister(): Promise<void> {
   try {
     // register 返回换发后的永久账号 JWT，同步到 store 避免 isTemporaryAccount 等 getter 滞后
     const resp = await register(trimmedUsername, password.value)
+    if (!resp.player) {
+      ElMessage.error('账号数据异常：无绑定玩家，请联系管理员')
+      return
+    }
     auth.set(
       { access_token: resp.access_token, refresh_token: resp.refresh_token },
       resp.player,
