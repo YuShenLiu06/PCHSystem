@@ -13,7 +13,7 @@ from app.api.deps import (
     require_service_token,
 )
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_manage,
     _load_sheet_or_404,
     _resolve_item_name,
     _to_detail,
@@ -50,7 +50,14 @@ async def create_sheet(
     await session.commit()
     await session.refresh(sheet)
     owner_name = await web_account_repo.resolve_display_name(session, player.uuid)
-    return _to_detail(sheet, [], owner_name, viewer_uuids=account_uuids)
+    return await _to_detail(
+        session,
+        sheet,
+        [],
+        owner_name,
+        viewer_uuids=account_uuids,
+        managers=[],
+    )
 
 
 @router.post("/from-items", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
@@ -88,7 +95,14 @@ async def create_sheet_from_items(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
     sheet_obj, owner_name = result
     rows_with_names = await sheet_repo.list_rows(session, sheet.id)
-    return _to_detail(sheet_obj, rows_with_names, owner_name, viewer_uuids=account_uuids)
+    return await _to_detail(
+        session,
+        sheet_obj,
+        rows_with_names,
+        owner_name,
+        viewer_uuids=account_uuids,
+        managers=[],
+    )
 
 
 @router.get("", response_model=list[SheetSummary])
@@ -105,12 +119,14 @@ async def list_sheets(
 ) -> list[SheetSummary]:
     owner_uuid = player.uuid if owner == "me" else None
 
-    # 聚合查询：按 account 的 UUID 集合参与优先排序（未绑账号回退 {self.uuid}）
+    # 聚合查询：按 account 的 UUID 集合参与优先排序（未绑账号回退 {self.uuid}）。
+    # viewer_web_account_id 让 manager 关系表也纳入「参与过」UNION（第 4 源，account 锚）。
     sheets_with_names = await sheet_repo.list_sheets(
         session,
         owner_uuid=owner_uuid,
         status_filter=status_filter,
         player_uuids=list(account_uuids),
+        viewer_web_account_id=player.web_account_id,
     )
     return [_to_summary(s, name) for s, name in sheets_with_names]
 
@@ -161,7 +177,14 @@ async def get_sheet(
         await session.commit()
     except Exception:
         logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)
-    return _to_detail(sheet, ordered, owner_name, contributors_map, viewer_uuids=account_uuids)
+    return await _to_detail(
+        session,
+        sheet,
+        ordered,
+        owner_name,
+        contributors_map,
+        viewer_uuids=account_uuids,
+    )
 
 
 @router.patch("/{sheet_id}", response_model=SheetDetail)
@@ -173,7 +196,7 @@ async def patch_sheet(
     account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player, account_uuids):
+    if not _can_manage(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     if sheet.status == SHEET_PHASE_ARCHIVED:
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
@@ -187,7 +210,14 @@ async def patch_sheet(
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
-    return _to_detail(sheet, rows_with_names, owner_name, contributors_map, viewer_uuids=account_uuids)
+    return await _to_detail(
+        session,
+        sheet,
+        rows_with_names,
+        owner_name,
+        contributors_map,
+        viewer_uuids=account_uuids,
+    )
 
 
 @router.delete("/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -200,7 +230,7 @@ async def delete_sheet(
     from sqlalchemy.exc import IntegrityError
 
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player, account_uuids):
+    if not _can_manage(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     rows_with_names = await sheet_repo.list_rows(session, sheet_id)
     progress_row_ids = [

@@ -25,6 +25,7 @@ from app.models.sheet import (
     SHEET_PHASE_COLLECTING,
     SHEET_PHASE_CONSTRUCTING,
     Sheet,
+    SheetManager,
     SheetRow,
     SheetRowContributor,
 )
@@ -166,6 +167,7 @@ async def list_sheets(
     owner_uuid: uuid.UUID | None = None,
     status_filter: str | None = None,
     player_uuids: list[uuid.UUID] | None = None,
+    viewer_web_account_id: int | None = None,
 ) -> list[tuple[Sheet, str]]:
     """列所有表：返回 [(Sheet, owner_name)]。
 
@@ -177,9 +179,10 @@ async def list_sheets(
     - "active" → status ∈ (collecting, constructing)；
     - 单值（collecting/constructing/archived）→ status == 该值。
 
-    player_uuids（参与优先排序，account 级聚合）：
-    - 非空时，该账号任一 UUID 参与过的表（owner/claimant/contributor）排在前面；
-    - None 时，按 sheet id 升序（与历史行为一致）。
+    player_uuids（参与优先排序，account 级聚合）+ viewer_web_account_id（manager 源）：
+    - player_uuids 非空时，该账号任一 UUID 参与过的表（owner/claimant/contributor）排在前面；
+    - viewer_web_account_id 非空时，额外纳入该账号任 manager 的表（第 4 源，account 锚）；
+    - 两者皆空时，按 sheet id 升序（与历史行为一致）。组内按 id 升序。
     """
     from app.repositories import web_account_repo
 
@@ -191,17 +194,38 @@ async def list_sheets(
     elif status_filter is not None:
         stmt = stmt.where(Sheet.status == status_filter)
 
-    if player_uuids:
-        # 构造「该账号任一 UUID 参与过的 sheet_id 集」复合 SELECT（三源 UNION）。
+    if player_uuids or viewer_web_account_id is not None:
+        # 构造「该账号参与过的 sheet_id 集」复合 SELECT：
+        # - player_uuids 三源（claimant/contributor/owner，account 级聚合）
+        # - viewer_web_account_id 一源（manager，account 锚；迁移 0014 重做为 web_account_id）
         # 直接以 CompoundSelect 传入 in_()——勿加 .subquery()，否则 SQLAlchemy 会
         # 触发「Coercing Subquery into select() for IN()」告警（2.x 行为）。
+        # UNION 默认 DISTINCT：同一 sheet 多源命中只算一次。
+        union_parts = []
+        if player_uuids:
+            union_parts.extend(
+                [
+                    select(SheetRow.sheet_id).where(
+                        SheetRow.claimant_uuid.in_(player_uuids)
+                    ),
+                    select(SheetRow.sheet_id)
+                    .join(
+                        SheetRowContributor, SheetRowContributor.row_id == SheetRow.id
+                    )
+                    .where(SheetRowContributor.player_uuid.in_(player_uuids)),
+                    select(Sheet.id).where(Sheet.owner_uuid.in_(player_uuids)),
+                ]
+            )
+        if viewer_web_account_id is not None:
+            union_parts.append(
+                select(SheetManager.sheet_id).where(
+                    SheetManager.web_account_id == viewer_web_account_id
+                )
+            )
         involved_ids = (
-            select(SheetRow.sheet_id).where(SheetRow.claimant_uuid.in_(player_uuids))
-        ).union(
-            select(SheetRow.sheet_id)
-            .join(SheetRowContributor, SheetRowContributor.row_id == SheetRow.id)
-            .where(SheetRowContributor.player_uuid.in_(player_uuids)),
-            select(Sheet.id).where(Sheet.owner_uuid.in_(player_uuids)),
+            union_parts[0].union(*union_parts[1:])
+            if len(union_parts) > 1
+            else union_parts[0]
         )
         stmt = stmt.order_by(Sheet.id.in_(involved_ids).desc(), Sheet.id.asc())
     else:

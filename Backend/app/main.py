@@ -10,6 +10,7 @@ from app.api.identity import (
 )
 from app.api.notifications import router as notifications_router
 from app.api.parsing import router as parsing_router
+from app.api.players import router as players_router
 from app.api.sheets import router as sheets_router
 from app.core.config import get_settings
 from app.core.web_probe import probe_web
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(sheets_router)
     app.include_router(parsing_router)
     app.include_router(notifications_router)
+    app.include_router(players_router)
     app.include_router(top_router)
     return app
 

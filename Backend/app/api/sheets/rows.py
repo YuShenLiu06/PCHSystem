@@ -1,7 +1,8 @@
 """行 upsert/delete + 编辑通知（原 sheets.py 块3）。
 
-account 级统一（R-5 主锚，2026-07-19）：``_can_edit`` 升 ``account_uuids``；
-通知显示名用 ``resolve_display_name``；contributors 按 account 聚合后展开 ``member_uuids``。
+account 级统一（R-5 主锚，2026-07-19）：tier B 权限经 ``_can_operate``
+（owner/超管/manager）；通知显示名用 ``resolve_display_name``；contributors 按
+account 聚合后展开 ``member_uuids``。
 """
 import logging
 import uuid
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_account_uuids, get_current_player
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_operate,
     _load_sheet_or_404,
     _resolve_item_name,
     _row_dict,
@@ -211,7 +212,7 @@ async def upsert_row(
 ) -> RowDetail:
     """行新建 / 更新（单端点按 ``row_id`` 分流）。"""
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player, account_uuids):
+    if not _can_operate(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
     try:
@@ -251,7 +252,7 @@ async def delete_row(
     account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ):
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player, account_uuids):
+    if not _can_operate(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     current = await sheet_repo.get_row(session, sheet_id, row_id)
     if current is None:

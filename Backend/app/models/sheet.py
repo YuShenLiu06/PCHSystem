@@ -14,7 +14,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
@@ -65,6 +65,16 @@ class Sheet(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    # 项目级协管员（迁移 0014）：viewonly=True（写走 sheet_manager_repo，避免 session.add
+    # 误用）；lazy="selectin" 让 get_sheet 单条查询自动 IN 加载 managers，_can_operate
+    # 直接读内存判定，无需额外 roundtrip、无需 async 化 helper。
+    managers: Mapped[list["SheetManager"]] = relationship(
+        "SheetManager",
+        primaryjoin="Sheet.id == foreign(SheetManager.sheet_id)",
+        viewonly=True,
+        lazy="selectin",
     )
 
 
@@ -158,3 +168,41 @@ class SheetRowContributor(Base):
     contributed_qty: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
+
+
+class SheetManager(Base):
+    """项目级协管员（sheets schema，迁移 0014）。
+
+    owner 可授予某玩家为其项目的 manager；manager 拥有「除删项目/改名/授予撤销协管员/
+    归档以外」的全部写权限（tier B），协助 owner 日常协作。
+
+    - 关系 per-sheet：同一 Web 账号可在不同项目各任 manager（PK = sheet_id + web_account_id）。
+    - R-5 身份主锚 = Web 账号：manager 锚 web_account_id，同账号任一 UUID 都继承 manager；
+      授予目标必须已绑 Web 账号（NOT NULL，应用层未绑 → 422）。
+    - 不复用全局 players.role（admin/owner 是全服超管，语义不同）。
+    - owner 不能被设为自己项目的 manager（app 层 sheet_manager_repo 守卫，按 account 比对）。
+    - granted_by_uuid 是审计字段（FK→players.uuid，ON DELETE SET NULL），不参与权限判定。
+    """
+
+    __tablename__ = "sheet_managers"
+    __table_args__ = {"schema": "sheets"}
+
+    sheet_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("sheets.sheets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    web_account_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.web_accounts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+    granted_by_uuid: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.players.uuid", ondelete="SET NULL"),
+        nullable=True,
+    )
+

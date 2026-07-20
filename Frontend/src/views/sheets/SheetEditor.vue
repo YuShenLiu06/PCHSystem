@@ -39,6 +39,8 @@ const {
   titleDraft,
   subRowPopoverVisible,
   canEdit,
+  canManage,
+  isManager,
   isReadOnly,
   treeRows,
   isClaimant,
@@ -63,6 +65,11 @@ const {
   onRelease,
   onReject,
   onSubRowPopoverShow,
+  managerInputName,
+  managerPickedUuid,
+  searchPlayers,
+  onGrantManager,
+  onRevokeManager,
 } = useSheetDetail({ sheetId, auth, sheetTableRef })
 
 // 归档文档预览（子组件拥有加载/blob 生命周期）
@@ -141,22 +148,22 @@ function back(): void {
           maxlength="128"
           @keyup.enter="onSaveTitle"
         />
-        <el-button v-if="canEdit && !isReadOnly && !titleEditing" link type="primary" @click="titleEditing = true">改标题</el-button>
-        <template v-if="canEdit && !isReadOnly && titleEditing">
+        <el-button v-if="canManage && !isReadOnly && !titleEditing" link type="primary" @click="titleEditing = true">改标题</el-button>
+        <template v-if="canManage && !isReadOnly && titleEditing">
           <el-button type="primary" size="small" @click="onSaveTitle">保存</el-button>
           <el-button size="small" @click="() => { titleEditing = false; titleDraft = sheet!.title }">取消</el-button>
         </template>
         <span style="flex: 1;" />
-        <!-- owner 阶段流转按钮（非 archived 态） -->
-        <template v-if="canEdit && !isReadOnly">
-          <el-button v-if="sheet.status === 'collecting'" size="small" type="warning" plain @click="onAdvance('constructing')">进入施工</el-button>
-          <el-button v-if="sheet.status === 'collecting'" size="small" type="success" plain @click="onAdvance('archived')">直接归档</el-button>
-          <el-button v-if="sheet.status === 'constructing'" size="small" type="success" plain @click="onAdvance('archived')">标记施工完成并归档</el-button>
+        <!-- 阶段流转按钮（非 archived 态）：进入施工=tier B（协管员可触发），归档类=tier A（仅 owner/超管） -->
+        <template v-if="!isReadOnly">
+          <el-button v-if="canEdit && sheet.status === 'collecting'" size="small" type="warning" plain @click="onAdvance('constructing')">进入施工</el-button>
+          <el-button v-if="canManage && sheet.status === 'collecting'" size="small" type="success" plain @click="onAdvance('archived')">直接归档</el-button>
+          <el-button v-if="canManage && sheet.status === 'constructing'" size="small" type="success" plain @click="onAdvance('archived')">标记施工完成并归档</el-button>
         </template>
         <!-- 已归档：查看归档文档 -->
         <el-button v-if="isReadOnly" size="small" @click="archiveVisible = true">查看归档文档</el-button>
         <span style="color: #888; font-size: 12px;">所有者：{{ sheet.owner_name }}</span>
-        <el-button v-if="canEdit && !isReadOnly" type="danger" plain @click="onDeleteSheet">删除项目</el-button>
+        <el-button v-if="canManage && !isReadOnly" type="danger" plain @click="onDeleteSheet">删除项目</el-button>
       </div>
       <div v-else>项目详情</div>
     </template>
@@ -164,7 +171,32 @@ function back(): void {
     <el-result v-if="errorMsg && !sheet" icon="error" title="加载失败" :sub-title="errorMsg" />
 
     <template v-else-if="sheet">
-      <!-- 新增行（仅拥有者可见 + 非 archived 只读态） -->
+      <!-- 协管员列表（全员可见；授予/撤销仅 owner/超管，RS-1 精简：输入 UUID） -->
+      <div v-if="!isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: #666; font-size: 13px;">
+        <span>协管员：</span>
+        <span v-if="sheet.managers.length === 0" style="color: #aaa;">（无）</span>
+        <el-tag
+          v-for="m in sheet.managers"
+          :key="m.web_account_id"
+          size="small"
+          :closable="canManage || isManager"
+          @close="onRevokeManager(m.web_account_id)"
+        >{{ m.display_name }}</el-tag>
+        <template v-if="canManage">
+          <el-autocomplete
+            v-model="managerInputName"
+            :fetch-suggestions="(q: string, cb: (r: { player_uuid: string; player_name: string }[]) => void) => searchPlayers(q).then(cb).catch(() => cb([]))"
+            placeholder="玩家名（输入联想）"
+            value-key="player_name"
+            size="small"
+            style="width: 220px;"
+            @select="(item: { player_uuid: string }) => { managerPickedUuid = item.player_uuid }"
+            @input="managerPickedUuid = ''"
+          />
+          <el-button size="small" type="primary" plain @click="onGrantManager">添加协管员</el-button>
+        </template>
+      </div>
+      <!-- 新增行（仅拥有者/协管员可见 + 非 archived 只读态） -->
       <div v-if="canEdit && !isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <el-input v-model="newRow.item_name" placeholder="物品名" style="width: 200px;" maxlength="128" />
         <el-input v-model="newRow.registry_id" placeholder="注册名（可空，如 minecraft:stone）" style="width: 240px;" maxlength="128" />

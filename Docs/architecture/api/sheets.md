@@ -186,6 +186,19 @@ collecting ─────────────────────▶ co
 
 > 端点位于 `top_router`（与 `/me`、`/auth/*` 同级），**不在 sheets 子路由内**；schema 见 `Backend/app/schemas/auth.py::LastSheetResponse`。响应模型 `{sheet_id: int | None}`。
 
+### 5.6 项目协管员（manager，迁移 `0016_sheet_managers`；**account 锚定**，2026-07-19 merge 升 R-5）
+
+> **account 锚定**：SheetManager 锚 `web_account_id`——同一 Web 账号下任一 UUID 都继承 manager。授予目标必须已绑 Web 账号（未绑 → 422，B7）；与 owner 同账号拒（409 `SheetOwnerCannotBeManager`，B7）。manager 列表元素含 `member_uuids`，客户端（前端 / MCDR）用 `managers[].member_uuids ∩ viewer_uuids` 判定 `is_manager`，无需感知 account_id。
+
+| 方法 | 路径 | 鉴权 | 成功 | 说明 |
+|---|---|---|---|---|
+| GET | `/sheets/{id}/managers` | 任意登录玩家（JWT 或 service-token+UUID） | 200 `list[SheetManagerEntry]` | 列出协管员（透明，全员可读） |
+| POST | `/sheets/{id}/managers` | **tier A**（`_can_manage`）：owner / 全局 admin-owner | 201 `list[SheetManagerEntry]` | body `{player_uuid}`——后端解析其 `web_account_id`；幂等（重复授予返 201 + 同列表、不重发通知）；**目标未绑 Web 账号 → 422**（B7）；**目标与 owner 同账号 → 409 `SheetOwnerCannotBeManager`**（B7）；归档态拒（409） |
+| DELETE | `/sheets/{id}/managers` | **tier A**（`_can_manage`）：owner / 全局 admin-owner；**例外** self-revoke（`web_account_id == player.web_account_id` 且非 NULL）放行 | 200 `list[SheetManagerEntry]` | body `{web_account_id}`；目标不存在 404；归档态拒 409；**B6 NULL 守卫**：`web_account_id IS NULL` 玩家不能 self-revoke（拒 403，避免 `None==None` 误匹配） |
+
+`SheetManagerEntry{web_account_id: int, display_name: str, member_uuids: list[UUID], granted_at: datetime}`——结构与 `RowContributor`（account 聚合）对齐（`display_name` + `member_uuids` 经 `web_account_repo` 按账号解析）。协管员列表也随 `GET /sheets/{id}` 的 `SheetDetail.managers` 字段一并返回（R-9：真实权限仍以后端 RBAC 为准，客户端只控展示）。`granted_by_uuid` 仅存表内作审计、不在响应中暴露。MCDR 命令 `!!PCH sheet manager <表id> [list|add <玩家名>|remove <玩家名>]`（add/remove 先用 `uuid_api_remake.get_uuid(玩家名)` 转 UUID，再由后端解析 account）。
+
+
 ---
 
 ## 6. 请求 / 响应模型
@@ -264,19 +277,84 @@ class SheetDetail(SheetSummary):
 
 ## 7. 权限矩阵
 
-| 动作 | 拥有者 | admin/owner 角色 | 认领人（lock 行） | 其他登录玩家 |
+> **两层写权限**（迁移 `0016_sheet_managers`）：**tier A 高危**（删项目/改名/授予撤销协管员/归档）仅 owner 或全局 admin/owner；**tier B 常规**（增删改行/子物品/进度/解除/打回/进入施工）另含本表**协管员**（`sheet_managers` 关系，由 owner 授予）。全局 admin/owner 超管覆盖一切。协管员是 per-sheet 关系，不复用全局 role。
+>
+> **tier A/B 均在 account 级 owner 锚下判定（R-5）**——`_is_owner` 用 `owner_uuid in account_uuids`（同账号任一 UUID 都算 owner）；`_is_account_manager` 用 `web_account_id` 判定（SheetManager 锚 `web_account_id`，同账号任一 UUID 继承 manager，`web_account_id IS NULL` 直接返 False 防误匹配）；`_is_superuser` 切 `_resolve_role`（account 级 role 权威，与全局 RBAC `require_role` 一致；未绑玩家回退 `player.role` 默认 `"user"`）。调用 `_can_operate` 前必须经 `_load_sheet_or_404`/`sheet_repo.get_sheet` 加载以触发 selectin 预加载 `managers` 关系，否则直接报错（删 `getattr` 兜底）。**manager 亦 account 级**（非 main 原 per-UUID 措辞）。
+
+| 动作 | 拥有者 | admin/owner 角色 | 协管员（per-sheet） | 认领人（lock 行） | 其他登录玩家 |
+|---|---|---|---|---|---|
+| 读（列表/详情/单表 CSV） | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **tier A**：改项目名 `PATCH /sheets/{id}` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **tier A**：删项目 `DELETE /sheets/{id}` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **tier A**：授予/撤销协管员 `POST/DELETE /managers` | ✅（owner 可 self-revoke） | ✅ | ❌（self-revoke 除外） | ❌ | ❌ |
+| **tier A**：归档 `advance?to=archived` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **tier B**：行 upsert / 删行 / setreg / 子物品 addsub/delsub/setsub | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **tier B**：progress 进度覆写 `PATCH /progress` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **tier B**：进入施工 `advance?to=constructing` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| 认领 claim（**lock** 行） | ✅ | ✅ | ✅ | — | ✅ |
+| 上报交付 / 标备齐（**lock** 行） | 仅当自己是认领人 | 仅当自己是认领人 | 仅当自己是认领人 | ✅ | ❌ |
+| **贡献 contribute（progress 行）** | ✅ | ✅ | ✅ | — | ✅ |
+| 解除锁定 release | ✅（lock 自认/owner；progress 仅 owner/协管员） | ✅ | ✅（lock 自认；progress） | ✅（lock 自放） | ❌ |
+| 打回 reject（**lock** 行） | ✅ | ✅ | ✅ | ✅ | ❌ |
+| 读归档 markdown `GET /archive` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 读归档资产 `GET /archive/assets/{filename}` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 全量 CSV 导出 | — service token — | — | — | — | — |
+
+### 7.1 权限契约表（M01–M26，三端权限对账权威）
+
+> 本表是 plan §8 落地副本，**三端（后端 / 前端 / MCDR）实现分歧时回表对账**，并同步落为 `Backend/tests/` 权限集成测试（与 identity 既有 26 条互补）。**身份档位**：
+> - **Owner-S**：owner 账号唯一 UUID（基线）
+> - **Owner-M**：owner 账号另一 UUID（验 account 继承）
+> - **SuperAdmin**：`WebAccount.role='admin'` 非 owner
+> - **Mgr-Other**：独立账号的 manager
+> - **Mgr-Same**：与 owner 同账号的 manager
+> - **Mgr-Bind**：UUID_A 授权后 UUID_B 绑同账号
+> - **Unbound**：`web_account_id IS NULL`
+> - **Stranger**：任意他人
+
+| # | 身份 | 动作 | 期望 | 关键点 |
 |---|---|---|---|---|
-| 读（列表/详情/单表 CSV） | ✅ | ✅ | ✅ | ✅ |
-| 改表/行 upsert/删行/删表 | ✅ | ✅ | ❌ | ❌ |
-| 认领 claim（**lock** 行） | ✅ | ✅ | — | ✅ |
-| 上报交付 / 标备齐（**lock** 行） | 仅当自己是认领人 | 仅当自己是认领人 | ✅ | ❌ |
-| **贡献 contribute（progress 行）** | ✅ | ✅ | — | ✅ |
-| 解除锁定 release | ✅（lock 自认/owner；progress 仅 owner） | ✅ | ✅（lock 自放） | ❌ |
-| 打回 reject（**lock** 行） | ✅ | ✅ | ✅ | ❌ |
-| **阶段流转 advance（项目级）** | ✅ | ✅ | — | ❌ |
-| 读归档 markdown `GET /archive` | ✅ | ✅ | ✅ | ✅ |
-| 读归档资产 `GET /archive/assets/{filename}` | ✅ | ✅ | ✅ | ✅ |
-| 全量 CSV 导出 | — service token — | — | — | — |
+| M01 | Owner-S | patch/delete/advance→archived/grant/revoke | 2xx | tier A 基线 |
+| M02 | Owner-M | 同上 | 2xx | **account 级继承核心** |
+| M03 | Owner-M | set_row_delivery（Owner-S 认领的行） | 2xx | 同 account 任一 UUID 可交付 |
+| M04 | SuperAdmin | 全部 tier A+B | 通过 | role 权威=WebAccount.role |
+| M05 | SuperAdmin（`player.role='user'`，`account.role='admin'`） | grant_manager | 201 | **B1**：player.role 旧值不影响 |
+| M06 | Mgr-Other | patch/delete/advance→archived/grant/revoke(other) | 403 | tier A 拒 |
+| M07 | Mgr-Other | advance→constructing | 200 + owner 收通知 | **行为变化点**（由 tier A 改 tier B） |
+| M08 | Mgr-Other | upsert_row/delete_row/set_row_progress/reject_row | 2xx | tier B 通过 |
+| M09 | Mgr-Other | revoke_manager(self，自己 web_account_id) | 2xx | self-revoke 放行 |
+| M10 | Mgr-Other | release_row（他人 claimant 的行） | 2xx | tier B 通过 |
+| M11 | Mgr-Same | upsert_row | 2xx | account 继承 |
+| M12 | Mgr-Bind | 绑定后 UUID_B upsert_row | 2xx | **account 继承核心** |
+| M13 | Mgr-Other | claim_row / contribute_to_row | 2xx | 公开协作 |
+| M14 | Unbound | patch/delete/advance→archived/grant | 403 | owner 回退 `{self.uuid}` |
+| M15 | Unbound | upsert_row（他人项目） | 403 | manager 列无该 account |
+| M16 | Unbound | set_row_delivery（自己 claimant） | 2xx | claimant 走 UUID |
+| M17 | Stranger | 所有 tier A+B | 403 | 无关系 |
+| M18 | Stranger | claim_row / contribute | 2xx | 公开协作 |
+| M19 | Owner-S | grant_manager（自己同账号另一 UUID） | 409 `SheetOwnerCannotBeManager` | **B7** |
+| M20 | Owner-S | grant_manager（target 未绑 account） | 422 | **B7** |
+| M21 | Owner-S | grant_manager（已是 manager 的目标） | 201 幂等不重发通知 | PK 防重复 |
+| M22 | Mgr-Other | revoke_manager（他人 manager） | 403 | self-revoke 不覆盖他人 |
+| M23 | Mgr-Other | revoke_manager(self，`web_account_id=None` 玩家) | 403 | **B6** NULL 守卫 |
+| M24 | Mgr-Other | revoke_manager(self)（owner 已先撤） | 404 `SheetManagerNotFound` | 并发 |
+| M25 | 任意 | advance→constructing on archived sheet | 409 | 终态守卫优先于权限 |
+| M26 | 任意 | upsert_row on archived sheet | 409 | 同上 |
+
+**边界用例**（落 pytest，不入本表编号空间）：
+- **E1**：撤销 manager 后立即 upsert_row → 403（验 `_can_operate` 每次重读 `sheet.managers` 不缓存）。
+- **E2**：owner 账号第三 UUID 非授权目标 → 不算 manager。
+- **E3**：未绑玩家被授 manager → 422（`web_account_id` NOT NULL 列约束）。
+- **E4**：JWT account 已删 → `list_uuids` 返空 → 拒。
+- **E5**：`web_accounts` 删除 → `sheet_managers` CASCADE → 该账号 UUID 立即失权。
+
+**与实现的对账要点**：
+- tier A = `_can_manage = _is_owner or _is_superuser`；tier B = `_can_operate = _can_manage or _is_account_manager`。
+- `_is_owner` / `_is_account_manager` 收 `(sheet, player, account_uuids)`；**外部勿混用** `_can_edit`（HEAD 旧别名，已删，B4），调用点机械替换为 `_can_manage` / `_can_operate`。
+- ★**行为变化**：`advance ?to=constructing` 由 HEAD 的 tier A 改采 main 的 tier B（manager 也能推进施工，M07 必测）——HEAD 漏分流修正。
+- ★**role 权威**：`_is_superuser` 切 `_resolve_role`，避免「绑 account 但 `player.role` 仍是旧值 → tier A 与全局 RBAC 不一致」（B1，M05 必测）。
+- ★**NULL 守卫**：self-revoke 必须 `player.web_account_id is not None and web_account_id == player.web_account_id`（B6，M23 必测）。
+- ★**selectin 预加载**：`_is_account_manager` 直接读 `sheet.managers`，删 `getattr` 兜底（B5，漏加载显式报错）。
 
 ---
 
@@ -429,6 +507,8 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 
 *增量（2026-07-19，account 级统一 + 自定义昵称，R-5 落地）*：**RowContributor 结构 breaking**——从 `{player_uuid, player_name}` 改为 `{account_id: int|null, display_name: str, member_uuids: list[UUID], contributed_qty: int}`（按 Web 账号聚合：同账号多 UUID 合并一条；`account_id=null` 为未绑老数据退化为一对一），取代 §6 旧定义。**SheetDetail 新增 `viewer_uuids: list[UUID]`**（当前查看者所属账号全部 UUID，供前端/MCDR 做 owner/claimant 可见性判断，R-9：真实权限仍以后端 RBAC 为准）。**权限升 account 级**：`_can_edit`/collab(delivery/release/reject)/rows/lifecycle 改用 account UUID 集合判断——lock 语义从「单人锁定」变「账号锁定」（同账号任一 UUID 认领的行，其他 UUID 可 deliver/release/reject）。**显示名统一**：`web_accounts.display_name`（migration `0015`，玩家自定义昵称，空则回退该账号下最近活跃 UUID 的游戏名）；owner_name/claimant_name/contributor display_name/归档名/通知 actor 经 `resolve_display_name(s)` 解析（批量，避免 N+1）。**新端点 `PATCH /web-accounts/me`**（设昵称，`{display_name: str}`）。**通知 account 聚合**：`/notifications/pending|ack|{id}/read` 的 `player_uuid` 解析为该账号全部 UUID，pending 返同账号所有 UUID 的未投递通知（C-1 防越权不变）。**last_sheet account 级**：`set_last_sheet` 同步同账号全部 UUID 的 `last_sheet_id`（`!!sheet`/`!!submit` 无参重开在多 UUID 间共享）。**业务表零迁移**（保留 `player_uuid` 作审计锚，零回填）。前端 `SheetEditor` canEdit/isClaimant、MCDR `is_owner`/`is_claimant`/scanner `!!submit` 全用 `viewer_uuids`。
 
-*最后更新：2026-07-19（文档审计对齐实现：§5 顶栏引用改 `sheets/` 包；§5.1 GET 详情行序补「子行紧跟父行」(JSON) 与「父行段/子行段分两段」(CSV 自然序) + `?q=` LIKE 通配符转义说明；§5.3 补子物品复用协作端点说明；§8 archived 409 补实际文案「项目已归档，只读」/ advance「sheet is archived, read-only」；§6 RowDetail.contributors 修正 status=open 时为空）*
+*增量（2026-07-19，merge origin/main 协管员 + manager 升 account 级）*：**协管员（manager）落地 account 级（R-5 一致）**——SheetManager 锚 `web_account_id`（重做 main 原 per-UUID `0014_sheet_managers`：列 `player_uuid` → `web_account_id BIGINT FK→web_accounts.id`；PK `(sheet_id, web_account_id)` 幂等；索引 `ix_sheet_managers_account`；`granted_by_uuid` 保留作审计）。**迁移链重编号**（两侧都占 0014）：`0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（单 head 0016；main 原 `0014_sheet_managers` 重编号为 `0016`；HEAD 的 0014/0015 保持原号）。**权限 helper 重构**（`_shared.py`）：5 个 helper（删 `_can_edit` deprecated 别名 B4）——`_is_owner`（account_uuids）/`_is_superuser`（切 `_resolve_role` 与全局 RBAC 一致，B1）/`_can_manage`（tier A = owner ‖ superuser）/`_is_account_manager`（直接读 `sheet.managers`，删 `getattr` 兜底 B5；NULL 返 False）/`_can_operate`（tier B = A ‖ account_manager）。**行为变化（PR 必写）**：`advance ?to=constructing` 由 HEAD 的 tier A 改采 main 的 tier B（manager 也能推进施工，M07 必测）。**端点**（`app/api/sheets/managers.py`）：`POST /sheets/{id}/managers {player_uuid}` 后端解析 account（未绑 422，B7；与 owner 同账号 409 `SheetOwnerCannotBeManager`，B7；重复授予幂等不重发通知）；`DELETE /sheets/{id}/managers {web_account_id}` self-revoke 放行当 `web_account_id is not None and == player.web_account_id`（B6 NULL 守卫，M23 必测）。**SheetManagerEntry**：`{web_account_id, display_name, member_uuids, granted_at}`（与 RowContributor 结构对齐）；`SheetDetail.managers` 同形。**SheetDetail** 同时挂 `viewer_uuids`（HEAD）+ `managers`（main-account）。**权限契约表 M01–M26 + E1–E5** 同步落 `Backend/tests/` 与本文档 §7.1（三端权限对账权威）。**客户端 is_manager 判定**：前端用 auth store 绑定 UUIDs + `managers[].member_uuids` 求交（`isManager` 单一 computed，N2 DRY）；MCDR 用 sheet detail 的 `viewer_uuids` + `managers[].member_uuids` 求交（`_is_manager` 单一 helper，N2）。**HEAD 预存 3 个红测随合流修复**（`test_messages.py` contributors fixture 改 account-level shape）。dev DB 因迁移重命名 + 0014 改列需重置（`down -v` 重放）。
+
+*最后更新：2026-07-19（merge origin/main 协管员 + manager 升 account 级：§5.6 协管员章节重写为 account 锚定；§7 顶部补 tier A/B account 级判定说明；新增 §7.1 权限契约表 M01–M26 作三端权限对账权威；§14 加 merge 增量段）*
 
 *2026-07-09（子物品嵌套行 + sheets.py 包化重构：迁移 0012 + `parent_row_id`/`qty_per_unit` + 单层/模式继承/级联重算；sheets/ 包结构 + translation.py 公共翻译 + 通知 helper；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑）*

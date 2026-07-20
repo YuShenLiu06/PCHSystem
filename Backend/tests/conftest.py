@@ -25,8 +25,8 @@ _settings = get_settings()
 _TRUNCATE_SQL = text(
     "TRUNCATE users.auth_tokens, users.jwt_revocations, users.players, "
     "users.web_accounts, users.bind_tokens, "
-    "sheets.sheet_row_contributors, sheets.sheet_rows, sheets.sheets, "
-    "notifications.notifications RESTART IDENTITY CASCADE"
+    "sheets.sheet_managers, sheets.sheet_row_contributors, sheets.sheet_rows, "
+    "sheets.sheets, notifications.notifications RESTART IDENTITY CASCADE"
 )
 
 

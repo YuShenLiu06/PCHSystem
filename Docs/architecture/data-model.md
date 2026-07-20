@@ -349,8 +349,22 @@ erDiagram
 >
 > **排序**：`list_contributors` 按 `contributed_qty DESC, joined_at, id` 返回贡献者名单（贡献多者在前）。**注意（已知缺口）**：当前该列只用于排序，`list_contributors` 的 SELECT 与响应 schema `RowContributor` 均**未带出 `contributed_qty`** → 客户端只拿到排好序的名字列表、看不到每人具体量；归档统计 `aggregate_contributor_totals` 则会用到（见 §10.4）。
 
-> **权限（RBAC，后端为准）**：JWT 已登录可读所有表；表的 `owner_uuid` 或 admin/owner 角色可写；CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
+> **权限（RBAC，后端为准）**：JWT 已登录可读所有表；写权限分两层（迁移 0016）——**tier A 高危**（删项目/改名/授予撤销协管员/归档）仅 owner 或全局 admin/owner；**tier B 常规**（增删改行/子物品/进度/解除/打回/进入施工）owner、全局 admin/owner，或本表协管员（见 §10.5 `sheet_managers`）。CSV 全量导出 `GET /sheets/export` 走 service token（外部读取硬约束，MVP §4）。
 > **数量换算 `format_qty`**（个/组/盒，STACK=64/SHULKER=1728）是显示层纯函数，不入库、不进 API 响应（前端 `utils/qty.ts` 与后端 `core/qty.py` 对齐）。
+
+### 10.5 `sheet_managers`（项目协管员，迁移 0016）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `sheet_id` | bigint | FK→sheets.id `ON DELETE CASCADE`, PK 组成 | 项目删除级联清协管员 |
+| `player_uuid` | uuid | FK→players.uuid `ON DELETE CASCADE`, PK 组成 | 协管员身份锚（R-5） |
+| `granted_at` | timestamptz | not null default now() | 授予时间 |
+| `granted_by_uuid` | uuid | FK→players.uuid `ON DELETE SET NULL`, nullable | 审计字段（授予者），不参与权限判定 |
+
+约束：`PRIMARY KEY (sheet_id, player_uuid)`（天然幂等——重复授予不报错）；索引 `ix_sheet_managers_player`（按 player 反查其协管的项目，供 `list_sheets` 参与优先排序第 4 源 UNION）。
+
+> **语义**：owner 可授予任意已登录玩家为其项目的协管员；协管员拥有 tier B 常规写权限（协助日常协作），无 tier A 高危权限（不能删项目/改名/授权/归档）。关系 **per-sheet**（同一玩家在不同项目各自独立），不复用全局 `players.role`（admin/owner 是全服超管，语义不同）。owner 不能被设为自己项目的协管员（app 层守卫，422）。协管员可 self-revoke（`DELETE /sheets/{id}/managers/{self_uuid}`，无需 owner）。归档终态下协管员关系保留可读但不可增删（RS-10 archived 只读）。
+
 
 ### 10.4 项目生命周期状态机（迁移 0009）
 

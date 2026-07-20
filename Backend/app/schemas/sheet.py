@@ -12,6 +12,28 @@ class SheetPatchRequest(BaseModel):
     title: str = Field(min_length=1, max_length=128)
 
 
+class ManagerGrantRequest(BaseModel):
+    """``POST /sheets/{id}/managers``：授予协管员。
+
+    按 player_uuid 授予（MCDR 端先用 uuid_api_remake 把玩家名转 UUID 再调本端点）。
+    后端解析 target Player → ``web_account_id``；未绑 Web 账号 → 422（B7）。
+    目标 account == owner account → 409 ``SheetOwnerCannotBeManager``（B7）。
+    """
+
+    player_uuid: UUID
+
+
+class ManagerRevokeRequest(BaseModel):
+    """``DELETE /sheets/{id}/managers``：撤销协管员（account 锚）。
+
+    收 ``web_account_id``（非 player_uuid）以匹配存储模型；同一账号下任一 UUID
+    都可 self-revoke（B6 守卫：``player.web_account_id is not None`` 显式拒
+    None==None 误匹配——未绑账号玩家不能 self-revoke）。
+    """
+
+    web_account_id: int
+
+
 class RowUpsertRequest(BaseModel):
     """行 upsert / 更新请求（``PUT /sheets/{sid}/rows``，单端点按 row_id 分流）。
 
@@ -94,6 +116,24 @@ class RowContributor(BaseModel):
     contributed_qty: int
 
 
+class SheetManagerEntry(BaseModel):
+    """项目级协管员（迁移 0014，account 锚，R-5 落地）。
+
+    - ``web_account_id``：manager 锚定的 Web 账号 id（PK 一员）。
+    - ``display_name``：账号显示名（``WebAccount.display_name`` 优先，否则账号下
+      ``last_seen_at`` 最新 UUID 的 ``current_name``）——经
+      ``web_account_repo.resolve_account_briefs`` 解析。
+    - ``member_uuids``：账号下全部 UUID（含 inactive）；客户端按 viewer_uuids 做
+      交集判定 ``is_manager``（前端 auth store 持有绑定 UUIDs；MCDR sheet detail
+      持有 viewer_uuids），无需感知 account_id。
+    """
+
+    web_account_id: int
+    display_name: str
+    member_uuids: list[UUID]
+    granted_at: datetime
+
+
 class RowDetail(BaseModel):
     id: int
     item_name: str
@@ -129,6 +169,9 @@ class SheetDetail(SheetSummary):
     # 前端/MCDR 据此判断 owner/claimant 可见性（含同 account 多 UUID 共享权限）；
     # 真实权限仍以后端 RBAC 为准（R-9），此处仅服务可见性。
     viewer_uuids: list[UUID] = Field(default_factory=list)
+    # 项目协管员列表（迁移 0014，account 锚）；客户端按 member_uuids ∩ viewer_uuids
+    # 判定 is_manager。展示用 display_name；撤销传 web_account_id。
+    managers: list[SheetManagerEntry] = []
 
 
 class SheetItemIn(RowUpsertRequest):

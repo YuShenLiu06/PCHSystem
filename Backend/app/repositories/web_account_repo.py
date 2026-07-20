@@ -3,6 +3,7 @@
 含临时账号创建、注册（临时→永久）、UUID 挂接、聚合查询。
 """
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -148,3 +149,58 @@ async def resolve_display_name(
     """单条显示名解析（复用 :func:`resolve_display_names`）。"""
     names = await resolve_display_names(session, [player_uuid])
     return names.get(player_uuid, str(player_uuid))
+
+
+async def resolve_account_briefs(
+    session: AsyncSession,
+    account_ids: list[int],
+) -> dict[int, tuple[str, list[uuid.UUID]]]:
+    """按 Web 账号批量解析 ``(display_name, member_uuids)``。
+
+    供 ``SheetManagerEntry`` 列表组装（协管员显示名 + 成员 UUID）：
+    - ``display_name``：``WebAccount.display_name`` 非空 → 取之；否则 account 下
+      ``last_seen_at`` 最新 member 的 ``current_name``。
+    - ``member_uuids``：account 下全部 UUID（含 inactive），供客户端按 viewer_uuids
+      交集判定 is_manager（MCDR 仅持有 viewer_uuids，靠此无需知 account_id）。
+
+    入参为空返 ``{}``；account 无 member 时 member_uuids=[]、display_name 回退占位。
+    """
+    if not account_ids:
+        return {}
+
+    accounts = (
+        await session.execute(
+            select(WebAccount.id, WebAccount.display_name).where(
+                WebAccount.id.in_(account_ids)
+            )
+        )
+    ).all()
+    display_by_account: dict[int, str | None] = {a.id: a.display_name for a in accounts}
+
+    members = (
+        await session.execute(
+            select(
+                Player.web_account_id,
+                Player.uuid,
+                Player.current_name,
+                Player.last_seen_at,
+            ).where(Player.web_account_id.in_(account_ids))
+        )
+    ).all()
+
+    uuids_by_account: dict[int, list[uuid.UUID]] = {}
+    latest_by_account: dict[int, tuple[str, datetime]] = {}
+    for m in members:
+        uuids_by_account.setdefault(m.web_account_id, []).append(m.uuid)
+        cur = latest_by_account.get(m.web_account_id)
+        if cur is None or m.last_seen_at > cur[1]:
+            latest_by_account[m.web_account_id] = (m.current_name, m.last_seen_at)
+
+    result: dict[int, tuple[str, list[uuid.UUID]]] = {}
+    for aid in account_ids:
+        dn = display_by_account.get(aid)
+        if not dn:
+            latest = latest_by_account.get(aid)
+            dn = latest[0] if latest else f"账号#{aid}"
+        result[aid] = (dn, uuids_by_account.get(aid, []))
+    return result

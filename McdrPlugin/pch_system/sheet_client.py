@@ -147,6 +147,49 @@ def advance_sheet(
     return _request(cfg, "POST", f"/sheets/{sheet_id}/advance", player_uuid, params=params)
 
 
+# === sheets 协管员（manager，迁移 0014，account 锚）===
+# 后端契约（account 级，R-5）：
+#   POST   /sheets/{id}/managers body={player_uuid}            → 由后端解析 target account
+#   DELETE /sheets/{id}/managers body={web_account_id: int}    → self-revoke 放行当 aid==自己 aid
+#   GET    /sheets/{id}/managers                               → list[SheetManagerEntry]
+# SheetManagerEntry = {web_account_id:int, display_name:str, member_uuids:[UUID], granted_at}
+# 客户端 is_manager 判定靠 member_uuids ∩ viewer_uuids（见 messages._is_manager）。
+
+
+def list_managers(cfg: PchSystemConfig, player_uuid: str, sheet_id: int) -> SheetOutcome:
+    """GET /sheets/{sheet_id}/managers → list[SheetManagerEntry]（account 级）。
+
+    任意登录玩家可读（透明）。失败返回 None / HttpError。
+    """
+    return _request(cfg, "GET", f"/sheets/{sheet_id}/managers", player_uuid)
+
+
+def grant_manager(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, target_uuid: str) -> SheetOutcome:
+    """POST /sheets/{sheet_id}/managers {player_uuid} → list[SheetManagerEntry]。
+
+    owner/超管授予协管员（后端 RBAC；非 owner → 403）。返回刷新后的列表。
+    target_uuid 由调用方经 uuid_api_remake.get_uuid(name) 推导（RS-8）；
+    后端按 target_uuid 解析所属 web_account_id（未绑 account → 422）。
+    """
+    return _request(
+        cfg, "POST", f"/sheets/{sheet_id}/managers", player_uuid,
+        json_body={"player_uuid": target_uuid},
+    )
+
+
+def revoke_manager(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, target_account_id: int) -> SheetOutcome:
+    """DELETE /sheets/{sheet_id}/managers {web_account_id} → list[SheetManagerEntry]。
+
+    owner/超管撤销任意协管员；manager 可 self-revoke（后端按 _can_manage OR self 判定）。
+    account 级：``target_account_id`` 为目标 web_account_id（由调用方先 list_managers
+    按 member_uuids 解析得到），**非** UUID。
+    """
+    return _request(
+        cfg, "DELETE", f"/sheets/{sheet_id}/managers", player_uuid,
+        json_body={"web_account_id": int(target_account_id)},
+    )
+
+
 # === sheets 行级 ===
 
 def upsert_row(

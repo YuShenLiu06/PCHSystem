@@ -1,7 +1,7 @@
 """协作状态机 6 端点（原 sheets.py 块4）。
 
 account 级统一（R-5 主锚落地，2026-07-19）：
-- 权限校验升 account 级（``_can_edit`` / claimant 判断用 ``account_uuids``）。
+- tier B 权限经 ``_can_operate``（owner/超管/manager）；claimant 判断用 ``account_uuids``。
 - lock 行账号锁定：同 account 任一 UUID 认领的行，其他 UUID 可 deliver/release/reject。
 - 通知显示名用 ``resolve_display_name``（自定义昵称优先）；contributors 按 account 聚合，
   通知时展开 ``member_uuids``；recipient 与 actor 同 account 自动跳过。
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_account_uuids, get_current_player
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_operate,
     _load_sheet_or_404,
     _row_dict,
     _row_response,
@@ -149,7 +149,9 @@ async def release_row(
     is_claimant_in_account = (
         prev_claimant in account_uuids if prev_claimant is not None else False
     )
-    if not is_claimant_in_account and not _can_edit(sheet, player, account_uuids):
+    if not is_claimant_in_account and not _can_operate(
+        sheet, player, account_uuids
+    ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
     progress_contributors: list[tuple[int | None, str, list[uuid.UUID], int]] = []
@@ -230,7 +232,7 @@ async def reject_row(
     old_row = current[0]
     if (
         old_row.claimant_uuid not in account_uuids
-        and not _can_edit(sheet, player, account_uuids)
+        and not _can_operate(sheet, player, account_uuids)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
@@ -327,7 +329,7 @@ async def set_row_progress(
 ) -> RowDetail:
     """progress 行 owner 直接修正进度（绝对值，可增可减）。"""
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player, account_uuids):
+    if not _can_operate(sheet, player, account_uuids):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
     actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
     current = await sheet_repo.get_row(session, sheet_id, row_id)

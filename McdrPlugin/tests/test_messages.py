@@ -79,6 +79,22 @@ class FormatNotificationTest(unittest.TestCase):
         self.assertIn("[清单D] 的 [铁锭]", s)
         self.assertTrue(s.startswith("§c"), s)
 
+    def test_sheet_manager_granted(self):
+        n = {"category": "sheet_manager_granted", "payload": {"sheet_title": "202工程", "granted_by_name": "玩家A"}}
+        s = str(format_notification(n))
+        self.assertIn("玩家A", s)
+        self.assertIn("[202工程]", s)
+        self.assertIn("协管员", s)
+        self.assertTrue(s.startswith("§a"), s)  # 正向事件绿色
+
+    def test_sheet_manager_revoked(self):
+        n = {"category": "sheet_manager_revoked", "payload": {"sheet_title": "202工程", "revoked_by_name": "玩家A"}}
+        s = str(format_notification(n))
+        self.assertIn("玩家A", s)
+        self.assertIn("[202工程]", s)
+        self.assertIn("协管员", s)
+        self.assertTrue(s.startswith("§e"), s)  # 提醒事件黄色
+
     def test_unknown_category_falls_back_to_title(self):
         n = {"category": "some_future_event", "title": "某未来事件", "body": "详情"}
         s = str(format_notification(n))
@@ -103,7 +119,8 @@ class FormatRowLineTest(unittest.TestCase):
 
     def test_claimed_row_yellow(self):
         # progress 行：认领者列显示贡献者名单（非 claimant_name）
-        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 64, "delivered_qty": 32, "claimant_name": None, "contributors": [{"player_uuid": "x", "player_name": "B"}]}
+        # contributors account 级 shape：{account_id, display_name, member_uuids, contributed_qty}
+        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 64, "delivered_qty": 32, "claimant_name": None, "contributors": [{"account_id": 1, "display_name": "B", "member_uuids": ["x"], "contributed_qty": 32}]}
         s = format_row_line(row)
         self.assertIn("32个/1组", s)   # progress 数量=当前/需求（delivered=32→32个, need=64→1组）
         self.assertIn("B", s)  # 贡献者 B 渲染
@@ -111,7 +128,8 @@ class FormatRowLineTest(unittest.TestCase):
 
     def test_progress_row_shows_top_two_contributors_with_ellipsis(self):
         # 3 位贡献者（后端已按 contributed_qty desc 排序）：至多显 2 位 + 省略号
-        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 100, "delivered_qty": 90, "claimant_name": None, "contributors": [{"player_uuid": "a", "player_name": "甲"}, {"player_uuid": "b", "player_name": "乙"}, {"player_uuid": "c", "player_name": "丙"}]}
+        # contributors account 级 shape：{account_id, display_name, member_uuids, contributed_qty}
+        row = {"id": 3, "item_name": "i", "mode": 1, "status": "claimed", "need_qty": 100, "delivered_qty": 90, "claimant_name": None, "contributors": [{"account_id": 1, "display_name": "甲", "member_uuids": ["a"], "contributed_qty": 40}, {"account_id": 2, "display_name": "乙", "member_uuids": ["b"], "contributed_qty": 30}, {"account_id": 3, "display_name": "丙", "member_uuids": ["c"], "contributed_qty": 20}]}
         s = format_row_line(row)
         self.assertIn("甲", s)
         self.assertIn("乙", s)
@@ -152,10 +170,11 @@ class FormatRowLineTest(unittest.TestCase):
 
     def test_sub_row_progress_shows_delivered_over_need(self):
         # 子行 progress：数量段与顶层一致（当前/需求），仅多 └ 缩进前缀，无「每件×」
+        # contributors account 级 shape：{account_id, display_name, member_uuids, contributed_qty}
         row = {"id": 4175, "item_name": "石砖-test", "mode": 1, "status": "open",
                "need_qty": 10368, "delivered_qty": 3456, "claimant_name": None,
                "parent_row_id": 3999, "qty_per_unit": 1.5,
-               "contributors": [{"player_uuid": "u", "player_name": "A"}]}
+               "contributors": [{"account_id": 9, "display_name": "A", "member_uuids": ["u"], "contributed_qty": 3456}]}
         s = format_row_line(row)
         self.assertIn("└", s)              # 子行缩进前缀
         self.assertIn("2盒/6盒", s)        # delivered=3456→2盒, need=10368→6盒
@@ -280,10 +299,13 @@ class FormatRowClickableTest(unittest.TestCase):
         self.assertNotIn("[-]", s)
 
     def test_claimant_by_uuid_sees_done(self):
-        # UUID 路径（生产路径）：claimant_uuid 匹配 player_uuid 即认领人，名字不同也认
+        # R-5 account 级路径（生产路径）：viewer_uuids 含行的 claimant_uuid 即认领人，
+        # 名字不同也认（同 account 任一 UUID 都算本人）。
         row = self._row(status="claimed", mode=0, delivered_qty=10,
                         claimant_name="别的名字", claimant_uuid="abc-123")
-        rtl = format_row_clickable(row, 3, is_owner=False, player_uuid="abc-123")
+        rtl = format_row_clickable(
+            row, 3, is_owner=False, viewer_uuids={"abc-123"},
+        )
         s = str(rtl)
         self.assertIn("[完]", s)
         self.assertIn("[释]", s)

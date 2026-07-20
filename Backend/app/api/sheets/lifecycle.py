@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_account_uuids, get_current_player
 from app.api.sheets._shared import (
-    _can_edit,
+    _can_manage,
+    _can_operate,
     _load_sheet_or_404,
     _to_detail,
 )
@@ -56,7 +57,7 @@ def _infer_advance_target(current_status: str) -> str:
 async def _sheet_detail_or_404(
     session: AsyncSession, sheet_id: int, *, viewer_uuids: set[uuid.UUID]
 ):
-    """重新构造 SheetDetail（advance 后取最新 sheet + rows + contributors）。"""
+    """重新构造 SheetDetail（advance 后取最新 sheet + rows + contributors + managers）。"""
     result = await sheet_repo.get_sheet(session, sheet_id)
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
@@ -65,8 +66,13 @@ async def _sheet_detail_or_404(
     contributors_map = await sheet_repo.list_contributors(
         session, [r.id for r, _ in rows_with_names]
     )
-    return _to_detail(
-        sheet, rows_with_names, owner_name, contributors_map, viewer_uuids=viewer_uuids
+    return await _to_detail(
+        session,
+        sheet,
+        rows_with_names,
+        owner_name,
+        contributors_map,
+        viewer_uuids=viewer_uuids,
     )
 
 
@@ -80,17 +86,26 @@ async def advance_sheet_phase(
     player: Player = Depends(get_current_player),
     account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
 ) -> SheetDetail:
-    """项目阶段流转（owner/admin）。"""
+    """项目阶段流转。
+
+    tier 分流（迁移 0014）：归档（→archived）是 tier A 高危操作，仅 owner/超管；
+    进入施工（→constructing）是 tier B 常规操作，manager 也可触发。先按 target
+    分流权限，再做状态机校验——manager 调 ``?to=archived`` 立即收到 403，不被
+    先报 409 误导。
+    """
     if to is not None and to not in _VALID_ADVANCE_TARGETS:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"invalid 'to' target: {to} (expected constructing|archived)",
         )
     sheet = await _load_sheet_or_404(session, sheet_id)
-    if not _can_edit(sheet, player, account_uuids):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
-
     target = to if to is not None else _infer_advance_target(sheet.status)
+    if target == SHEET_PHASE_ARCHIVED:
+        if not _can_manage(sheet, player, account_uuids):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    else:
+        if not _can_operate(sheet, player, account_uuids):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
 
     if target == SHEET_PHASE_ARCHIVED:
         try:

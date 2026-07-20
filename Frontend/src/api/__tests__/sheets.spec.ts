@@ -31,6 +31,9 @@ import {
   rejectRow,
   advanceSheet,
   getSheetArchive,
+  listSheetManagers,
+  grantSheetManager,
+  revokeSheetManager,
 } from '../../api/sheets'
 
 const mocked = http as unknown as {
@@ -388,6 +391,43 @@ describe('sheets API client', () => {
       }
       const body = '# 标题\n- item: 64'
       expect(callArg.transformResponse(body)).toBe(body)
+    })
+  })
+
+  describe('协管员（manager）API', () => {
+    it('listSheetManagers: GET /sheets/{id}/managers', async () => {
+      mocked.get.mockResolvedValue({
+        data: [
+          {
+            web_account_id: 101,
+            display_name: 'bob',
+            member_uuids: ['u1'],
+            granted_at: 't',
+          },
+        ],
+      })
+      const result = await listSheetManagers(3)
+      expect(mocked.get).toHaveBeenCalledWith('/sheets/3/managers')
+      expect(result).toHaveLength(1)
+      expect(result[0]).toMatchObject({
+        web_account_id: 101,
+        display_name: 'bob',
+        member_uuids: ['u1'],
+      })
+    })
+
+    it('grantSheetManager: POST /sheets/{id}/managers {player_uuid}', async () => {
+      mocked.post.mockResolvedValue({ data: [] })
+      await grantSheetManager(3, 'uuid-bob')
+      expect(mocked.post).toHaveBeenCalledWith('/sheets/3/managers', { player_uuid: 'uuid-bob' })
+    })
+
+    it('revokeSheetManager: DELETE /sheets/{id}/managers body {web_account_id}（account 锚定）', async () => {
+      mocked.delete.mockResolvedValue({ data: [] })
+      await revokeSheetManager(3, 101)
+      expect(mocked.delete).toHaveBeenCalledWith('/sheets/3/managers', {
+        data: { web_account_id: 101 },
+      })
     })
   })
 })

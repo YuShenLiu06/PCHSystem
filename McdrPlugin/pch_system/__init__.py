@@ -37,6 +37,9 @@ from .sheet_commands import (
     _sheet_submit_oneclick,
     _sheet_addhand,
     _sheet_setreg,
+    _sheet_manager_list,
+    _sheet_manager_add,
+    _sheet_manager_remove,
 )
 
 CONFIG: PchSystemConfig = PchSystemConfig()
@@ -330,6 +333,23 @@ def _register_commands(server: PluginServerInterface):
             )
             # 通知
             .then(Literal("notify").then(Literal("list").runs(_sheet_notify_list)))
+            # 协管员（manager，迁移 0014）
+            .then(
+                Literal("manager")
+                .then(
+                    Integer("sheet_id")
+                    .runs(_sheet_manager_list)
+                    .then(Literal("list").runs(_sheet_manager_list))
+                    .then(
+                        Literal("add")
+                        .then(QuotableText("player_name").runs(_sheet_manager_add))
+                    )
+                    .then(
+                        Literal("remove")
+                        .then(QuotableText("player_name").runs(_sheet_manager_remove))
+                    )
+                )
+            )
         )
     )
     server.register_command(root)

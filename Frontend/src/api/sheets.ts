@@ -18,10 +18,23 @@ export interface SheetSummary {
   updated_at: string
 }
 
+/**
+ * 项目级协管员（迁移 0014，account 锚定）：由 owner 授予，协助管理日常协作（tier B 写权限）。
+ * R-5 升 account 级：锚定 web_account_id（不再是 player_uuid），同账号下任一 UUID 继承 manager。
+ * display_name + member_uuids 由后端按 account 解析，前端做 member_uuids ∩ viewer_uuids 判定。
+ */
+export interface SheetManagerEntry {
+  web_account_id: number
+  display_name: string
+  member_uuids: string[]
+  granted_at: string
+}
+
 export interface SheetDetail extends SheetSummary {
   rows: RowDetail[]
   // 当前查看者所属 Web 账号的全部 UUID（R-5：account 级可见性，含同账号多 UUID 共享权限）
   viewer_uuids: string[]
+  managers: SheetManagerEntry[]
 }
 
 // mode: 0=lock（锁定/二元备齐），1=progress（进度/聚合众筹，多人贡献者列表）
@@ -247,5 +260,41 @@ export async function getSheetArchiveAsset(id: number, filename: string): Promis
   const { data } = await http.get<Blob>(`/sheets/${id}/archive/assets/${filename}`, {
     responseType: 'blob',
   })
+  return data
+}
+
+// ---------- 协管员（manager，迁移 0014）----------
+
+/** GET /sheets/{id}/managers —— 列出协管员（任意登录玩家可读） */
+export async function listSheetManagers(id: number): Promise<SheetManagerEntry[]> {
+  const { data } = await http.get<SheetManagerEntry[]>(`/sheets/${id}/managers`)
+  return data
+}
+
+/** POST /sheets/{id}/managers —— owner/超管授予协管员（body {player_uuid}，后端解析 target web_account），返回刷新后的列表 */
+export async function grantSheetManager(id: number, playerUuid: string): Promise<SheetManagerEntry[]> {
+  const { data } = await http.post<SheetManagerEntry[]>(`/sheets/${id}/managers`, {
+    player_uuid: playerUuid,
+  })
+  return data
+}
+
+/** DELETE /sheets/{id}/managers —— owner/超管撤销（或 manager self-revoke），body {web_account_id}，返回刷新后的列表 */
+export async function revokeSheetManager(id: number, webAccountId: number): Promise<SheetManagerEntry[]> {
+  const { data } = await http.delete<SheetManagerEntry[]>(`/sheets/${id}/managers`, {
+    data: { web_account_id: webAccountId },
+  })
+  return data
+}
+
+/** 玩家简要信息（协管员授予联想用，/players 返回 shape） */
+export interface PlayerBrief {
+  player_uuid: string
+  player_name: string
+}
+
+/** GET /players?q=<prefix> —— 按玩家名前缀联想（任意登录玩家可调）。前端选中后内部传 uuid 调 grant。 */
+export async function searchPlayers(q: string): Promise<PlayerBrief[]> {
+  const { data } = await http.get<PlayerBrief[]>('/players', { params: { q } })
   return data
 }
