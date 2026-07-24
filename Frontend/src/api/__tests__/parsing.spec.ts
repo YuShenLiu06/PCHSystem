@@ -13,7 +13,7 @@ vi.mock('../../utils/http', () => ({
 
 // 导入必须在 mock 之后
 import { http } from '../../utils/http'
-import { previewLitematic, previewNbt } from '../../api/parsing'
+import { previewBatch } from '../../api/parsing'
 
 const mocked = http as unknown as {
   get: ReturnType<typeof vi.fn>
@@ -32,59 +32,40 @@ afterEach(() => {
 })
 
 describe('parsing API client', () => {
-  describe('previewLitematic', () => {
-    it('POST /parsing/litematic 带 FormData（含 file）', async () => {
-      const preview = {
-        meta: { filename: 'x.litematic', region_count: 1, total_blocks: 2, total_volume: 3 },
-        blocks: [{ item_id: 'minecraft:stone', item_name: '石头', count: 2 }],
-        container_items: [],
-        untranslated: [],
+  describe('previewBatch', () => {
+    it('POST /parsing/batch 带 FormData（重复 files 字段）+ 180s timeout', async () => {
+      const batch = {
+        files: [
+          {
+            filename: 'a.litematic',
+            kind: 'litematic',
+            status: 'ok',
+            preview: {
+              meta: { filename: 'a.litematic', region_count: 1, total_blocks: 1, total_volume: 1 },
+              blocks: [{ item_id: 'minecraft:stone', item_name: '石头', count: 1 }],
+              container_items: [],
+              untranslated: [],
+            },
+            error: null,
+          },
+        ],
       }
-      mocked.post.mockResolvedValue({ data: preview })
+      mocked.post.mockResolvedValue({ data: batch })
 
-      const file = new File([new Uint8Array([1, 2, 3])], 'x.litematic', {
-        type: 'application/octet-stream',
-      })
-      const result = await previewLitematic(file)
+      const f1 = new File([new Uint8Array([1])], 'a.litematic', { type: 'application/octet-stream' })
+      const f2 = new File([new Uint8Array([2])], 'b.nbt', { type: 'application/octet-stream' })
+      const result = await previewBatch([f1, f2])
 
       expect(mocked.post).toHaveBeenCalledTimes(1)
       const [url, body, config] = mocked.post.mock.calls[0]
-      expect(url).toBe('/parsing/litematic')
+      expect(url).toBe('/parsing/batch')
       expect(body).toBeInstanceOf(FormData)
-      expect((body as FormData).get('file')).toBe(file)
+      expect((body as FormData).getAll('files')).toEqual([f1, f2])
       expect(config).toEqual({
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
+        timeout: 180000,
       })
-      expect(result).toEqual(preview)
-    })
-  })
-
-  describe('previewNbt', () => {
-    it('POST /parsing/nbt 带 FormData（含 file）', async () => {
-      const preview = {
-        meta: { filename: 'x.nbt', region_count: 1, total_blocks: 2, total_volume: 3 },
-        blocks: [{ item_id: 'create:item_vault', item_name: '物品保管库', count: 2 }],
-        container_items: [],
-        untranslated: [],
-      }
-      mocked.post.mockResolvedValue({ data: preview })
-
-      const file = new File([new Uint8Array([1, 2, 3])], 'x.nbt', {
-        type: 'application/octet-stream',
-      })
-      const result = await previewNbt(file)
-
-      expect(mocked.post).toHaveBeenCalledTimes(1)
-      const [url, body, config] = mocked.post.mock.calls[0]
-      expect(url).toBe('/parsing/nbt')
-      expect(body).toBeInstanceOf(FormData)
-      expect((body as FormData).get('file')).toBe(file)
-      expect(config).toEqual({
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
-      })
-      expect(result).toEqual(preview)
+      expect(result).toEqual(batch)
     })
   })
 })
