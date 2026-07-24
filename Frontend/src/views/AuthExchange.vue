@@ -3,8 +3,8 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { exchangeToken } from '../api/identity'
+import { resolveDisplayName } from '../utils/identity'
 import { useAuthStore } from '../stores/auth'
-import { extractApiError } from '../utils/error'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,16 +31,18 @@ onMounted(async () => {
       resp.player,
       resp.account,
     )
-    ElMessage.success(`欢迎，${resp.player.name}`)
+    ElMessage.success(`欢迎，${resolveDisplayName(resp.account, resp.player)}`)
     // 临时账号引导注册，否则进 /me
     if (resp.account.is_temporary) {
       router.replace('/register')
     } else {
       router.replace('/me')
     }
-  } catch (e: unknown) {
-    status.value = 'error'
-    errorMsg.value = extractApiError(e) ?? '兑换失败'
+  } catch {
+    // 兑换失败（token 过期/无效/已用，或网络错误）→ 引导密码登录页
+    // （401 已被 http.ts 拦截器 auth.clear()，此处只负责导航 + 提示，不判断状态码，符合 RS-5）
+    ElMessage.warning('登录失败，请重新登录或重新获取链接')
+    router.replace('/login')
   }
 })
 </script>

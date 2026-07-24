@@ -22,12 +22,17 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
   (r) => r,
   (err: AxiosError) => {
-    // 401：清登录态跳 /auth（RS-5）。history 模式下 window.location.hash 不跳转，
+    // 401：清登录态（RS-5）。history 模式下 window.location.hash 不跳转，
     // 用 router.push 立即导航（路由守卫 beforeEach 兜底，未登录必落 /auth）。
     if (err.response?.status === 401) {
       const auth = useAuthStore()
       auth.clear()
-      router.push('/auth')
+      // /auth 是公开 token 兑换页，其 401 = 兑换失败（非受保护页会话失效）→
+      // 不重复 push（避免把用户推回当前页），由 AuthExchange catch 决定去向；
+      // 其余路由照旧回 /auth。
+      if (router.currentRoute.value.path !== '/auth') {
+        router.push('/auth')
+      }
       return Promise.reject(err)
     }
     // 后端不可达信号：直连无 response（连接拒 / 客户端超时，axios 层不可区分），

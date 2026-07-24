@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { passwordLogin } from '../../api/identity'
+import { resolveDisplayName } from '../../utils/identity'
 import { useAuthStore } from '../../stores/auth'
 import { extractApiError } from '../../utils/error'
 
@@ -39,7 +40,7 @@ async function onLogin(): Promise<void> {
       resp.player,
       resp.account,
     )
-    ElMessage.success(`欢迎，${resp.player.name}`)
+    ElMessage.success(`欢迎，${resolveDisplayName(resp.account, resp.player)}`)
     router.replace('/me')
   } catch (e: unknown) {
     ElMessage.error(extractApiError(e) ?? '登录失败')
@@ -72,6 +73,7 @@ async function onLogin(): Promise<void> {
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :loading="loading" @click="onLogin">登录</el-button>
+        <el-button text @click="router.push('/register')">没有账号？去注册</el-button>
       </el-form-item>
     </el-form>
   </el-card>
