@@ -19,7 +19,12 @@
 
 ### Fixed
 
-- _暂无_
+- **前端登录链路修复**（issue #34 #35，commit `cc12517` + `1977f35`）：
+  - 登录欢迎语改用 `resolveDisplayName(account, player)`（display_name → username → 游戏名 → 空串），不再误读 `player.name`（#35）
+  - 过期 token 重定向修复：`http.ts` 401 拦截器加 `meta.public` 感知，公开页（`/auth` `/login` `/register`）的 401 只 clear 不 push，避免推去 `/auth` 再 replace 回 `/login` 的表单清空 + 闪烁（#34）
+  - `AuthExchange` 网络错误不再弹误导性「登录失败」：抽 `isNoBackendError`（`utils/http-error.ts`，与拦截器同源），后端宕机 / 反代 5xx 时只留拦截器「后端超时」提示，仍引导 `/login`
+  - `resolveDisplayName` 用 `||` 非 `??`：display_name 空串时回退 username（原显示「欢迎，」）
+  - `Login` / `Register` 补「去注册 / 返回登录」互跳入口
 
 ### Security
 
