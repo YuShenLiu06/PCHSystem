@@ -1,4 +1,5 @@
 import axios, { AxiosError } from 'axios'
+import { isNoBackendError } from './http-error'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { router } from '../router'
@@ -22,20 +23,22 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
   (r) => r,
   (err: AxiosError) => {
-    // 401：清登录态跳 /auth（RS-5）。history 模式下 window.location.hash 不跳转，
+    // 401：清登录态（RS-5）。history 模式下 window.location.hash 不跳转，
     // 用 router.push 立即导航（路由守卫 beforeEach 兜底，未登录必落 /auth）。
     if (err.response?.status === 401) {
       const auth = useAuthStore()
       auth.clear()
-      router.push('/auth')
+      // 公开页（/auth /login /register，均 meta.public）的 401 = 凭证错误而非会话失效 →
+      // 不重复 push（否则 /login 输错密码会被推去 /auth、再 replace 回 /login，表单清空 + 闪烁），
+      // 由对应页面自身 catch 决定去向；受保护页照旧回 /auth（路由守卫兜底）。
+      if (!router.currentRoute.value.meta?.public) {
+        router.push('/auth')
+      }
       return Promise.reject(err)
     }
-    // 后端不可达信号：直连无 response（连接拒 / 客户端超时，axios 层不可区分），
-    // 或经 web 反代时 backend 不可达（nginx 返 502/503/504）。统一一个分支 + 文案
-    // （需求 1+3 合并：玩家动作一致——!!PCH status 排查）。
-    const status = err.response?.status
-    const noBackend = !err.response || status === 502 || status === 503 || status === 504
-    if (noBackend) {
+    // 后端不可达信号：复用 isNoBackendError（直连无 response / 反代 502/503/504）。
+    // 统一文案（需求 1+3 合并：玩家动作一致——!!PCH status 排查）。
+    if (isNoBackendError(err)) {
       const now = Date.now()
       if (now - lastNetErrAt > NET_ERR_THROTTLE_MS) {
         lastNetErrAt = now

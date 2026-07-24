@@ -79,6 +79,7 @@ function goToClaim(): void {
       <el-form-item>
         <el-button type="primary" :loading="loading" @click="onRegister">注册</el-button>
         <el-button @click="goToClaim">已有账号？绑定</el-button>
+        <el-button text @click="router.push('/login')">返回登录</el-button>
       </el-form-item>
     </el-form>
   </el-card>
