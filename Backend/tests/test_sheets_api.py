@@ -1234,23 +1234,80 @@ async def test_advance_sheet_already_archived_409(client, tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_advance_sheet_archived_triggers_notification(client, tmp_path, monkeypatch):
-    # Arrange
+    # Arrange：owner alice + progress 行 + 贡献者 bob
     _patch_archive_root(monkeypatch, tmp_path)
     u, bearer = await _make_player("alice")
     sid = (await client.post("/sheets", json={"title": "通知"}, headers=_auth(bearer))).json()["id"]
-    # Act
+    row = await _upsert_row(client, bearer, sid, item="圆石", need=999, mode=1)
+    bob_uuid, bob_bearer = await _make_player("bob")
+    assert (
+        await client.post(
+            f"/sheets/{sid}/rows/{row['id']}/contribute",
+            json={"qty": 30},
+            headers=_auth(bob_bearer),
+        )
+    ).status_code == 200
+    # Act：owner 自归档
     resp = await client.post(f"/sheets/{sid}/advance?to=archived", headers=_auth(bearer))
     assert resp.status_code == 200
-    # Assert：notifications 表有一条 sheet_archived（owner 自归档 → actor==recipient，
-    # notification_service.notify 仍写入；ack 时由 MCDR 拉）
+    # Assert：owner 同 account 跳过（0 条）；贡献者 bob 收到 sheet_archived（issue #4）
     from app.core.db import async_session_factory
     from app.models.notification import Notification
     from sqlalchemy import select
     async with async_session_factory() as s:
-        notifs = (
-            await s.execute(select(Notification).where(Notification.recipient_uuid == u))
-        ).scalars().all()
-    assert any(n.category == "sheet_archived" for n in notifs)
+        all_notifs = list((await s.execute(select(Notification))).scalars().all())
+    # 只看归档通知（bob contribute 时还会给 owner 发 sheet_delivered，属既定行为）
+    archived = [n for n in all_notifs if n.category == "sheet_archived"]
+    by_recipient = {n.recipient_uuid: n for n in archived}
+    assert u not in by_recipient  # owner 自归档不通知自己
+    assert bob_uuid in by_recipient
+
+
+@pytest.mark.asyncio
+async def test_advance_to_constructing_notifies_participants_and_skips_actor(client):
+    """collecting→constructing 通知全体参与者，触发者（owner）同 account 跳过（issue #4）。"""
+    # Arrange：owner alice + lock 行（bob 认领）+ progress 行（carol 贡献）
+    _, alice_bearer = await _make_player("alice")
+    sid = (
+        await client.post("/sheets", json={"title": "施工"}, headers=_auth(alice_bearer))
+    ).json()["id"]
+    lock_row = await _upsert_row(client, alice_bearer, sid, item="铁锭", need=64, mode=0)
+    prog_row = await _upsert_row(client, alice_bearer, sid, item="圆石", need=128, mode=1)
+    bob_uuid, bob_bearer = await _make_player("bob")
+    carol_uuid, carol_bearer = await _make_player("carol")
+    assert (
+        await client.post(
+            f"/sheets/{sid}/rows/{lock_row['id']}/claim", headers=_auth(bob_bearer)
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            f"/sheets/{sid}/rows/{prog_row['id']}/contribute",
+            json={"qty": 10},
+            headers=_auth(carol_bearer),
+        )
+    ).status_code == 200
+    # Act：owner alice 推进施工
+    resp = await client.post(
+        f"/sheets/{sid}/advance?to=constructing", headers=_auth(alice_bearer)
+    )
+    assert resp.status_code == 200, resp.text
+    # Assert：bob + carol 各收一条 sheet_advanced_constructing；alice（actor）跳过
+    from app.core.db import async_session_factory
+    from app.models.notification import Notification
+    from sqlalchemy import select
+    async with async_session_factory() as s:
+        notifs = list(
+            (
+                await s.execute(
+                    select(Notification).where(
+                        Notification.category == "sheet_advanced_constructing"
+                    )
+                )
+            ).scalars().all()
+        )
+    recipients = {n.recipient_uuid for n in notifs}
+    assert recipients == {bob_uuid, carol_uuid}
 
 
 @pytest.mark.asyncio

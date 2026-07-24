@@ -9,7 +9,7 @@
 - 入口对 title/body 做限长 + 控制字符清洗，payload 序列化后 >8KB 截断（M-2/M-3）。
 """
 import json
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Iterable, Protocol, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,6 +95,36 @@ async def notify(
     for notifier in NOTIFIERS:
         notifier.notify(record)
     return record
+
+
+async def notify_many(
+    session: AsyncSession,
+    recipients: Iterable[UUID],
+    *,
+    skip_uuids: set[UUID] | None,
+    category: str,
+    title: str,
+    body: str,
+    payload: dict[str, Any] | None = None,
+) -> int:
+    """批量通知（services 层低阶原语）：``recipients`` 中跳过 ``skip_uuids``，逐条调 ``notify``。
+
+    与 ``app.api.sheets._shared.notify_uuids`` 的分工：本函数**不注入** actor 字段，
+    ``payload`` 由调用方自构（services 层如归档服务用）；``notify_uuids`` 在 api 层用，
+    自动注入 ``actor_uuid``/``actor_name`` + 同 account 跳过。二者独立共存，互不委托
+    （避免影响 ``notify_uuids`` 现有调用方）。
+
+    同 ``notify``：不 commit，由调用方事务统一 commit / rollback（RS-9 原子）。
+    返回实际写入条数（跳过后）。``recipients`` 为空或全被跳过 → return 0。
+    """
+    skip = skip_uuids or set()
+    sent = 0
+    for recipient_uuid in recipients:
+        if recipient_uuid in skip:
+            continue
+        await notify(session, recipient_uuid, category, title, body, payload)
+        sent += 1
+    return sent
 
 
 async def fetch_pending(

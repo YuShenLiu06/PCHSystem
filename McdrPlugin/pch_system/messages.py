@@ -561,7 +561,9 @@ def format_owner_footer(sheet_id, status: str = "collecting", *, is_owner: bool 
 #   sheet_rejected / sheet_qty_changed / sheet_row_deleted /
 #   sheet_progress_changed（owner 调整 progress 进度→贡献者）/ sheet_progress_reset（owner 解除/换模式清贡献者→贡献者）
 #   sheet_manager_granted（owner 授予协管员→被授予者）/ sheet_manager_revoked（owner 撤销协管员→被撤销者；self-revoke 不通知）
-# §码：成功 §a、提醒 §e、打回/删除 §c
+#   sheet_advanced_constructing（owner/manager 推进施工→全体参与者；触发者跳过，issue #4）
+#   sheet_archived（归档→全体参与者；触发者跳过，issue #4）
+# §码：成功 §a、提醒 §e、打回/删除 §c、阶段流转 §b（施工）/ §7（归档终态）
 _NOTIFY_TEMPLATES = {
     "sheet_claimed": "§a{actor} 认领了 [{sheet_title}] 的 [{item}]",
     "sheet_delivered": "§e{actor} 上报交付 {delivered}/{need} [{sheet_title}] 的 [{item}]",
@@ -574,6 +576,8 @@ _NOTIFY_TEMPLATES = {
     "sheet_progress_reset": "§e[{sheet_title}] 的 [{item}] 进度已被 {actor} 重置，贡献清空",
     "sheet_manager_granted": "§a{granted_by_name} 将你设为 [{sheet_title}] 的协管员",
     "sheet_manager_revoked": "§e{revoked_by_name} 取消了你 [{sheet_title}] 的协管员身份",
+    "sheet_advanced_constructing": "§b[{sheet_title}] 已进入施工阶段（由 {actor} 推进）",
+    "sheet_archived": "§7[{sheet_title}] 已归档（由 {actor}）",
 }
 _NOTIFY_DEFAULT = "§7{title}"
 

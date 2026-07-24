@@ -95,6 +95,24 @@ class FormatNotificationTest(unittest.TestCase):
         self.assertIn("协管员", s)
         self.assertTrue(s.startswith("§e"), s)  # 提醒事件黄色
 
+    def test_sheet_advanced_constructing(self):
+        # 阶段流转→施工（issue #4）：青色 §b，含 actor + sheet_title
+        n = {"category": "sheet_advanced_constructing", "payload": {"actor_name": "玩家A", "sheet_title": "202工程"}}
+        s = str(format_notification(n))
+        self.assertIn("[202工程]", s)
+        self.assertIn("施工", s)
+        self.assertIn("玩家A", s)
+        self.assertTrue(s.startswith("§b"), s)
+
+    def test_sheet_archived(self):
+        # 归档（issue #4）：灰色 §7 终态，含 actor + sheet_title（不再走 fallback）
+        n = {"category": "sheet_archived", "payload": {"actor_name": "玩家A", "sheet_title": "202工程"}}
+        s = str(format_notification(n))
+        self.assertIn("[202工程]", s)
+        self.assertIn("归档", s)
+        self.assertIn("玩家A", s)
+        self.assertTrue(s.startswith("§7"), s)
+
     def test_unknown_category_falls_back_to_title(self):
         n = {"category": "some_future_event", "title": "某未来事件", "body": "详情"}
         s = str(format_notification(n))
