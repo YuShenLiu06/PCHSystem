@@ -15,21 +15,15 @@
 
 ### Added
 
-- **后端 批量解析端点（issue #16）**：新增 `POST /parsing/batch`——一次上传 1..N 个 `.litematic`/`.nbt`（可混合）→ 每文件独立预览（成功/失败隔离，单文件失败不中断整批）。护栏 `parsing_batch_max_files`（默认 10）/ `parsing_batch_total_max_bytes`（默认 100MB）。后端只解析、不收 multiplier（倍数与跨文件聚合在前端做）。
-- **前端 批量解析视图（issue #16）**：新增 `BatchImport.vue`（`/parsing/batch`，**唯一解析入口**）——多文件上传 + 每文件整数倍数（建造份数）+ 可编辑源头数量；纯函数 `utils/batchAggregate.ts::aggregateItems`（按 registry id 跨文件求和、撞名消歧防 409）；聚合为单一材料清单，一次生成单张项目表。每文件材料表 `el-table :max-height` 嵌套滚动防大投影撑长整页；`total_blocks` 显示改用公共 `formatQty`（个/组/盒）。
+- _暂无_
 
 ### Changed
 
-- **BREAKING（解析端点合并）**：删除 `POST /parsing/litematic` 与 `POST /parsing/nbt`，统一由 `POST /parsing/batch` 承载（batch 已完全覆盖混型/单文件，单文件等价于批量 1 个）。前端同步移除单文件视图 `LitematicImport.vue`、路由 `/parsing/litematic`、导航与 `previewLitematic`/`previewNbt` 客户端函数。解析失败错误契约由「整请求 400/422」改为「200 + per-file `status=error`（不泄漏内部 NBT 键）」。
+- _暂无_
 
 ### Fixed
 
-- **前端登录链路修复**（issue #34 #35，commit `cc12517` + `1977f35`）：
-  - 登录欢迎语改用 `resolveDisplayName(account, player)`（display_name → username → 游戏名 → 空串），不再误读 `player.name`（#35）
-  - 过期 token 重定向修复：`http.ts` 401 拦截器加 `meta.public` 感知，公开页（`/auth` `/login` `/register`）的 401 只 clear 不 push，避免推去 `/auth` 再 replace 回 `/login` 的表单清空 + 闪烁（#34）
-  - `AuthExchange` 网络错误不再弹误导性「登录失败」：抽 `isNoBackendError`（`utils/http-error.ts`，与拦截器同源），后端宕机 / 反代 5xx 时只留拦截器「后端超时」提示，仍引导 `/login`
-  - `resolveDisplayName` 用 `||` 非 `??`：display_name 空串时回退 username（原显示「欢迎，」）
-  - `Login` / `Register` 补「去注册 / 返回登录」互跳入口
+- _暂无_
 
 ### Security
 
@@ -38,6 +32,41 @@
 ### Docs
 
 - _暂无_
+
+---
+
+## [backend-v0.8.0] - 2026-07-25
+
+解析端点合并为单一批量端点。**破坏性变更：删除旧的单文件解析端点。**
+
+### Added
+
+- **批量解析**：一次上传多个投影 / 蓝图文件（可混合 `.litematic` 与 `.nbt`），每个文件独立预览，单文件解析失败不影响整批。
+
+### Changed
+
+- **BREAKING（解析端点合并）**：删除 `POST /parsing/litematic` 与 `POST /parsing/nbt`，统一由 `POST /parsing/batch` 承载（单文件等价于批量 1 个）。解析失败不再整请求报错，改为每文件独立返回成功 / 失败状态。
+
+---
+
+## [frontend-v0.8.0] - 2026-07-25
+
+解析页升级为批量入口，修复登录链路三处问题。**破坏性变更：移除旧的单文件解析页。**
+
+### Added
+
+- **批量解析页**：上传多个投影 / 蓝图，为每文件设建造份数（整数倍数），可调整源头数量；系统跨文件按物品汇总成一份材料清单，一次生成一张项目表。
+
+### Changed
+
+- **BREAKING**：移除单文件解析页，统一由新的批量解析页承载（单文件等价于批量 1 个）。
+
+### Fixed
+
+- **登录链路修复**：
+  - 登录后的欢迎语正确显示账号昵称 / 用户名，不再显示空白。
+  - 在登录 / 注册页时 token 过期不再清空表单并闪烁跳转。
+  - 后端不可用时不再误报「登录失败」，只提示网络异常并引导重试。
 
 ---
 
