@@ -138,6 +138,8 @@ bash Scripts/install.sh
 
 自动完成：检测/安装 Docker、国内网络镜像自适应、生成配置（含强随机密钥）、起容器 + 跑数据库迁移、构建前端、把 `pch_system` 拷到你的 MCDR `plugins/` 并填好 `service_token`。完整选项与边界见 [`Scripts/README.md`](../Scripts/README.md)。
 
+**智能检测**：在 **游戏内** 使用 `!!PCH status` 检验是否正确部署
+
 ### B. 手动部署
 
 按 [`Docs/RUNBOOK.md`](../Docs/RUNBOOK.md) §3：

@@ -40,6 +40,8 @@ bash Scripts/install.sh          # 交互式首次安装（询问 MCDR 路径等
 bash Scripts/update.sh           # 之后日常更新
 ```
 
+**智能检测**：在 **游戏内** 使用 `!!PCH status` 检验是否正确部署
+
 > 必须在仓库内执行；安装 Docker 需免密 sudo 或 root，装完 `newgrp docker` 后重跑（幂等）。
 
 **`install.sh` 关键选项**：`--edge`（拉 main 最新，默认拉最新发版 tag）/ `--yes`（无人值守）/ `--mcdr-root DIR` / `--mcdr-api-url URL` / `--no-web`（禁用 web 容器，走宿主 nginx）/ `--no-mcdr` / `--no-sync`。
