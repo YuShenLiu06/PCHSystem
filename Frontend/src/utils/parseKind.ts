@@ -1,5 +1,5 @@
 // 解析文件类型判定：依文件名扩展名把上传文件路由到对应后端解析端点。
-// 仅做边界 UX 校验，后端（/parsing/litematic、/parsing/nbt）仍按扩展名二次校验为最终权威（RS-2）。
+// 仅做边界 UX 校验，后端（/parsing/batch 唯一端点，内部按扩展名分派）仍按扩展名二次校验为最终权威（RS-2）。
 
 export type ParseKind = 'litematic' | 'nbt'
 
