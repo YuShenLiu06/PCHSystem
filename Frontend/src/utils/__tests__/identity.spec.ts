@@ -16,12 +16,23 @@ describe('resolveDisplayName', () => {
     expect(resolveDisplayName(account, player)).toBe('史蒂夫')
   })
 
-  it('display_name 为空时回退到 username（#35：密码登录应显示用户名而非游戏名）', () => {
+  it('display_name 为 null 时回退到 username（#35：密码登录应显示用户名而非游戏名）', () => {
     const account: AccountBrief = {
       id: 1,
       is_temporary: false,
       username: 'steve',
       display_name: null,
+      role: 'user',
+    }
+    expect(resolveDisplayName(account, player)).toBe('steve')
+  })
+
+  it('display_name 为空串时也回退到 username（?? 不兜底空串，改 ||）', () => {
+    const account: AccountBrief = {
+      id: 1,
+      is_temporary: false,
+      username: 'steve',
+      display_name: '',
       role: 'user',
     }
     expect(resolveDisplayName(account, player)).toBe('steve')

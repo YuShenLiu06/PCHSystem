@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { exchangeToken } from '../api/identity'
 import { resolveDisplayName } from '../utils/identity'
+import { isNoBackendError } from '../utils/http-error'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -38,10 +39,14 @@ onMounted(async () => {
     } else {
       router.replace('/me')
     }
-  } catch {
-    // 兑换失败（token 过期/无效/已用，或网络错误）→ 引导密码登录页
-    // （401 已被 http.ts 拦截器 auth.clear()，此处只负责导航 + 提示，不判断状态码，符合 RS-5）
-    ElMessage.warning('登录失败，请重新登录或重新获取链接')
+  } catch (e: unknown) {
+    // 401 已被 http.ts 拦截器 auth.clear()。此处只负责导航 + 提示。
+    // 网络错误（后端宕机 / 反代 5xx）：http.ts 已弹「后端超时或未部署」，此处借
+    // isNoBackendError（与拦截器同源）识别，跳过误导性「登录失败」，仍引导 /login（后端恢复可重试）。
+    // RS-5 仍守：不散判 e.response.status，仅复用拦截器同源 helper 做网络层 vs 后端响应二分。
+    if (!isNoBackendError(e)) {
+      ElMessage.warning('登录失败，请重新登录或重新获取链接')
+    }
     router.replace('/login')
   }
 })
