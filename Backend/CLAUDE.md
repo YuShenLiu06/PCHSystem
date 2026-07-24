@@ -66,8 +66,7 @@ FastAPI 模块化单体：单库单服务，内部按 schema 隔离（`users / p
 | `GET /notifications/pending` | MCDR 轮询拉取未投递通知（service-token，query `player_uuid`） |
 | `POST /notifications/ack` | 批量标**该 player_uuid 名下**通知投递（service-token，body `{player_uuid, ids:[…]}`，C-1 防越权） |
 | `POST /notifications/{id}/read` | 标已读（service-token，query `player_uuid` 归属校验，跨玩家 404；L-2 同步幂等置 delivered_at） |
-| `POST /parsing/litematic` | Web 上传 `.litematic` → litemapy 解析 + 中文翻译 → 分组预览（不落库）。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
-| `POST /parsing/nbt` | Web 上传 `.nbt`（Create 蓝图 / 原版 structure）→ nbtlib 解析 + 中文翻译 → 分组预览（不落库）。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
+| `POST /parsing/batch` | Web **唯一解析端点**：上传 1..N 个 `.litematic`/`.nbt`（混型）→ 每文件独立预览（成功/失败隔离；只解析、不收 multiplier）。护栏 `parsing_batch_max_files`/`parsing_batch_total_max_bytes`。详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) §8 |
 | `POST /sheets/from-items` | 一次性建表 + 批量行（`mode` 默认 lock），用于「投影解析→生成表格」 |
 | `POST /sheets/{id}/advance?to=` | 项目阶段流转（owner/admin，缺省按状态机推进；`to=archived` 走归档服务写盘+通知）。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §5.2 |
 | `GET /sheets/{id}/archive` | 读归档 markdown（`text/markdown`；未归档/文件缺失 → 404） |

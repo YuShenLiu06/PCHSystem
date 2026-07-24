@@ -15,7 +15,12 @@
 
 ### Added
 
-- _暂无_
+- **后端 批量解析端点（issue #16）**：新增 `POST /parsing/batch`——一次上传 1..N 个 `.litematic`/`.nbt`（可混合）→ 每文件独立预览（成功/失败隔离，单文件失败不中断整批）。护栏 `parsing_batch_max_files`（默认 10）/ `parsing_batch_total_max_bytes`（默认 100MB）。后端只解析、不收 multiplier（倍数与跨文件聚合在前端做）。
+- **前端 批量解析视图（issue #16）**：新增 `BatchImport.vue`（`/parsing/batch`，**唯一解析入口**）——多文件上传 + 每文件整数倍数（建造份数）+ 可编辑源头数量；纯函数 `utils/batchAggregate.ts::aggregateItems`（按 registry id 跨文件求和、撞名消歧防 409）；聚合为单一材料清单，一次生成单张项目表。每文件材料表 `el-table :max-height` 嵌套滚动防大投影撑长整页；`total_blocks` 显示改用公共 `formatQty`（个/组/盒）。
+
+### Changed
+
+- **BREAKING（解析端点合并）**：删除 `POST /parsing/litematic` 与 `POST /parsing/nbt`，统一由 `POST /parsing/batch` 承载（batch 已完全覆盖混型/单文件，单文件等价于批量 1 个）。前端同步移除单文件视图 `LitematicImport.vue`、路由 `/parsing/litematic`、导航与 `previewLitematic`/`previewNbt` 客户端函数。解析失败错误契约由「整请求 400/422」改为「200 + per-file `status=error`（不泄漏内部 NBT 键）」。
 
 ### Fixed
 

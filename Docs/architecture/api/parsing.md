@@ -20,18 +20,17 @@
 
 | 方法 | 路径 | 鉴权 | body | 成功 | 说明 |
 |---|---|---|---|---|---|
-| POST | `/parsing/litematic` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.litematic`） | 200 `ParsedMaterialPreview` | 解析 Litematica 投影 + 翻译，返回方块组 + 容器组预览；不落库 |
-| POST | `/parsing/nbt` | `get_current_player`（JWT·Web） | `multipart/form-data`：`file`（`.nbt`） | 200 `ParsedMaterialPreview` | 解析 Create 蓝图/structure .nbt + 翻译，返回方块组 + 容器组预览；不落库 |
+| POST | `/parsing/batch` | `get_current_player`（JWT·Web） | `multipart/form-data`：`files`（1..N 个 `.litematic`/`.nbt`，可混合） | 200 `BatchParsedPreview` | **唯一解析端点**（2026-07-24 起单/多文件统一入口，原 `/parsing/litematic` + `/parsing/nbt` 已删除）：一次上传 1~N 文件 → 每文件独立预览（成功/失败隔离）。后端**只解析、不收 multiplier**——倍数与跨文件聚合在前端做（便于随时调倍数无需重传）。单文件等价于批量 1 个文件。见 §8 |
 | POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。**迁移 0012 起**：`SheetItemIn` schema 现接受可选 `parent_row_id`/`qty_per_unit`（子物品嵌套字段，投影解析流程不发送，仅手动录入时使用）；每条均为新建，**禁止携带 `row_id`**（否则 422）。见 [`sheets.md`](./sheets.md) |
 
-- 上限：`.litematic` ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`.nbt` ≤ `NBT_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。
+- 上限：`.litematic` ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`.nbt` ≤ `NBT_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。`/parsing/batch` 额外：文件数 ≤ `PARSING_BATCH_MAX_FILES`（默认 10）、全部文件字节之和 ≤ `PARSING_BATCH_TOTAL_MAX_BYTES`（默认 100MB，单文件 50MB 上限之上的整请求二次护栏）。
 - 解析为 CPU 密集，跑在 `asyncio.to_thread`（RS-7，不阻塞事件循环）。
-- 错误码：
+- 错误码（统一走 `/parsing/batch`，per-file 隔离——多数失败为 200 + 该项 `status="error"`）：
   - 401：未鉴权
-  - 400：扩展名非法（`.litematic`/`.nbt` 之外）/ 空文件
-  - 413：文件超限
-  - 422（`.litematic`）：litemapy 解析失败（损坏或非 litematic NBT）
-  - 422（`.nbt`）：nbtlib 解析失败（损坏或非 structure NBT）
+  - 400：文件数 > `PARSING_BATCH_MAX_FILES`（整请求）
+  - 413：全部文件字节之和 > `PARSING_BATCH_TOTAL_MAX_BYTES`（整请求）
+  - 422：未提供 `files` 字段（FastAPI `field required`）
+  - **200 + 该项 `status="error"`**：扩展名非法 / 空文件 / 单文件超 50MB / 解析失败（损坏或非投影 NBT）。`error` 为玩家可读中文文案，**不泄露内部异常**（如 NBT 键名）；其余文件不受影响、整批仍 200
 
 ---
 
@@ -137,12 +136,29 @@ Backend/app/services/parsing/
         └── create.zh_cn.json      # Create 6.0.8（1.20.1）
 ```
 
-- 路由：`app/api/parsing.py`；schema：`app/schemas/parsing.py`；配置：`app/core/config.py`（`litematic_max_upload_bytes` / `nbt_max_upload_bytes`）。
-- 测试：`tests/test_parsing_unit.py`（parser + translator）、`tests/test_parsing_api.py`（端点 + 鉴权 + 错误码）、`tests/test_sheets_from_items.py`（批量建表）。
+- 路由：`app/api/parsing.py`；schema：`app/schemas/parsing.py`；配置：`app/core/config.py`（`litematic_max_upload_bytes` / `nbt_max_upload_bytes` / `parsing_batch_max_files` / `parsing_batch_total_max_bytes`）。
+- 测试：`tests/test_parsing_unit.py`（parser + translator）、`tests/test_parsing_batch_api.py`（唯一端点 `/parsing/batch`：鉴权 + 错误码 + per-file 隔离 + 护栏 + 单文件 Create 蓝图 + 不泄漏 NBT 键）、`tests/test_sheets_from_items.py`（批量建表）。
 - 测试件：`tests/fixtures/create_blueprint_sample.nbt`（Create 蓝图样例，132 非空方块，15 种，container 为空）。
 
 ---
 
-*最后更新：2026-07-10（文档审计对齐实现：§2 `POST /sheets/from-items` 补「SheetItemIn 禁止携带 row_id」；§4/§7 标注翻译器入口迁至共享 `app/services/translation.py::get_translator()`，`preview.py` 的 `get_default_translator` 降级为 re-export——两解析端点行为不变）*
+## 8. 批量解析 `POST /parsing/batch`（issue #16）
+
+**场景**：单一项目需建造 N 份同一投影，或由多个子投影组成——一次上传多个文件、每个设整数**倍数（建造份数）**，聚合为**单张项目表**。
+
+**契约要点**：
+- 请求：`multipart/form-data`，重复 `files` 字段（N 个 `.litematic`/`.nbt`，可混合）。
+- 响应 `BatchParsedPreview{files: [BatchFilePreview]}`：每文件独立 `{filename, kind, status: "ok"|"error", preview: ParsedMaterialPreview | null, error: string | null}`。
+- **per-file error isolation**：单文件解析失败仅该项 `status="error"` + 玩家可读中文文案（原始异常仅服务端日志），不中断整批（整批仍 200）。
+- **后端不收 multiplier**：倍数是纯 UI 概念，前端聚合时应用（`Frontend/src/utils/batchAggregate.ts::aggregateItems`）——便于随时调倍数无需重新上传。
+- 执行：阶段1（async）逐文件 `read()` + 单文件级校验（扩展名/非空/单文件大小）+ 总字节护栏；阶段2（单个 `asyncio.to_thread`，内部顺序循环）逐文件解析，per-file `try/except` 隔离。所有文件字节同时在内存（≤100MB，MVP 可接受）。
+
+**前端聚合 → 生成单表**（`Frontend/src/views/parsing/BatchImport.vue`，**唯一解析视图**——原单文件页 `LitematicImport.vue` 已删）：展平各文件 `blocks` + `container_items`，按 `item_id`（registry id）分组求和 `count × 该文件倍数`，`item_name` 优先取已翻译名；**撞名消歧**（不同 item_id 译名相同时追加 ` ({item_id})`，防 from-items 重名 409）；一次 `POST /sheets/from-items` 生成单张项目表（方块与容器物品合并为单一材料清单）。聚合超过 2000 种时禁用生成。每文件材料表用 `el-table :max-height` 固定高度、内部滚动（嵌套滚动条，防大投影撑长整页）；`total_blocks` 显示改用公共 `formatQty`（个/组/盒）。
+
+---
+
+*最后更新：2026-07-24（合并为单一端点：删除 `/parsing/litematic` + `/parsing/nbt`，`/parsing/batch` 成为唯一解析入口——单文件等价于批量 1 个文件；前端移除 `LitematicImport.vue`，`BatchImport.vue` 为唯一视图，`total_blocks` 显示改用公共 `formatQty`（个/组/盒），每文件材料表加 `max-height` 嵌套滚动）*
+
+*2026-07-24（新增 `POST /parsing/batch` 批量解析 issue #16：多文件上传 + per-file 隔离 + 总大小/文件数护栏；后端只解析不收 multiplier，前端 `aggregateItems` 聚合倍数生成单表。DRY 重构两单文件 handler 抽出 `_parse_bytes_to_preview`/`_detect_kind`/`_friendly_parse_error`，行为不变）*
 
 *2026-07-07（新增 POST /parsing/nbt：基于 nbtlib 解析 Create 蓝图/structure .nbt，复用 ParsedMaterialPreview + LangJsonTranslator；新增 NbtParser/NbtParseError 与 nbt_max_upload_bytes 配置）*

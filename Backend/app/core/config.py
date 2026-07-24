@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # .nbt(Create 蓝图 / structure) 解析：上传字节上限（默认 50MB）
     nbt_max_upload_bytes: int = 50 * 1024 * 1024
 
+    # 批量解析 POST /parsing/batch：文件数上限（默认 10）与总字节上限（默认 100MB，
+    # 独立于单文件 50MB 上限的二次护栏——整请求所有文件字节之和的上限）。
+    parsing_batch_max_files: int = 10
+    parsing_batch_total_max_bytes: int = 100 * 1024 * 1024
+
     # 归档根目录绝对路径（迁移 0009 sheet 三阶段生命周期的 archived 产物落盘位置）。
     # 空串 = 未配置：归档端点返 503，不启动 fail-fast 避免阻塞其他端点（计划 §归档服务 config）。
     archive_root: str = ""

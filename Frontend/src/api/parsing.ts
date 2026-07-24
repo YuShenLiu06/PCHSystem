@@ -21,25 +21,31 @@ export interface ParsedMaterialPreview {
   untranslated: string[]
 }
 
-/** POST /parsing/litematic —— multipart 上传 .litematic，返回解析+翻译后的材料预览（不落库） */
-export async function previewLitematic(file: File): Promise<ParsedMaterialPreview> {
-  const form = new FormData()
-  form.append('file', file)
-  const { data } = await http.post<ParsedMaterialPreview>('/parsing/litematic', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    // 大文件上传 + litemapy 解析可能 >30s，调用级 timeout 覆盖全局（http.ts 默认 30s）
-    timeout: 120000,
-  })
-  return data
+// /parsing/batch 为唯一解析端点（混型 .litematic / .nbt，单文件等价于批量 1 个）。
+// 后端只解析、不收 multiplier（倍数是纯 UI 概念，前端聚合时应用，便于随时调倍数无需重新上传）。
+// 与 Backend/app/schemas/parsing.py 的 BatchFilePreview / BatchParsedPreview 对齐。
+export interface BatchFilePreview {
+  filename: string
+  kind: 'litematic' | 'nbt' // 按扩展名判定，失败项仍标 kind
+  status: 'ok' | 'error'
+  preview: ParsedMaterialPreview | null
+  error: string | null // status=error 时为玩家可读中文文案
 }
 
-/** POST /parsing/nbt —— multipart 上传 .nbt（Create 蓝图 / 原版结构），返回解析+翻译后的材料预览（不落库）。响应结构与 /parsing/litematic 完全一致。 */
-export async function previewNbt(file: File): Promise<ParsedMaterialPreview> {
+export interface BatchParsedPreview {
+  files: BatchFilePreview[]
+}
+
+/**
+ * POST /parsing/batch —— multipart 上传多个 .litematic / .nbt（FormData 重复 `files` 字段），
+ * 返回每文件独立预览（成功/失败隔离）。多文件顺序解析可能 >120s，故 timeout 提到 180s。
+ */
+export async function previewBatch(files: File[]): Promise<BatchParsedPreview> {
   const form = new FormData()
-  form.append('file', file)
-  const { data } = await http.post<ParsedMaterialPreview>('/parsing/nbt', form, {
+  for (const f of files) form.append('files', f)
+  const { data } = await http.post<BatchParsedPreview>('/parsing/batch', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000,
+    timeout: 180000,
   })
   return data
 }
