@@ -1,13 +1,13 @@
 """sheet 归档编排服务（markdown_render 首个消费者 + 文件落盘 + 事务一致性）。
 
-``archive_sheet(session, sheet_id, *, archive_root, player)`` 编排：
+``archive_sheet(session, sheet_id, *, archive_root, player, actor_account_uuids)`` 编排：
 1. 取 sheet + owner_name（get_sheet）；None → raise（api 层 404）。
 2. 预检 status：archived → SheetArchived（api 层 409）；非法源态 → 状态错误。
 3. 取贡献量排行（aggregate_contributor_totals：lock 交付 + progress 上交合并按人）。
 4. 构建 context + 渲染 markdown（纯函数，不查库）。
 5. ``writer.write_atomic`` 写盘（**事务外**，文件系统不参与 DB 事务）。
 6. ``try:`` advance_sheet（SELECT FOR UPDATE 锁 + 校验 + 置 archived 三字段，flush 不 commit）
-   + notification_service.notify（同 session 同事务，RS-9）
+   + notification_service.notify_many（全体参与者，触发者同 account 跳过；同 session 同事务，RS-9）
    + ``session.commit()``
    ``except Exception:`` ``writer.cleanup`` 删孤儿文件 + ``session.rollback()`` + raise。
 7. 返回 advance_sheet 后的 sheet（已置 archived 三字段）。
@@ -34,7 +34,7 @@ from app.models.sheet import (
     Sheet,
 )
 from app.models.user import Player
-from app.repositories import sheet_repo
+from app.repositories import sheet_repo, web_account_repo
 from app.repositories.sheet_repo import SheetArchived
 from app.services import notification_service
 from app.services.archive import publisher, writer
@@ -86,6 +86,7 @@ async def archive_sheet(
     *,
     archive_root: str,
     player: Player,
+    actor_account_uuids: set[uuid.UUID],
 ) -> Sheet:
     """把一张 sheet 归档：渲染 md → 写盘 → DB 置 archived + 通知 → commit。
 
@@ -94,6 +95,9 @@ async def archive_sheet(
     - sheet_id：归档目标 sheet。
     - archive_root：归档根目录绝对路径；空串 → writer 写盘前 raise ArchiveNotConfigured。
     - player：调用者（deps 注入的 Player）；权限已由 api 层判，此处只用其身份。
+    - actor_account_uuids：调用者所属 Web account 的全部 UUID 集合（同 account 跳过
+      通知用，含 owner 自归档场景；由 api 层经 ``get_current_account_uuids`` 解析透传，
+      避免 services 层重复查库）。
 
     返回：advance_sheet 后的 sheet（已置 status=archived / archived_path / archived_at）。
 
@@ -162,13 +166,22 @@ async def archive_sheet(
                 writer.cleanup(archive_root, rel)
             raise SheetNotFoundError(f"sheet {sheet_id} disappeared before archive")
 
-        await notification_service.notify(
+        # 通知全部参与者（owner + managers + lock 认领者 + progress 贡献者）；
+        # 触发者同 account 自动跳过（含 owner 自归档——修「自触发自通知」冗余，issue #4）。
+        # payload 补 actor_uuid/actor_name：旧版只有 owner 收且无 actor 字段，
+        # MCDR format_notification 走灰色 fallback；补字段后可用 _NOTIFY_TEMPLATES 模板渲染。
+        participants = await sheet_repo.collect_participant_uuids(session, sheet_id)
+        actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
+        await notification_service.notify_many(
             session,
-            recipient_uuid=sheet.owner_uuid,
+            participants,
+            skip_uuids=actor_account_uuids,
             category="sheet_archived",
             title="项目已归档",
-            body=f"项目「{sheet.title}」已归档",
+            body=f"项目「{sheet.title}」已由 {actor_name} 归档",
             payload={
+                "actor_uuid": str(player.uuid),
+                "actor_name": actor_name,
                 "sheet_id": sheet_id,
                 "sheet_title": sheet.title,
                 "archived_path": rel_path,

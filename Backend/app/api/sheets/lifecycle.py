@@ -12,6 +12,7 @@ from app.api.sheets._shared import (
     _can_operate,
     _load_sheet_or_404,
     _to_detail,
+    notify_uuids,
 )
 from app.core.config import get_settings
 from app.core.db import get_session
@@ -21,7 +22,7 @@ from app.models.sheet import (
     SHEET_PHASE_CONSTRUCTING,
 )
 from app.models.user import Player
-from app.repositories import sheet_repo
+from app.repositories import sheet_repo, web_account_repo
 from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 from app.schemas.sheet import SheetDetail
 from app.services.archive import (
@@ -114,6 +115,7 @@ async def advance_sheet_phase(
                 sheet_id,
                 archive_root=get_settings().archive_root,
                 player=player,
+                actor_account_uuids=account_uuids,
             )
         except SheetNotFoundError:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
@@ -140,6 +142,22 @@ async def advance_sheet_phase(
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         if advanced is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+        # 通知全部参与者进入施工阶段（owner + managers + 认领者 + 贡献者）；
+        # 触发者同 account 跳过（含 owner/manager 自推进）。issue #4
+        participants = await sheet_repo.collect_participant_uuids(session, sheet_id)
+        actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
+        await notify_uuids(
+            session,
+            list(participants),
+            actor=player,
+            actor_name=actor_name,
+            account_uuids=account_uuids,
+            category="sheet_advanced_constructing",
+            title="项目已进入施工阶段",
+            body=f"{actor_name} 将 [{advanced.title}] 推进至施工阶段",
+            sheet_id=sheet_id,
+            sheet_title=advanced.title,
+        )
         await session.commit()
         await session.refresh(advanced)
     return await _sheet_detail_or_404(session, sheet_id, viewer_uuids=account_uuids)
