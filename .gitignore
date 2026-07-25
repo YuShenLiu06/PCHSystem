@@ -41,3 +41,6 @@ docker-compose.override.yml
 backups/
 # Claude worktrees（本地 git worktree 检出，含机器绝对路径与大量文件，勿入库）
 .claude/worktrees/
+
+# obsidian
+.obsidian/
