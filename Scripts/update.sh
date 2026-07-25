@@ -368,7 +368,11 @@ ENV_CHANGED=0
 ensure_env_keys_update() {
     local status
     status=$(ensure_env_keys)
-    [[ "$status" == "changed" ]] && ENV_CHANGED=1
+    # 用 if 而非 [[ ]] && VAR= ：后者在 status=unchanged 时退出码 1，作为函数末行会被
+    # set -Eeuo pipefail 捕获，导致脚本在 main 的裸调用处中断（曾使更新半途中止）。
+    if [[ "$status" == "changed" ]]; then
+        ENV_CHANGED=1
+    fi
 }
 
 # ---------- main ----------
