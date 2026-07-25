@@ -124,8 +124,9 @@ jobs:
           cache: pip
           cache-dependency-path: McdrPlugin/requirements.txt
 
-      - name: 安装依赖
-        run: pip install -r McdrPlugin/requirements.txt
+      - name: 安装依赖（requirements + pytest）
+        # 三端拆独立 job，pytest 不再由 backend 的 [dev] extra 顺带装入；显式安装
+        run: pip install -r McdrPlugin/requirements.txt pytest
 
       - name: pytest
         env:
