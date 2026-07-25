@@ -24,11 +24,13 @@
 ## 自检清单
 
 <!-- 合入前全部勾选 -->
-- [ ] 构建通过：前端 `npm run build`（含 `vue-tsc`）+ `npx vitest run`；后端 `pytest`
+- [ ] **CI 通过**：PR 的 Checks 三端 job（backend/frontend/mcdr）全绿，PR 带有 `ci:pass` 标签（`ci.yml` 自动跑；失败时点失败 job 看 step 日志里的 `文件:行号`）
 - [ ] 不违反根 [CLAUDE.md](../CLAUDE.md) §3 红线 **R-1 ~ R-12**
 - [ ] **涉及 MCDR 的改动已联网核实 API**（根 CLAUDE.md §0 S-1，附文档 URL）
 - [ ] 无硬编码密钥（R-11）；新增配置项已同步 `.env.example`
 - [ ] 已更新相关文档 / `CHANGELOG.md`（`[Unreleased]` 段）
+
+> 本地预跑（可选，加速反馈）：前端 `npm run build && npm run test:run`；后端起 PG 后 `pytest`；mcdr `PYTHONPATH=McdrPlugin pytest McdrPlugin/tests -q`。
 
 ## 测试
 

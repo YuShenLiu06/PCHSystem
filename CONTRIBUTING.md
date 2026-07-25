@@ -53,9 +53,18 @@ refactor(backend)!: 重命名 players 主键字段
 - **一个 PR 一件事**（同作者同字段的多处同类修改可合并）
 - 关联 Issue（先 Issue 再 PR）
 - 合入前自检：
-  - [ ] 构建通过：前端 `cd Frontend && npm run build`（含 `vue-tsc` 类型检查）；后端 `cd Backend && pytest`（无独立 lint，依赖类型 + 测试）
+  - [ ] **CI 通过**：PR 推送后 [`ci.yml`](./.github/workflows/ci.yml) 自动跑三端测试（backend / frontend / mcdr），标签 `ci:pass` / `ci:fail` 直观可见结果（详见下方「CI 与本地预跑」）
   - [ ] 不违反根 CLAUDE.md §3 红线 R-1~R-12
   - [ ] MCDR 相关改动已联网核实 API（根 CLAUDE.md §0 S-1）
+  - [ ] 无硬编码密钥（R-11）；新增配置项已同步 `.env.example`
+  - [ ] 已更新相关文档 / `CHANGELOG.md`（`[Unreleased]` 段）
+
+### CI 与本地预跑
+
+- **CI 自动检测**（[`.github/workflows/ci.yml`](./.github/workflows/ci.yml)）：PR 的 `opened / synchronize / reopened / ready_for_review` 事件触发，三端 job 并行跑 backend（活 PG 集成测试）/ frontend（`vue-tsc` + `vite build` + `vitest`）/ mcdr（纯单测），第四个 job `label-pr` 据结果给 PR 打互斥标签 `ci:pass`（全绿）/ `ci:fail`（任一失败）。后端已知 flakiness（`conftest._truncate_db` 偶发死锁）会自动 `pytest --lf` 重跑一次失败项，真失败不被掩盖。
+- **查看失败位置**：PR 底部 `Checks` tab → 点失败的 job → 展开红色 step（如 `pytest 重试`）→ 输出含 `FAILED tests/xxx.py::test_yyy` + `文件:行号` + 断言信息。**不是**评论回复。
+- **手动重跑**：① PR `Checks` tab → `Re-run all jobs` / `Re-run failed jobs`（最常用，带 PR 上下文，会刷新标签）；② `Actions` tab → 选 `CI` → `Run workflow`（无 PR 上下文，`label-pr` 跳过，仅用于 debug 或给 main 跑一次）。
+- **本地预跑（可选，加速反馈）**：命令与 env 同 CI——前端 `cd Frontend && npm run build && npm run test:run`；后端先起 PG，`export MCDR_SERVICE_TOKEN=dev JWT_SECRET=dev POSTGRES_PASSWORD=...`，`cd Backend && alembic upgrade head && pytest`；mcdr `PYTHONPATH=McdrPlugin pytest McdrPlugin/tests -q`。
 
 ---
 
@@ -86,7 +95,7 @@ refactor(backend)!: 重命名 players 主键字段
 3. [`.github/workflows/release.yml`](./.github/workflows/release.yml) 自动跑：校验 tag（动态读 plugin id）→ 三端检测（backend 活 PG 集成测试 / frontend 类型检查+构建+单测 / mcdr 单测）→ `mcdreforged pack` 构建 `.mcdr` → 创建该 tag 的**草稿 Release**（含 `.mcdr` + `SHA256.txt` + 自动从 CHANGELOG 抽取的 notes）
 4. 所有者在 Releases 页完善 notes、检验 `.mcdr`，手动 **Publish** → 正式发布（catalogue 此时可探测到）
 
-> 检测失败则 CI 整 job 失败、**不建草稿**（打 tag 后问题立即暴露；修后删 tag 重打重跑）。`-rc` 后缀（如 `pch_system-v1.0.0-rc.1`）自动标记为 pre-release。
+> **PR CI 是发布前置**：日常 PR 已由 [`ci.yml`](./.github/workflows/ci.yml) 跑过三端检测，`release.yml` 仍重跑一遍作发版前最终守门（命令一致），任一失败则整 job 失败、**不建草稿**（打 tag 后问题立即暴露；修后删 tag 重打重跑）。`-rc` 后缀（如 `pch_system-v1.0.0-rc.1`）自动标记为 pre-release。
 
 **Backend / Frontend（暂未自动化）**：
 1. 更新版本号文件（`Backend/pyproject.toml` / `Frontend/package.json`）+ `CHANGELOG.md` 固化段

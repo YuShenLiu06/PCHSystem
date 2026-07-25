@@ -1,0 +1,230 @@
+name: CI
+
+# PR 测试流水线：提交/更新 PR 时自动跑三端测试（backend / frontend / mcdr），
+# 并根据结果给 PR 打互斥标签 ci:pass / ci:fail。
+# 失败定位：PR Checks 面板每个 job 独立红绿 → 点进失败 job → 看对应 step 日志（pytest/vitest 输出含 文件:行号）。
+# 手动重跑：PR 页 Checks → Re-run（带 PR 上下文，会刷新标签）；或 Actions 页 Run workflow（无 PR 上下文，label-pr 跳过）。
+# 语法均对照 GitHub 官方文档 docs.github.com/en/actions 核实。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+  workflow_dispatch: # 允许手动重跑（约束：仅当本 workflow 文件在默认分支 main 时可触发）
+
+permissions:
+  contents: read # 顶层最小权限；label-pr job 内单独提升 pull-requests: write
+
+# 同一 PR 新 push 取消旧的 in-progress run，省 CI 分钟、避免旧结果混淆。
+# github.head_ref 仅 pull_request 事件有值；workflow_dispatch 回退到 run_id（唯一，不互相取消）。
+concurrency:
+  group: ci-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # backend：FastAPI 集成测试（活 PG）。env 块逐字复用 release.yml。
+  # ============================================================
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres: # conftest autouse TRUNCATE 业务表，需活 PG
+        image: postgres:16
+        env:
+          POSTGRES_USER: pch
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: pchsystem
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pch -d pchsystem"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # backend settings 在 import 时 get_settings() 读 POSTGRES_*；先 alembic 建表
+      POSTGRES_USER: pch
+      POSTGRES_PASSWORD: ci
+      POSTGRES_DB: pchsystem
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: '5432'
+      JWT_SECRET: ci_jwt_secret_for_testing_only
+      MCDR_SERVICE_TOKEN: ci_svc_token_for_testing_only # 空→config.py validator fail-fast，必须非空
+      ARCHIVE_ROOT: /tmp/archive
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: Backend/pyproject.toml
+
+      - name: 安装依赖
+        run: pip install -e "./Backend[dev]"
+
+      - name: alembic 建表
+        working-directory: Backend
+        run: alembic upgrade head
+
+      # 已知 flakiness（CLAUDE.md:220）：conftest._truncate_db 同步 TRUNCATE teardown 偶发与 async session 死锁。
+      # 首次失败后用 pytest 内置 --lf（last-failed）只重跑失败子集，重跑集小→死锁窗口收窄；真失败会在重试中再次失败。
+      - name: pytest（首次）
+        id: py1
+        working-directory: Backend
+        run: pytest -q
+        continue-on-error: true # 让重试 step 接管最终 conclusion
+
+      - name: pytest 重试（仅失败项 --lf）
+        if: steps.py1.outcome == 'failure'
+        working-directory: Backend
+        run: pytest -q --lf
+
+  # ============================================================
+  # frontend：vue-tsc 类型检查 + vite 构建 + vitest 单测
+  # ============================================================
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22' # Node 20 已于 2026-04 EOL；22 为当前 LTS，与 Frontend/Dockerfile 对齐
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - name: 安装依赖
+        working-directory: Frontend
+        run: npm ci
+
+      - name: 类型检查 + 构建（含 vue-tsc -b）
+        working-directory: Frontend
+        run: npm run build
+
+      - name: vitest run
+        working-directory: Frontend
+        run: npm run test:run
+
+  # ============================================================
+  # mcdr：纯单测（tests/_stubs.py 替身 MCDR 运行时，无需 PG/Docker/真 MCDR）
+  # ============================================================
+  mcdr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: McdrPlugin/requirements.txt
+
+      - name: 安装依赖
+        run: pip install -r McdrPlugin/requirements.txt
+
+      - name: pytest
+        env:
+          PYTHONPATH: McdrPlugin # 使 import pch_system.* 可解析（tests/__init__.py 亦会再加一次）
+        run: pytest McdrPlugin/tests -q
+
+  # ============================================================
+  # label-pr：根据三 job 结果给 PR 打互斥标签 ci:pass / ci:fail
+  # ============================================================
+  label-pr:
+    needs: [backend, frontend, mcdr]
+    if: always() && github.event_name == 'pull_request' # workflow_dispatch 无 PR 上下文，跳过
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write # 官方文档原文：此权限「permits an action to add a label to a pull request」
+    steps:
+      # needs.*.result 经 env 传入脚本（github-script 默认不直接暴露 needs context）
+      - uses: actions/github-script@v7 # GitHub 官方 action；建议后续 hardening 改 pin 具体 commit SHA
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          MCDR_RESULT: ${{ needs.mcdr.result }}
+        with:
+          script: |
+            const PASS = 'ci:pass';
+            const FAIL = 'ci:fail';
+
+            const results = {
+              backend: process.env.BACKEND_RESULT,
+              frontend: process.env.FRONTEND_RESULT,
+              mcdr: process.env.MCDR_RESULT,
+            };
+            const ok = Object.values(results).every((r) => r === 'success');
+            const target = ok ? PASS : FAIL;
+            const opposite = ok ? FAIL : PASS;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number; // pull_request 事件下即 PR 号
+
+            // fork PR 的 GITHUB_TOKEN 默认只读（官方文档印证）→ 标签操作 403 时 swallow，不拖红 CI
+            async function removeLabel(name) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+                core.info(`removed label: ${name}`);
+              } catch (e) {
+                if (e.status === 404) {
+                  core.info(`label not present, skip remove: ${name}`);
+                  return;
+                }
+                if (e.status === 403) {
+                  core.warning(`forbidden removing ${name} (fork PR 只读 token?): ${e.message}`);
+                  return;
+                }
+                throw e;
+              }
+            }
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+                return true;
+              } catch (e) {
+                if (e.status !== 404) throw e;
+                core.info(`bootstrap: creating label ${name}`);
+                try {
+                  await github.rest.issues.createLabel({ owner, repo, name, color, description });
+                  return true;
+                } catch (e2) {
+                  if (e2.status === 403) {
+                    core.warning(`forbidden creating ${name}: ${e2.message}`);
+                    return false;
+                  }
+                  throw e2;
+                }
+              }
+            }
+
+            async function addLabel(name) {
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [name] });
+              } catch (e) {
+                if (e.status === 404) {
+                  const color = name === PASS ? '0E8A16' : 'B60205';
+                  const description = name === PASS ? '三端 CI 测试全部通过' : '一个或多个 CI 测试失败';
+                  if (await ensureLabel(name, color, description)) {
+                    await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [name] });
+                  }
+                  return;
+                }
+                if (e.status === 403) {
+                  core.warning(`forbidden adding ${name}: ${e.message}`);
+                  return;
+                }
+                throw e;
+              }
+            }
+
+            core.info(`CI result: ${ok ? 'PASS' : 'FAIL'} -> target=${target}`);
+            await removeLabel(opposite);
+            await addLabel(target);

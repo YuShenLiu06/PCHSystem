@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22' # 与 ci.yml + Frontend/Dockerfile 对齐；Node 20 已于 2026-04 EOL
           cache: npm
           cache-dependency-path: Frontend/package-lock.json
 
