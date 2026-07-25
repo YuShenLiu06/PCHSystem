@@ -301,7 +301,7 @@ async def test_archive_sheet_collecting_to_archived_writes_file_and_sets_path(tm
     root = str(tmp_path)
     # Act
     async with async_session_factory() as s:
-        sheet = await archive_sheet(s, sid, archive_root=root, player=player)
+        sheet = await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
         # service 内部已 commit
     # Assert：DB 置 archived
     assert sheet.status == "archived"
@@ -335,7 +335,7 @@ async def test_archive_sheet_empty_contributors_skips_chart(tmp_path):
     root = str(tmp_path)
     # Act
     async with async_session_factory() as s:
-        await archive_sheet(s, sid, archive_root=root, player=player)
+        await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Assert：只生 index.md，无 contributions.png；md 不含 📊 section
     final = tmp_path / "projects" / str(sid) / "index.md"
     assert final.is_file()
@@ -352,7 +352,7 @@ async def test_archive_sheet_directly_from_collecting_skips_constructing(tmp_pat
     root = str(tmp_path)
     # Act
     async with async_session_factory() as s:
-        sheet = await archive_sheet(s, sid, archive_root=root, player=player)
+        sheet = await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Assert
     assert sheet.status == "archived"
     assert (tmp_path / "projects" / str(sid) / "index.md").is_file()
@@ -368,7 +368,7 @@ async def test_archive_sheet_from_constructing(tmp_path):
     root = str(tmp_path)
     # Act
     async with async_session_factory() as s:
-        sheet = await archive_sheet(s, sid, archive_root=root, player=player)
+        sheet = await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Assert
     assert sheet.status == "archived"
     assert (tmp_path / "projects" / str(sid) / "index.md").is_file()
@@ -380,22 +380,27 @@ async def test_archive_sheet_already_archived_raises_sheet_archived(tmp_path):
     sid, player, _ = await _make_collecting_sheet("已归档")
     root = str(tmp_path)
     async with async_session_factory() as s:
-        await archive_sheet(s, sid, archive_root=root, player=player)
+        await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Act / Assert：第二次归档 → SheetArchived（来自 service 预检）
     from app.repositories.sheet_repo import SheetArchived
     async with async_session_factory() as s:
         with pytest.raises(SheetArchived):
-            await archive_sheet(s, sid, archive_root=root, player=player)
+            await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
 
 
 @pytest.mark.asyncio
-async def test_archive_sheet_notifies_owner(tmp_path):
+async def test_archive_sheet_notifies_owner_with_actor_payload(tmp_path):
+    """owner 在 skip 集外时收到 sheet_archived，且 payload 含 actor 字段（MCDR 模板渲染所需）。
+
+    actor_account_uuids=set() 模拟「触发者与 owner 不同 account」（如超管归档他人项目）；
+    owner 自归档（owner_uuid 在 skip 集中）由 test_archive_sheet_skips_actor_account_including_owner 覆盖。
+    """
     # Arrange
     sid, player, owner_uuid = await _make_collecting_sheet("通知")
     root = str(tmp_path)
     # Act
     async with async_session_factory() as s:
-        await archive_sheet(s, sid, archive_root=root, player=player)
+        await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Assert：notifications 表有一条 category=sheet_archived，recipient=owner
     async with async_session_factory() as s:
         notifs = (
@@ -409,6 +414,74 @@ async def test_archive_sheet_notifies_owner(tmp_path):
     assert n.title == "项目已归档"
     assert n.payload["sheet_id"] == sid
     assert n.payload["archived_path"] == f"projects/{sid}/index.md"
+    # payload 含 actor 字段（补字段后 MCDR 可按模板渲染，不再走灰色 fallback）
+    assert n.payload["actor_uuid"] == str(player.uuid)
+    assert n.payload["actor_name"]  # 非空
+
+
+@pytest.mark.asyncio
+async def test_archive_sheet_notifies_all_participants(tmp_path):
+    """归档通知四源广播（owner + lock 认领者 + progress 贡献者；manager 源由 repo 测试覆盖）。
+
+    actor_account_uuids=set() → 不跳过任何人，验全员都收到 sheet_archived。
+    """
+    # Arrange
+    sid, player, owner_uuid = await _make_collecting_sheet(
+        "全员", rows=[("铁锭", 64, 0), ("圆石", 128, 1)]
+    )
+    claimant_uuid = uuid.uuid4()
+    contributor_uuid = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=claimant_uuid, current_name="claimant"))
+        s.add(Player(uuid=contributor_uuid, current_name="contributor"))
+        await s.commit()
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        lock_row = next(r for r, _ in rows if r.mode == 0)
+        prog_row = next(r for r, _ in rows if r.mode == 1)
+        lock_row.claimant_uuid = claimant_uuid
+        await sheet_repo.contribute_row(s, sid, prog_row.id, contributor_uuid, 10)
+        await s.commit()
+    root = str(tmp_path)
+    # Act
+    async with async_session_factory() as s:
+        await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
+    # Assert：owner / claimant / contributor 各一条 sheet_archived，payload 含 actor 字段
+    async with async_session_factory() as s:
+        notifs = list(
+            (
+                await s.execute(
+                    select(Notification).where(Notification.category == "sheet_archived")
+                )
+            ).scalars().all()
+        )
+    assert {n.recipient_uuid for n in notifs} == {
+        owner_uuid,
+        claimant_uuid,
+        contributor_uuid,
+    }
+    assert all("actor_uuid" in n.payload and "actor_name" in n.payload for n in notifs)
+
+
+@pytest.mark.asyncio
+async def test_archive_sheet_skips_actor_account_including_owner(tmp_path):
+    """owner 自归档（owner_uuid 在 actor_account_uuids 中）→ owner 被跳过，0 条通知。
+
+    回归点（issue #4）：旧版 archive 路径无 actor 跳过守卫，owner 自归档会自通知；
+    改后经 notify_many(skip=actor_account_uuids) 跳过，消除冗余。
+    """
+    # Arrange
+    sid, player, owner_uuid = await _make_collecting_sheet("自归档")
+    root = str(tmp_path)
+    # Act
+    async with async_session_factory() as s:
+        await archive_sheet(
+            s, sid, archive_root=root, player=player, actor_account_uuids={owner_uuid}
+        )
+    # Assert：notifications 表 0 条
+    async with async_session_factory() as s:
+        notifs = list((await s.execute(select(Notification))).scalars().all())
+    assert notifs == []
 
 
 @pytest.mark.asyncio
@@ -421,14 +494,16 @@ async def test_archive_sheet_rolls_back_file_on_db_failure(tmp_path):
     async with async_session_factory() as s:
         with patch.object(s, "commit", side_effect=RuntimeError("db down")):
             with pytest.raises(RuntimeError):
-                await archive_sheet(s, sid, archive_root=root, player=player)
+                await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Assert：文件被 cleanup 删除（无孤儿）
     assert not final.exists()
-    # DB 未变（仍是 collecting）
+    # DB 未变（仍是 collecting）+ 通知表 0 条（notify 随业务一起 rollback，RS-9 原子）
     async with async_session_factory() as s:
         got = await sheet_repo.get_sheet(s, sid)
         assert got[0].status == "collecting"
         assert got[0].archived_path is None
+        notifs = (await s.execute(select(Notification))).scalars().all()
+    assert len(notifs) == 0
 
 
 @pytest.mark.asyncio
@@ -438,7 +513,7 @@ async def test_archive_sheet_archive_root_unconfigured_raises(tmp_path):
     # Act / Assert：空 archive_root → ArchiveNotConfigured（写盘前抛，DB 未动）
     async with async_session_factory() as s:
         with pytest.raises(ArchiveNotConfigured):
-            await archive_sheet(s, sid, archive_root="", player=player)
+            await archive_sheet(s, sid, archive_root="", player=player, actor_account_uuids=set())
     # DB 未变
     async with async_session_factory() as s:
         got = await sheet_repo.get_sheet(s, sid)
@@ -451,7 +526,7 @@ async def test_archive_sheet_missing_raises_not_found(tmp_path):
     player, _ = await _seed_player()
     async with async_session_factory() as s:
         with pytest.raises(SheetNotFoundError):
-            await archive_sheet(s, 999999, archive_root=str(tmp_path), player=player)
+            await archive_sheet(s, 999999, archive_root=str(tmp_path), player=player, actor_account_uuids=set())
 
 
 @pytest.mark.asyncio
@@ -486,7 +561,7 @@ async def test_archive_sheet_renders_precise_contributor_qty(tmp_path):
     root = str(tmp_path)
     # Act
     async with async_session_factory() as s:
-        await archive_sheet(s, sid, archive_root=root, player=player)
+        await archive_sheet(s, sid, archive_root=root, player=player, actor_account_uuids=set())
     # Assert：md 含精确数量排行
     final = tmp_path / "projects" / str(sid) / "index.md"
     md = final.read_text(encoding="utf-8")

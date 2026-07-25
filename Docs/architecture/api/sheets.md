@@ -116,8 +116,8 @@ collecting ─────────────────────▶ co
 
 | 转移 | 端点 | 触发者 | 副作用 |
 |---|---|---|---|
-| collecting→constructing | `POST /sheets/{id}/advance?to=constructing` | owner/admin | 仅置 `status=constructing`（advance→constructing 静默，owner 自触发不发通知） |
-| collecting→archived（直跳，跳过施工） | `POST /sheets/{id}/advance?to=archived` | owner/admin | 渲染 md → 写盘 → DB 置 archived 三字段 + `category=sheet_archived` 通知 → commit |
+| collecting→constructing | `POST /sheets/{id}/advance?to=constructing` | owner/admin/manager（tier B） | 置 `status=constructing` + 广播 `category=sheet_advanced_constructing` 给全体参与者（触发者同 account 跳过，含 manager 自推进） |
+| collecting→archived（直跳，跳过施工） | `POST /sheets/{id}/advance?to=archived` | owner/admin | 渲染 md → 写盘 → DB 置 archived 三字段 + 广播 `category=sheet_archived` 给全体参与者（触发者同 account 跳过，含 owner 自归档）→ commit |
 | constructing→archived | `POST /sheets/{id}/advance?to=archived` | owner/admin | 同上（标记施工完成并归档） |
 | 缺省 `to` | `POST /sheets/{id}/advance`（不带 query） | owner/admin | 按当前状态推进下一态：`collecting→constructing`、`constructing→archived` |
 
@@ -147,7 +147,7 @@ collecting ─────────────────────▶ co
 
 | 方法 | 路径 | 鉴权 | query | 成功 | 说明 |
 |---|---|---|---|---|---|
-| POST | `/sheets/{sheet_id}/advance` | JWT·**owner/admin** 或 service-token+UUID·owner/admin | `?to=constructing\|archived`（缺省按状态机推进下一态） | 200 `SheetDetail` | 阶段流转。`to=archived` 走归档服务：渲染 md → 写盘 → DB 置 archived + 通知（`category=sheet_archived`）→ 内部 commit；`to=constructing` 仅 repo `advance_sheet` + api 层 commit。允许 `collecting → archived` 直跳。MCDR `!!PCH sheet advance` 同上 |
+| POST | `/sheets/{sheet_id}/advance` | JWT·**owner/admin**（`to=archived`）或 owner/admin/**manager**（`to=constructing`，tier B）或 service-token+UUID·同左 | `?to=constructing\|archived`（缺省按状态机推进下一态） | 200 `SheetDetail` | 阶段流转。`to=archived` 走归档服务：渲染 md → 写盘 → DB 置 archived + 广播 `category=sheet_archived` 给全体参与者（触发者同 account 跳过）→ 内部 commit；`to=constructing` repo `advance_sheet` + 广播 `category=sheet_advanced_constructing` 给全体参与者（触发者同 account 跳过）+ api 层 commit。允许 `collecting → archived` 直跳。MCDR `!!PCH sheet advance` 同上 |
 | GET | `/sheets/{sheet_id}/archive` | JWT 或 service-token+UUID | — | 200 `text/markdown` | 读归档 markdown 文件内容。未归档 / 文件缺失 → 404。归档原文（前端 `<pre>` 预览；MCDR 不拉 md，回执仅给相对路径让玩家去 Web 看） |
 | GET | `/sheets/{sheet_id}/archive/assets/{filename}` | JWT 或 service-token+UUID | — | 200 `image/png` | 读归档资产（如 `contributions.png` 贡献占比饼图）。**basename 白名单 + 路径穿越守卫**：`filename` 只允许纯文件名（`/`/`\`/`..` 拒绝），仅解析 `ARCHIVE_ROOT/projects/<sheet_id>/<filename>`；非法名或文件缺失 → 404。鉴权 `get_current_player`，任意登录玩家可读（与 `GET /archive` 一致）。用于前端归档预览内嵌饼图 |
 
@@ -456,7 +456,7 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 
 **错误码**：401（缺/错 service token）、404（read 的 id 不存在 **或不归属该 player_uuid**）、422（player_uuid 缺/格式错、ids 非数组）。
 
-**触发规则与 category 枚举**：见 [`services/notification-service.md`](../services/notification-service.md) §3（首期 7 类 sheets 行级专用：`sheet_claimed`/`sheet_delivered`/`sheet_done`/`sheet_released`/`sheet_rejected`/`sheet_qty_changed`/`sheet_row_deleted`；项目级归档追加 `sheet_archived`——owner/admin `POST /sheets/{id}/advance?to=archived` 成功后落库，payload 含 `sheet_id`/`sheet_title`/`archived_path`/`archived_at`）。
+**触发规则与 category 枚举**：见 [`services/notification-service.md`](../services/notification-service.md) §3（首期 7 类 sheets 行级专用：`sheet_claimed`/`sheet_delivered`/`sheet_done`/`sheet_released`/`sheet_rejected`/`sheet_qty_changed`/`sheet_row_deleted`；项目级阶段流转 2 类——`sheet_advanced_constructing`（`to=constructing`，tier B：owner/admin/manager 触发）+ `sheet_archived`（`to=archived`，tier A：owner/admin 触发）；均**广播给全体参与者**（owner + managers + lock 行认领人 + progress 行贡献者），触发者所属 Web account 下全部 UUID 跳过（R-5：含 owner 自归档 / manager 自推进）；payload 含 `sheet_id`/`sheet_title`/`actor_uuid`/`actor_name`（归档额外含 `archived_path`/`archived_at`）。
 
 **MCDR 投递流程**：在线集合（`on_player_joined`/`on_player_left` + `rcon_query('list')` 初始化）→ `@new_thread` 后台轮询 → `server.tell` 投递 → `POST /ack`；玩家上线时 `on_player_joined` 立即拉一次 pending 补推。详见 [`services/mcdr-plugin.md`](../services/mcdr-plugin.md)「通知轮询」。
 

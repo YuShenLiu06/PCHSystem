@@ -239,6 +239,49 @@ async def list_sheets(
     return [(s, owner_names[s.owner_uuid]) for s in sheets]
 
 
+async def collect_participant_uuids(
+    session: AsyncSession, sheet_id: int
+) -> set[uuid.UUID]:
+    """聚合该 sheet 全部参与者 UUID（阶段转换通知用，issue #4）。
+
+    四源 UNION（去重）：
+    - owner_uuid（``Sheet.owner_uuid``）
+    - managers：锚 ``web_account_id``，展开为该账号下全部 UUID（R-5 account 主锚，
+      同账号任一 UUID 都视为 manager）
+    - lock 行认领者（``SheetRow.claimant_uuid``，``mode == MODE_LOCK`` 且非空）
+    - progress 行贡献者（``SheetRowContributor.player_uuid``，join ``SheetRow``，
+      ``mode == MODE_PROGRESS``）
+
+    模式与 ``list_sheets`` 的参与优先 UNION（上方）同构，方向相反
+    （彼处「UUID 集 → sheet_id」，此处「sheet_id → UUID 集」）。
+
+    子物品行（parent_row_id）天然由 set 去重——父子 lock 行同 claimant 只算一次。
+    不做「Player 是否仍存在」过滤：notify 路径假设 recipient 存在，FK 约束兜底。
+    sheet 不存在 → 返回空 set（advance 路径已守卫存在性，此处防御性）。
+    """
+    manager_uuids_subq = select(Player.uuid).where(
+        Player.web_account_id.in_(
+            select(SheetManager.web_account_id).where(
+                SheetManager.sheet_id == sheet_id
+            )
+        )
+    )
+    lock_claimants = select(SheetRow.claimant_uuid).where(
+        SheetRow.sheet_id == sheet_id,
+        SheetRow.mode == MODE_LOCK,
+        SheetRow.claimant_uuid.is_not(None),
+    )
+    progress_contributors = (
+        select(SheetRowContributor.player_uuid)
+        .join(SheetRow, SheetRow.id == SheetRowContributor.row_id)
+        .where(SheetRow.sheet_id == sheet_id, SheetRow.mode == MODE_PROGRESS)
+    )
+    owner_part = select(Sheet.owner_uuid).where(Sheet.id == sheet_id)
+    stmt = owner_part.union(manager_uuids_subq, lock_claimants, progress_contributors)
+    rows = (await session.execute(stmt)).all()
+    return {row[0] for row in rows if row[0] is not None}
+
+
 async def list_rows(
     session: AsyncSession, sheet_id: int, *, search: str | None = None
 ) -> list[tuple[SheetRow, str | None]]:

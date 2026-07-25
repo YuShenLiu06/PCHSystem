@@ -2129,3 +2129,117 @@ async def test_update_row_reparent_parent_with_existing_child_raises():
             await sheet_repo.update_row(
                 s, sid, a_id, parent_row_id=parent_c, qty_per_unit=1,
             )
+
+
+# ---------- collect_participant_uuids（阶段转换通知用，issue #4）----------
+
+
+@pytest.mark.asyncio
+async def test_collect_participant_uuids_aggregates_four_sources():
+    """四源 UNION：owner + manager（account 展开）+ lock 认领者 + progress 贡献者。"""
+    from app.models.sheet import SheetManager
+    from app.models.user import WebAccount
+
+    # Arrange
+    owner = await _seed_player("owner")
+    claimant = await _seed_player("claimant")
+    contributor = await _seed_player("contributor")
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        sid = sheet.id
+        # lock 行认领
+        lock_row = await sheet_repo.upsert_row(s, sid, "iron", 64, 0, 0)
+        lock_row.claimant_uuid = claimant
+        # progress 行贡献
+        prog_row = await sheet_repo.upsert_row(s, sid, "cobble", 128, 1, 0)
+        await sheet_repo.contribute_row(s, sid, prog_row.id, contributor, 10)
+        # manager：1 账号绑 2 UUID + SheetManager 行
+        acct = WebAccount(role="user")
+        s.add(acct)
+        await s.flush()  # 取 acct.id
+        mgr_u1, mgr_u2 = uuid.uuid4(), uuid.uuid4()
+        s.add(Player(uuid=mgr_u1, current_name="mgr1", web_account_id=acct.id))
+        s.add(Player(uuid=mgr_u2, current_name="mgr2", web_account_id=acct.id))
+        s.add(SheetManager(sheet_id=sid, web_account_id=acct.id))
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.collect_participant_uuids(s, sid)
+    # Assert：5 个 UUID 全在（owner + claimant + contributor + 2 manager uuids）
+    assert result == {owner, claimant, contributor, mgr_u1, mgr_u2}
+
+
+@pytest.mark.asyncio
+async def test_collect_participant_uuids_empty_sheet_returns_only_owner():
+    # Arrange：空表（无行无 manager）→ 仅 owner
+    owner = await _seed_player("owner")
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "空")
+        await s.commit()
+        sid = sheet.id
+    # Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.collect_participant_uuids(s, sid)
+    # Assert
+    assert result == {owner}
+
+
+@pytest.mark.asyncio
+async def test_collect_participant_uuids_dedups_repeated_claimant():
+    """同一 claimant 认领多行 → UNION + set 去重，只出现一次。"""
+    # Arrange
+    owner = await _seed_player("owner")
+    claimant = await _seed_player("claimant")
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        sid = sheet.id
+        r1 = await sheet_repo.upsert_row(s, sid, "iron", 64, 0, 0)
+        r2 = await sheet_repo.upsert_row(s, sid, "gold", 32, 0, 0)
+        r1.claimant_uuid = claimant
+        r2.claimant_uuid = claimant  # 同一 claimant 认领两行 lock
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.collect_participant_uuids(s, sid)
+    # Assert：claimant 去重，不重复计数
+    assert result == {owner, claimant}
+
+
+@pytest.mark.asyncio
+async def test_collect_participant_uuids_missing_sheet_returns_empty():
+    # Act / Assert：不存在的 sheet → 空 set（防御性，advance 路径已守卫存在性）
+    async with async_session_factory() as s:
+        assert await sheet_repo.collect_participant_uuids(s, 999999) == set()
+
+
+@pytest.mark.asyncio
+async def test_collect_participant_uuids_includes_sub_row_claimants():
+    """父子 lock 行认领者都被收集（子行经 parent_row_id 挂父行，仍走 mode=LOCK 过滤）。
+
+    锁 docstring 不变量：子物品行不被遗漏（防未来模式继承不变量被破坏时静默丢子行 claimant）。
+    """
+    # Arrange：父行认领者 A + 子行认领者 B（不同 claimant）
+    owner = await _seed_player("owner")
+    claimant_a = await _seed_player("A")
+    claimant_b = await _seed_player("B")
+    async with async_session_factory() as s:
+        sheet = await sheet_repo.create_sheet(s, owner, "S")
+        sid = sheet.id
+        parent = await sheet_repo.create_row(
+            s, sid, "铁块", need_qty=4, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:iron_block",
+        )
+        parent.claimant_uuid = claimant_a
+        # 子行：必须 registry_id + qty_per_unit（ck_sheet_rows_sub_invariants）
+        child = await sheet_repo.create_row(
+            s, sid, "铁锭", need_qty=4, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:iron_ingot",
+            parent_row_id=parent.id, qty_per_unit=4,
+        )
+        child.claimant_uuid = claimant_b
+        await s.commit()
+    # Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.collect_participant_uuids(s, sid)
+    # Assert：父子两 claimant 都在（子行不被遗漏），owner 也在
+    assert result == {owner, claimant_a, claimant_b}
