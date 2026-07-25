@@ -37,6 +37,30 @@
 
 ---
 
+## [pch_system-v0.8.2] - 2026-07-25
+
+**重要更新（部署脚本热修）**：修复 `.env` 已含全部所需键时 `Scripts/update.sh` 拉取新代码后静默退出、跳过后续部署步骤的问题。**此前已运行过更新脚本但疑似未跑完的实例，请按下方「升级指引」重跑一次。**
+
+### Fixed
+
+- **更新脚本半途中断**：当 `.env` 已补齐所有所需键时，`Scripts/update.sh` 会在拉取新版代码后立即静默退出，跳过容器重建、数据库迁移、前端构建与部署记录刷新，实例卡在「代码已新版、容器与迁移仍停留旧版」的半途中断状态。现已修复，更新可一次跑完全流程。
+
+### 升级指引
+
+- **已处于半途中断状态的实例**（`.env` 无缺键，上一轮卡在拉取代码之后）：**不能直接重跑 `bash Scripts/update.sh`**——当前磁盘上的 `update.sh` 仍是旧的有 bug 版本（修复在 v0.8.2 才进入），bash 启动时已把有 bug 的 `ensure_env_keys_update` 读入内存，`do_checkout` 改磁盘不会重载内存函数，重跑仍会在同一处中断；且即便先手动切到 v0.8.2 再无参重跑，`fetch_and_compare` 会因工作树 HEAD 已等于最新 tag 而 `exit 0`，跳过迁移与重建。
+
+  正确做法是**先把工作树切到 v0.8.2（让 bash 读到修复版脚本），再用 `--no-sync` 跳过 fetch/checkout、直接补齐后续步骤**：
+
+  ```bash
+  git fetch --all --tags
+  git checkout pch_system-v0.8.2
+  bash Scripts/update.sh --no-sync
+  ```
+
+  `--no-sync` 用部署记录（仍停在中断前的旧版本）作 diff 基准，正确识别「代码已新版、容器与迁移仍滞后」，按需执行容器重建 / 数据库迁移 / 前端构建 / MCDR 更新，并在 `verify_and_summary` 把部署记录推进到 v0.8.2。若工作区存在本地改动，脚本自带的 dirty 保护会先提示并拒绝运行，按提示处理后再重跑即可。
+
+---
+
 ## [backend-v0.8.1] - 2026-07-25
 
 元数据补丁：v0.8.0 发版时 `pyproject.toml` 的 `version` 字段漏改（仍为 0.7.0），本次补齐到当前发版线。无代码 / 行为变更。
@@ -409,7 +433,7 @@
 | 组件 | tag 约定 |
 |---|---|
 | 后端 | `backend-vX.Y.Z` |
-| 游戏端（MCDR 插件） | `pch_system-vX.Y.Z`（plugin id 由 `htcmc_auth` 改为 `pch_system`，与 `mcdreforged.plugin.json` id / 文件夹 / 内部包名一致；历史 tag `htcmc_auth-v*` / `mcdr-v0.3.0` 保留不重打，均符合 MCDR PluginCatalogue 合法格式） |
+| 游戏端（MCDR 插件）+ 项目级部署脚本 | `pch_system-vX.Y.Z`（plugin id 由 `htcmc_auth` 改为 `pch_system`，与 `mcdreforged.plugin.json` id / 文件夹 / 内部包名一致；历史 tag `htcmc_auth-v*` / `mcdr-v0.3.0` 保留不重打，均符合 MCDR PluginCatalogue 合法格式）。**该 tag 同时承载 `Scripts/` 部署脚本（install.sh / update.sh）与跨端基础设施变更**——使用者主要通过部署脚本统一拉取三端更新，故项目级工具链修复也归入此版本线 |
 | 前端 | `frontend-vX.Y.Z` |
 
 发版流程：
