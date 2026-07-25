@@ -1311,6 +1311,101 @@ async def test_advance_to_constructing_notifies_participants_and_skips_actor(cli
 
 
 @pytest.mark.asyncio
+async def test_advance_to_constructing_manager_actor_skips_whole_account(client):
+    """manager 作为 actor 推进施工：manager 同 account 全 UUID 跳过（issue #4 + R-5）。
+
+    覆盖 owner-as-actor 之外的另一核心场景——actor 是 manager（非 owner），且 manager
+    所属 Web account 下挂多个 UUID。``collect_participant_uuids`` 的 managers 源会把同
+    account 全 UUID 纳入参与者，notify 的 skip 也按 account 全 UUID 跳过；二者必须对齐，
+    否则 dave2（dave 同 account 的第二 UUID，本身是 lock 行认领人）会错误收到「自己 account
+    推进施工」的通知。
+    """
+    from sqlalchemy import select
+
+    from app.core.jwt import create_access_token
+
+    # Arrange：owner alice + lock 行（bob 认领）+ lock 行（dave2 认领）
+    alice_uuid, alice_bearer = await _make_player("alice")
+    sid = (
+        await client.post(
+            "/sheets", json={"title": "施工"}, headers=_auth(alice_bearer)
+        )
+    ).json()["id"]
+    row_for_bob = await _upsert_row(client, alice_bearer, sid, item="铁锭", need=64, mode=0)
+    row_for_dave2 = await _upsert_row(
+        client, alice_bearer, sid, item="圆石", need=128, mode=0
+    )
+    bob_uuid, bob_bearer = await _make_player("bob")
+    dave_uuid, dave_bearer = await _make_player("dave")
+    assert (
+        await client.post(
+            f"/sheets/{sid}/rows/{row_for_bob['id']}/claim", headers=_auth(bob_bearer)
+        )
+    ).status_code == 200
+
+    # 给 dave 同 account 再绑一个 UUID（dave2），用 dave2 认领另一行——使 dave2 作为 lock
+    # 行认领人独立进入参与者集合（即便 managers 源不展开，dave2 也在 participants）。
+    async with async_session_factory() as s:
+        dave_account_id = (
+            await s.execute(
+                select(Player.web_account_id).where(Player.uuid == dave_uuid)
+            )
+        ).scalar_one()
+    dave2_uuid = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(
+            Player(
+                uuid=dave2_uuid,
+                current_name="dave2",
+                role="user",
+                web_account_id=dave_account_id,
+            )
+        )
+        await s.commit()
+    dave2_bearer = (
+        f"Bearer {create_access_token(dave_account_id, 'user', active_uuid=dave2_uuid)}"
+    )
+    assert (
+        await client.post(
+            f"/sheets/{sid}/rows/{row_for_dave2['id']}/claim",
+            headers=_auth(dave2_bearer),
+        )
+    ).status_code == 200
+
+    # 授予 dave manager（后端按 account 解析，dave2 同 account 自动继承）
+    assert (
+        await client.post(
+            f"/sheets/{sid}/managers",
+            json={"player_uuid": str(dave_uuid)},
+            headers=_auth(alice_bearer),
+        )
+    ).status_code == 201
+
+    # Act：dave（manager，非 owner）推进施工
+    resp = await client.post(
+        f"/sheets/{sid}/advance?to=constructing", headers=_auth(dave_bearer)
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Assert：owner alice + 认领人 bob 收到；dave（actor）+ dave2（dave 同 account）均跳过。
+    # 关键：dave2 虽是 lock 行认领人（独立参与者源），但因与 actor dave 同 account 被跳过——
+    # 这是 R-5「同 account 多 UUID 视为同人」在通知侧的落地。
+    from app.models.notification import Notification
+    async with async_session_factory() as s:
+        notifs = list(
+            (
+                await s.execute(
+                    select(Notification).where(
+                        Notification.category == "sheet_advanced_constructing"
+                    )
+                )
+            ).scalars().all()
+        )
+    recipients = {n.recipient_uuid for n in notifs}
+    assert recipients == {alice_uuid, bob_uuid}
+
+
+@pytest.mark.asyncio
 async def test_get_archive_markdown_returns_content(client, tmp_path, monkeypatch):
     # Arrange：先归档
     _patch_archive_root(monkeypatch, tmp_path)

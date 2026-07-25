@@ -74,7 +74,7 @@ async def claim(sheet_id, row_id, player, session):
 
 ## 3. `category` 枚举注册表
 
-### 3.1 首期（sheets 专用，9 类）
+### 3.1 行级通知（sheets 专用）
 
 | category | 触发端点 | 接收者 | 文案要点 |
 |---|---|---|---|
@@ -89,7 +89,16 @@ async def claim(sheet_id, row_id, player, session):
 | `sheet_progress_changed` | `PATCH .../progress`（owner，值变化） | **该行贡献者** | 「[{item}] 进度已被 {actor} 调整为 {new}/{need}（原 {old}）」 |
 | `sheet_progress_reset` | `POST .../release`（progress 行）/ `PUT .../rows` 改 mode（progress→lock） | **该行贡献者** | 「[{item}] 进度已被 {actor} 重置，贡献清空」 |
 
-### 3.2 扩展规约
+### 3.2 项目级通知（sheets 阶段流转，迁移 0009 + issue #4）
+
+| category | 触发端点 | 接收者 | 文案要点 |
+|---|---|---|---|
+| `sheet_advanced_constructing` | `POST /sheets/{id}/advance?to=constructing`（tier B：owner / admin / manager） | **全体参与者**（owner + managers + lock 行认领人 + progress 行贡献者）；触发者所属 Web account 下全部 UUID 跳过（R-5，含 manager 自推进） | 「{actor} 将 [{title}] 推进至施工阶段」 |
+| `sheet_archived` | `POST /sheets/{id}/advance?to=archived`（tier A：owner / admin） | **全体参与者**（同上）；触发者所属 Web account 下全部 UUID 跳过（含 owner 自归档） | 「项目「{title}」已由 {actor} 归档」 |
+
+> 「全体参与者」聚合由 `sheet_repo.collect_participant_uuids` 实现（4 源 UNION：owner / managers 展开 account 全 UUID / lock 行 claimant / progress 行 contributor，去重）。services 层 `notification_service.notify_many`（归档）与 api 层 `_shared.notify_uuids`（进施工）分别消费：前者不注入 actor 字段（payload 由调用方自构），后者自动注入 `actor_uuid`/`actor_name`。
+
+### 3.3 扩展规约
 
 新业务模块按 **`<domain>_<event>`** 命名新增：
 
