@@ -134,10 +134,88 @@ jobs:
         run: pytest McdrPlugin/tests -q
 
   # ============================================================
-  # label-pr：根据三 job 结果给 PR 打互斥标签 ci:pass / ci:fail
+  # version-metadata：release 意图 PR 的版本 bump 校验（Layer 1）。
+  # 五源 OR 命中即校验：SemVer 合法 / 必须 bump / 严格前进 / CHANGELOG 段存在。
+  # 命中自动打 release 标签（意图可见），未命中移除。普通 PR 不命中则跳过、不阻。
+  # ============================================================
+  version-metadata:
+    if: github.event_name == 'pull_request' # 仅 PR 有上下文；workflow_dispatch 跳过
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write # mark 步 add/remove release 标签
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 读 tag 历史（pch_system-v*）+ base..head diff
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: detect（判定 release 意图，五源 OR）
+        id: detect
+        env:
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/check_version_bump.py --detect-only
+
+      - name: validate（release PR 校验 SemVer+必须 bump+前进+CHANGELOG）
+        if: steps.detect.outputs.is_release == 'true'
+        env:
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/check_version_bump.py --validate
+
+      - name: mark（命中打 release 标签，未命中移除）
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          IS_RELEASE: ${{ steps.detect.outputs.is_release }}
+        with:
+          script: |
+            const isRelease = process.env.IS_RELEASE === 'true';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const LABEL = 'release';
+            async function addLabel() {
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [LABEL] });
+                core.info(`added label: ${LABEL}`);
+              } catch (e) {
+                if (e.status === 403 || e.status === 404) {
+                  core.warning(`cannot add ${LABEL} (fork PR 只读 token?): ${e.message}`);
+                  return;
+                }
+                throw e;
+              }
+            }
+            async function removeLabel() {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name: LABEL });
+                core.info(`removed label: ${LABEL}`);
+              } catch (e) {
+                if (e.status === 403 || e.status === 404) {
+                  core.info(`${LABEL} not present or forbidden, skip remove`);
+                  return;
+                }
+                throw e;
+              }
+            }
+            if (isRelease) { await addLabel(); } else { await removeLabel(); }
+
+  # ============================================================
+  # label-pr：根据四 job 结果给 PR 打互斥标签 ci:pass / ci:fail
   # ============================================================
   label-pr:
-    needs: [backend, frontend, mcdr]
+    needs: [backend, frontend, mcdr, version-metadata]
     if: always() && github.event_name == 'pull_request' # workflow_dispatch 无 PR 上下文，跳过
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -151,6 +229,7 @@ jobs:
           BACKEND_RESULT: ${{ needs.backend.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           MCDR_RESULT: ${{ needs.mcdr.result }}
+          VERSION_METADATA_RESULT: ${{ needs.version-metadata.result }}
         with:
           script: |
             const PASS = 'ci:pass';
@@ -160,6 +239,7 @@ jobs:
               backend: process.env.BACKEND_RESULT,
               frontend: process.env.FRONTEND_RESULT,
               mcdr: process.env.MCDR_RESULT,
+              'version-metadata': process.env.VERSION_METADATA_RESULT,
             };
             const ok = Object.values(results).every((r) => r === 'success');
             const target = ok ? PASS : FAIL;

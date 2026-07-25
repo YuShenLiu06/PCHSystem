@@ -47,16 +47,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1. 校验 tag：动态读 mcdreforged.plugin.json 的 id，要求 tag 匹配 <id>-v<semver>
+      # 1. 校验 tag：读 id + version，要求 tag 匹配 <id>-v<semver> 且 version==tag（兜底「忘 bump」）
       - name: 校验 tag
         run: |
           tag="${GITHUB_REF_NAME}"
           id=$(python3 -c "import json;print(json.load(open('McdrPlugin/mcdreforged.plugin.json'))['id'])")
+          ver=$(python3 -c "import json;print(json.load(open('McdrPlugin/mcdreforged.plugin.json'))['version'])")
           if [[ ! "$tag" =~ ^${id}-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
             echo "::error::tag '$tag' 不匹配 <id>-v<semver>（id=$id）。合法形如 ${id}-v1.2.3 或 ${id}-v1.2.3-rc.1" >&2
             exit 1
           fi
-          echo "tag 校验通过: $tag (id=$id)"
+          tag_ver="${tag#"${id}-v"}"
+          if [[ "$ver" != "$tag_ver" ]]; then
+            echo "::error::plugin.json version '$ver' != tag '$tag_ver'（版本元数据未更新到本次发版）" >&2
+            exit 1
+          fi
+          echo "tag 校验通过: $tag (id=$id, version=$ver)"
 
       - uses: actions/setup-python@v5
         with:

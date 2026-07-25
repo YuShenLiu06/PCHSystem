@@ -96,6 +96,8 @@ refactor(backend)!: 重命名 players 主键字段
 4. 所有者在 Releases 页完善 notes、检验 `.mcdr`，手动 **Publish** → 正式发布（catalogue 此时可探测到）
 
 > **PR CI 是发布前置**：日常 PR 已由 [`ci.yml`](./.github/workflows/ci.yml) 跑过三端检测，`release.yml` 仍重跑一遍作发版前最终守门（命令一致），任一失败则整 job 失败、**不建草稿**（打 tag 后问题立即暴露；修后删 tag 重打重跑）。`-rc` 后缀（如 `pch_system-v1.0.0-rc.1`）自动标记为 pre-release。
+>
+> **版本元数据门禁**（2026-07-25）：release 意图 PR（命中任一信号即触发：`release/**`/`hotfix/**` 分支、PR 标题含 `release`、带 `release` label、改了 `plugin.json` 的 `version`、或 PR commit 被 `pch_system-v*` tag 指向）由 `ci.yml` 的 `version-metadata` job 校验——`plugin.json.version` 须 SemVer 合法（`X.Y.Z` 或 `X.Y.Z-rc.N`）、**PR 内已 bump**、严格前进于最新 tag、且 `CHANGELOG.md` 有 `## [pch_system-vX.Y.Z]` 段；命中自动打 `release` 标签，失败 → block 合并 + `ci:fail`。普通 PR 五源不命中则跳过、不阻。直接进 main 的发版由 `release.yml` "校验 tag" 步兜底 `version==tag`（唯一守门）。校验逻辑见 [`check_version_bump.py`](./.github/scripts/check_version_bump.py)。
 
 **Backend / Frontend（暂未自动化）**：
 1. 更新版本号文件（`Backend/pyproject.toml` / `Frontend/package.json`）+ `CHANGELOG.md` 固化段
