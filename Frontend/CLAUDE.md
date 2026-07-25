@@ -54,7 +54,7 @@ Vue 3 + Element Plus 后台，三端架构中的网页端：管理员/负责人�
 | `POST /bind/issue` · `POST /bind/confirm` · `POST /bind/claim` | Web 账号绑多 MC 身份双向短码（`BindConfirm.vue` game_init / `ClaimBind.vue` web_init，v0.8.0）；详见 [`frontend.md`](../Docs/architecture/frontend.md) §3.2 |
 | `/sheets/*` 全套 | 项目（sheet）CRUD + 行 upsert/删 + 协作（claim/delivery/contribute/release/reject/progress）+ **阶段生命周期**（`POST /sheets/{id}/advance?to=` 流转 / `GET /sheets/{id}/archive` 归档 md 预览 / `GET /sheets/{id}/archive/assets/{filename}` 归档产物（贡献占比 PNG）/ `GET /sheets?status=` 进行中·已归档 tab 过滤），`SheetList`（tab 进行中/已归档 + 状态列）/ `SheetEditor`（阶段横幅 + owner 流转按钮 + archived 只读 + 归档 `<pre>` md 预览 + 下方贡献占比 `<img>`）消费；详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) |
 | `GET/POST/DELETE /sheets/{id}/managers` | 项目协管员（v0.8.0，account 锚）：`SheetEditor` 内联面板（owner 增/撤销 + 全员可见列表）；`useSheetDetail` 三层 RBAC（`canManage`/`isManager`/`canEdit`）；详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §5.6 / §7.1 |
-| `POST /parsing/litematic` · `POST /parsing/nbt` | 投影/蓝图解析上传（`LitematicImport.vue` 按扩展名自动选端点 → 预览 → 生成 Sheet）；详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) |
+| `POST /parsing/batch` | **唯一解析端点**（v0.8.0 起合并，原 `/parsing/litematic` + `/parsing/nbt` 已删）：`BatchImport.vue` 一次上传 1..N 个 `.litematic`/`.nbt`（混型）→ 每文件独立预览 + 倍数聚合（`utils/batchAggregate.ts`）→ 单次 `/sheets/from-items` 生成单表；详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) §8 |
 
 > **术语演进**：玩法语义 sheet 已升级为「项目」，UI 文案统一改「项目」（`App.vue` 导航 / `SheetList` / `SheetEditor`），但 URL `/sheets`、API 类型名 `Sheet*` 保留不变（YAGNI，避免书签/外链失效）。
 
@@ -84,7 +84,7 @@ Vue 3 + Element Plus 后台，三端架构中的网页端：管理员/负责人�
 | 数据模型 | `../Docs/architecture/data-model.md` | 前端消费的实体定义（只读引用） |
 | 工程总览 | `../Docs/architecture.md` | 三端架构与跨服务流程 |
 | sheets API | `../Docs/architecture/api/sheets.md` | 表/行端点 + 行状态机 + §5.6 协管员 + **§7.1 权限矩阵 M01-M26（三层 RBAC 权威）** + §11 命令映射 |
-| parsing API | `../Docs/architecture/api/parsing.md` | 投影解析上传端点 + 响应模型（`LitematicImport.vue`） |
+| parsing API | `../Docs/architecture/api/parsing.md` | 投影解析上传端点 + 响应模型（`BatchImport.vue`，v0.8.0 合并为 `/parsing/batch`） |
 | 根规范 | `../CLAUDE.md` | 统一命名 / 红线 / 索引 |
 
 ---
@@ -128,7 +128,9 @@ npm run dev                 # 启 Vite dev server（默认 http://localhost:5173
 
 ---
 
-*最后更新：2026-07-21（v0.7.0 文档同步：身份管理模块 4 视图 + 协管员面板 + 三层 RBAC + account 级适配）*
+*最后更新：2026-07-25（v0.8.0 文档同步：解析端点合并为唯一入口 `/parsing/batch`——`BatchImport.vue` 替代 `LitematicImport.vue`，多文件 + 倍数聚合生成单表）*
+
+*增量（2026-07-24）：解析端点合并（issue #16）——删 `POST /parsing/litematic` + `POST /parsing/nbt`，统一 `POST /parsing/batch`（单文件等价批量 1 个）；`LitematicImport.vue` 移除，`BatchImport.vue` 成为唯一解析视图（多文件上传 + 每文件整数倍数 + `utils/batchAggregate.ts::aggregateItems` 跨文件按 `item_id` 聚合 → 单次 `/sheets/from-items` 生成单表，>2000 种禁用生成）；§4 端点表 + §5 文档索引同步。前端登录链路修复（PR #36，issue #34 #35）——欢迎语显示账号名 / token 过期不清表单 / 后端不可用不误报登录失败（新增 `utils/http-error.ts` 区分网络异常与 401）；bugfix 不引入新雷点，详见 [`CHANGELOG.md`](../CHANGELOG.md) frontend-v0.8.0。*
 
 *增量（2026-07-19）：身份管理模块——`api/identity.ts`（9 函数 + 7 类型）+ `stores/auth.ts` 加 `account: AccountBrief | null` + `isTemporaryAccount` getter；4 视图 `Login`/`Register`/`BindConfirm`/`ClaimBind`（**非 5 视图，`Identities.vue` 待办未实现**）；`Me.vue` 升级（账号卡片 + 绑定 UUID 列表 + active_uuid 标记 + 临时账号引导横幅 + 昵称编辑 display_name）；`AuthExchange.vue` 按 `is_temporary` 分流 `/register`/`/me`；router 加 4 路由（`meta.public` 二分，无 `meta.roles`）。协管员管理面板——`SheetEditor` 内联（owner 增/撤销 + 全员可见列表），`useSheetDetail` 三层 RBAC（`canManage` tier A / `isManager` / `canEdit` tier B，`managers[].member_uuids ∩ viewer_uuids`），阶段按钮 tier A/B 分流。新增 RS-6 临时账号引导横幅*
 

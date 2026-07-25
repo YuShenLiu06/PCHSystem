@@ -1,0 +1,367 @@
+> ⚠️ **归档文件**（2026-07-25）：本文件为 v0.9 前的旧顶层架构文档，已移至 `Docs/architecture/legacy/`。当前权威顶层见 [`../../architecture.md`](../../architecture.md)。保留作历史参考，**内容多处过时**——§7 规划期 `/projects` + `draft→active→settling→archived` 设计从未实现（实际走 `/sheets` 三态）、§7.2 清箱时序已废弃（R-3/R-4）、`projects`/`scoring`/`titles`/`wiki`/`alerts` schema 多数未落地。
+
+---
+
+# HTCMC PCHSystem 架构文档（统一总览）
+
+> **版本**：v0.1（2026-07-01 初版）
+> **玩法设计**：见 [`guied.md`](./guied.md)
+> **本文档定位**：工程架构的统一总览与导航。各服务详见 [`architecture/services/`](./architecture/services/)，全局数据模型详见 [`architecture/data-model.md`](./architecture/data-model.md)，前端详见 [`architecture/frontend.md`](./architecture/frontend.md)。
+
+---
+
+## 1. 项目概述与定位
+
+HTCMC PCHSystem 是面向「白名单生电社区服」的**项目制工程贡献与荣誉体系**系统。
+
+| 维度 | 内容 |
+|---|---|
+| 核心定位 | 白名单生电社区服 · 项目制协作玩法 · **纯荣誉激励**（积分不可自由转移） |
+| 设计原则 | 风控前置入服、流程全自动化、运营轻量化 |
+| 服务端 | Minecraft · **Fabric + Create + Carpet** |
+| 验证模式 | **离线模式**（`online-mode=false`） |
+
+**三端职责**：
+
+- **游戏内端（MCDR 插件）**：命令菜单、箱子批量提交、信息查询、称号实时生效。
+- **网页后台端（Vue + FastAPI）**：项目配置、积分结算、权限管控、进度监控。
+- **Wiki 端（wiki.js）**：项目归档沉淀、荣誉榜单展示、项目节点编辑。
+
+---
+
+## 2. 总体架构
+
+### 2.1 三端架构（API 网关 · 完全分离）
+
+```mermaid
+flowchart LR
+    subgraph Host["游戏侧（宿主机进程）"]
+        MC["Minecraft 服务端<br/>Fabric+Create+Carpet"]
+        MCDR["MCDReforged 插件<br/>（游戏内端）"]
+        MC <-->|RCON / 控制台IO| MCDR
+    end
+
+    subgraph DC["后端（Docker Compose）"]
+        API["FastAPI 后端<br/>（模块化单体）"]
+        DB[("PostgreSQL")]
+    end
+
+    subgraph WikiDC["wiki.js（独立部署，不入本仓 compose）"]
+        WIKI["wiki.js<br/>渲染/编辑"]
+        WIKIREPO[("wiki 内容 git 仓<br/>（权威源）")]
+        WIKI <-.->|双向同步 git| WIKIREPO
+    end
+
+    subgraph User["用户侧"]
+        WEB["Vue3 + Element Plus<br/>网页后台"]
+        P["玩家 / 管理员"]
+    end
+
+    MCDR -->|HTTP API + 服务密钥<br/>（写：service-token + X-Player-UUID 代玩家）| API
+    WEB -->|HTTP API + JWT| API
+    P -->|游戏内命令 !!xx| MCDR
+    P --> WEB
+    API --> DB
+    API -.->|git push（默认 off，best-effort）<br/>归档 index.md + contributions.png| WIKIREPO
+```
+
+**核心约束**：
+
+- **数据唯一拥有者**：所有业务数据集中在 **PostgreSQL**，由 **FastAPI 后端独占**读写。MCDR 插件**不直连数据库**，仅通过 HTTP API 与后端交互。
+- **MCDR 是纯游戏内客户端**：只负责命令交互、箱子/背包扫描、称号下发、HTTP 上报。写后端时经 `X-Service-Token` + `X-Player-UUID` 头**代玩家调用**（与 JWT 等价，复用 RBAC，详见 [`services/notification-service.md`](./architecture/services/notification-service.md) 与 [`api/sheets.md`](./architecture/api/sheets.md) §2）。
+- **wiki.js 经 git 仓库双向同步**：后端把归档（`index.md` + `contributions.png`）提交推送到**独立 wiki 内容 git 仓**（默认 off，配置 `WIKI_GIT_*`）；wiki.js 与该远端双向同步渲染，拥有者获授权后可在 wiki.js 编辑自己的页面，改动经 git 回流、支持 PR 审查。**wiki 是人类可读可编辑的投影，绝不回写 `sheets` / `score_ledger` 等业务表**（R-1 不变）；wiki git 仓 = wiki 内容权威源。详见 [`services/wiki-service.md`](./architecture/services/wiki-service.md)。
+- **离线身份锚**：因离线模式 UUID 由玩家名确定性推导，**以「Web 绑定账号」为身份主锚**，MC UUID 为子身份（见 [`services/user-service.md`](./architecture/services/user-service.md)）。
+
+### 2.2 后端架构粒度：模块化单体（Modular Monolith）
+
+后端**部署为单一 FastAPI 服务**，内部按领域强边界划分模块；**不拆分独立子服务**。理由：
+
+- 社区服规模（玩家几十~几百、QPS 低、维护者少），微服务属过度设计。
+- 积分结算涉及跨表事务（提交→扣需求→记流水→更新榜单），**单库事务**保证一致性最简单可靠。
+- 模块边界清晰，未来真要拆分（如独立的用户中心）是平滑路径。
+
+> 文档虽按「服务」拆分子文档，但这是**逻辑边界**，部署仍是单体。
+
+---
+
+## 3. 技术栈与 ADR 决策记录
+
+| 维度 | 决策 | 关键依据 / 证据 |
+|---|---|---|
+| 整体架构 | **API 网关 · 完全分离** | MCDR 仅作游戏内客户端，后端独占数据 |
+| 后端 | **Python · FastAPI** | 异步 + 自动 OpenAPI；与 MCDR 同语言 |
+| 后端粒度 | **模块化单体** | 跨表事务一致性 + 低运维 |
+| 前端 | **Vue 3 + Element Plus** | 中文后台组件生态齐全 |
+| 数据库 | **PostgreSQL** | 窗口函数/CTE 适配占比与榜单聚合 |
+| MC 服务端 | Fabric + Create + Carpet | CSV 材质清单印证 Create 模组 |
+| MC 层 | **MCDReforged 插件** | 仅游戏内交互 + HTTP 客户端 |
+| 材料清单解析 | **直接解析 `.litematic`**（[`litemapy`](https://github.com/Spindust/litemapy)） | 直拿 registry id，根治 CSV 显示名不匹配 |
+| 部署 | **Docker Compose**（后端+PG）+ wiki.js **独立部署** | 后端+PG 容器化；wiki.js 经独立 wiki 内容 git 仓双向同步（R-8） |
+| 验证模式 | 离线模式 | OfflinePlayer UUID + [`offline-whitelist`](https://github.com/skuzow/offline-whitelist) |
+| 称号前缀 | scoreboard team prefix + [Title Prefix Handler](https://mcdreforged.com/zh-CN/plugin/title_prefix_handler) | 复用现成 handler 修正前缀对解析的干扰 |
+| wiki 同步 | **wiki 内容 git 仓双向**（非 GraphQL 单向） | 后端 publisher 默认 off；wiki.js 独立部署、与 git 远端双向同步，支持 PR 审查 |
+| 告警 | Notifier 抽象接口，首期「游戏内 + 后台日志」 | 预留 QQ/Discord webhook |
+
+### 3.1 关键技术可行性结论（均经调研验证，非想当然）
+
+| 关键点 | 结论 | 证据 |
+|---|---|---|
+| MCDR 命令注册 | ✅ 低 | [`server.register_command(Literal(...))`](https://docs.mcdreforged.com/zh-cn/latest/) |
+| MCDR 取命令输出 | ✅ 中 | `server.rcon_query('data get block x y z')` 返回 SNBT |
+| 箱子/背包扫描 | ✅ 中 | RCON + **自研/引入 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt) 解析 SNBT** |
+| 清空箱子 | ✅ 低 | **`data merge block x y z {Items:[]}`**（非 `/clear`） |
+| MC UUID（离线） | ✅ 低 | `MD5("OfflinePlayer:"+name)` → v3 UUID，确定性可推导 |
+| MCDR 外联 HTTP | ✅ 低 | `requests`/`aiohttp` + `schedule_task` + 异步事件监听 |
+| `.litematic` 解析 | ✅ 低-中 | [`litemapy`](https://github.com/Spindust/litemapy) `Schematic.load` → `block.blockid` |
+| wiki.js 同步归档 | ✅ 中 | 后端把 `projects/<id>/`（`index.md` + `contributions.png`）subprocess git commit + push 到独立 wiki 内容 git 仓；wiki.js 与该远端双向同步（R-8 重写后改 git，废弃原 GraphQL 单向方案） |
+| wiki.js 编辑权限授权 | ✅ 中 | host 层 git 分支保护 + PR；wiki.js 侧 Page Rules（`groups.update(pageRules)`，`match:START` + `roles:["write:pages"]`）按需补充（待部署后验证） |
+
+---
+
+## 4. 部署架构（Docker Compose）
+
+```mermaid
+flowchart TB
+    subgraph Host["宿主机"]
+        MC["MC 服务端 (Fabric)"]
+        MCDR["MCDR 进程"]
+        RCON["RCON 端口"]
+        MC --- RCON
+        MCDR --- RCON
+    end
+
+    subgraph Compose["docker-compose（本仓）"]
+        direction TB
+        C_API["backend (FastAPI:uvicorn)<br/>:8000"]
+        C_DB["postgres:16<br/>:5432 → 仅内部"]
+        C_API --> C_DB
+    end
+
+    subgraph WikiSide["wiki.js（独立部署，不在本仓 compose）"]
+        C_WIKI["wiki.js<br/>渲染/编辑"]
+        WIKIREPO2[("wiki 内容 git 仓<br/>（GitHub/Gitea/GitLab，未决）")]
+        C_WIKI <-.->|双向同步| WIKIREPO2
+    end
+
+    MCDR -->|http://host.docker.internal:8000| C_API
+    WEB["浏览器"] -->|:8000| C_API
+    C_API -.->|git push（默认 off）<br/>projects/&lt;id&gt;/| WIKIREPO2
+    ADMIN["管理员 / 拥有者"] -->|:3000 编辑/PR| C_WIKI
+```
+
+**服务清单**：
+
+| 服务 | 镜像/形态 | 端口 | 说明 |
+|---|---|---|---|
+| `backend` | FastAPI + uvicorn | 8000 | 模块化单体后端 |
+| `postgres` | postgres:16 | 5432（内部） | 唯一业务数据库 |
+| `wiki.js` | requarks/wiki | 3000 | **独立部署**（不入本仓 compose），经独立 wiki 内容 git 仓与后端 publisher 双向同步（R-8） |
+| MCDR + MC | 宿主进程 | — | 不容器化，与游戏端同生命周期 |
+
+**密钥与环境**：`POSTGRES_*`、`WIKI_GIT_*`（`WIKI_GIT_REMOTE_URL` / `WIKI_GIT_BRANCH` / `WIKI_GIT_TOKEN` / `WIKI_GIT_AUTHOR_NAME` / `WIKI_GIT_AUTHOR_EMAIL`，留空 `REMOTE_URL` = 不推送）、`MCDR_SERVICE_TOKEN`（MCDR↔后端双向鉴权）、`JWT_SECRET` 等通过 `.env` / docker secrets 注入，**不进代码库**。
+
+> 待确认：是否最终容器化 MC 服务端（首版建议宿主跑，避免 Fabric mod 挂载复杂度）。
+
+---
+
+## 5. 服务 / 模块地图
+
+```mermaid
+flowchart LR
+    MCDR["MCDR 插件<br/>!!submit/!!bind/!!title/!!PCH sheet"]
+    USER["user-service<br/>身份核心"]
+    PROJ["project-service<br/>项目+材料清单"]
+    SCORE["scoring-service<br/>积分引擎"]
+    TITLE["title-service<br/>称号"]
+    WIKI["wiki-service<br/>git 仓 publisher + wiki.js 同步"]
+    ALERT["alert-service<br/>风控告警"]
+    NOTIFY["notification-service<br/>统一通知"]
+    FRONT["frontend<br/>Vue 后台"]
+
+    MCDR --> USER
+    MCDR --> SCORE
+    MCDR --> NOTIFY
+    FRONT --> USER
+    FRONT --> PROJ
+    FRONT --> SCORE
+    FRONT --> TITLE
+    FRONT --> ALERT
+    PROJ --> SCORE
+    SCORE --> TITLE
+    SCORE --> WIKI
+    TITLE --> WIKI
+    SCORE --> ALERT
+    SCORE --> NOTIFY
+    PROJ --> NOTIFY
+    USER -.被所有服务依赖.-> PROJ
+```
+
+| 服务 | 职责 | 文档 |
+|---|---|---|
+| **MCDR 插件**（游戏内端） | 命令、箱子/背包扫描、UUID 推导、称号下发、HTTP 上报、通知轮询投递 | [`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md) |
+| **user-service** | MC 绑定 / Token / wiki 账号映射 / 权限（身份主锚） | [`services/user-service.md`](./architecture/services/user-service.md) |
+| **project-service** | 项目生命周期 + `.litematic` 解析 + 材料清单 | [`services/project-service.md`](./architecture/services/project-service.md) |
+| **scoring-service** | 提交入库 + 放置贡献 + 黄皮子积分引擎 | [`services/scoring-service.md`](./architecture/services/scoring-service.md) |
+| **title-service** | 指数称号体系 + scoreboard 前缀下发 | [`services/title-service.md`](./architecture/services/title-service.md) |
+| **wiki-service** | wiki 内容 git 仓 publisher（默认 off，best-effort）+ wiki.js 双向同步 + 拥有者编辑权限模型 | [`services/wiki-service.md`](./architecture/services/wiki-service.md) |
+| **alert-service** | 异常检测 + Notifier 抽象（游戏内/后台/QQ webhook） | [`services/alert-service.md`](./architecture/services/alert-service.md) |
+| **notification-service** | 业务事件 → 给特定玩家记通知 → 落库与投递（可复用契约） | [`services/notification-service.md`](./architecture/services/notification-service.md) |
+| **frontend** | Vue3 后台管理界面 | [`frontend.md`](./architecture/frontend.md) |
+
+---
+
+## 6. 全局数据模型概览
+
+完整 ER 图与 DDL 见 [`architecture/data-model.md`](./architecture/data-model.md)。核心实体：
+
+```mermaid
+erDiagram
+    players ||--o{ web_accounts : has
+    players ||--o{ submissions : makes
+    players ||--o{ score_ledger : owns
+    players ||--o{ player_titles : holds
+    projects ||--|| material_lists : has
+    projects ||--o{ submissions : receives
+    projects ||--o{ placement_records : has
+    titles ||--o{ player_titles : unlocked_as
+```
+
+关键表：`players`、`web_accounts`、`bind_tokens`、`projects`、`material_lists`、`submissions`、`placement_records`、`score_ledger`、`titles`、`player_titles`、`wiki_sync_log`、`alerts`。
+
+**设计要点**：
+- **主键**：Web 账号作身份主锚（已落地，迁移 0014），MC UUID 为子身份（`web_accounts.id` + `players.web_account_id` FK）。
+- **积分流水 `score_ledger`**：append-only，任何积分变动都记一条，`balance_after` 便于审计与重建榜单。
+- **防重复提交**：`submissions` 上 `(project_id, player_id, item_id, batch_token)` 唯一约束。
+- **block→item 归一化**：材料清单与提交均以 **registry id** 存储（`create:warehouse`），存储前剥离 BlockState properties。
+
+---
+
+## 7. 跨服务核心业务流程
+
+### 7.1 立项（导入投影 → 材料清单 → 积分池）
+
+```mermaid
+sequenceDiagram
+    participant L as 负责人(Web)
+    participant F as frontend
+    participant P as project-service
+    participant DB as PostgreSQL
+    participant W as wiki-service
+    L->>F: 上传 .litematic + 配置积分池/类型
+    F->>P: POST /projects (含文件)
+    P->>P: litemapy 解析 → {registry_id: count}
+    P->>P: block→item 归一化(去 properties/过滤无物品)
+    P->>DB: 写 projects + material_lists
+    P->>W: 建项目 wiki 节点 + 授负责人编辑权
+    W-->>P: 同步结果
+    P-->>F: 立项成功
+```
+
+### 7.2 材料提交结算（核心链路）
+
+```mermaid
+sequenceDiagram
+    participant PL as 玩家(游戏内)
+    participant M as MCDR 插件
+    participant MC as MC 服务端
+    participant S as scoring-service
+    participant DB as PostgreSQL
+    PL->>M: !!submit <项目> <箱子坐标>
+    M->>MC: rcon: data get block x y z
+    MC-->>M: SNBT {Items:[...]}
+    M->>M: amulet-nbt 解析 → {id: count}
+    M->>S: POST /submissions (token+items)
+    S->>DB: 事务: 写 submissions + score_ledger + 更新榜单
+    S-->>M: {ok, 获得积分, 进度}
+    M->>MC: rcon: data merge block x y z {Items:[]}
+    M-->>PL: 回执（称号/榜单变化）
+```
+
+> 关键：**扫描 → 上报 → 后端事务入库 → 成功后才清箱**，避免清箱后上报失败导致材料丢失。
+> **注意**：R-3/R-4 已废弃清箱功能，本流程仅作历史参考。
+
+### 7.3 称号解锁与公告
+
+积分写入 → `scoring-service` 触发 `title-service` 检查 `S_升级 = S_基 × r^(等级-1)` → 达标则解锁、记 `player_titles` → 高阶触发全服公告 → MCDR 经 scoreboard 下发前缀。
+
+### 7.4 项目完结 → 归档同步
+
+`project-service` 标记完结 → `scoring-service` 终算（占比/加权/负责人 k 增发）→ `archive` 服务渲染 `index.md` + `contributions.png` 原子落盘到 `ARCHIVE_ROOT/projects/<id>/` + DB 置 archived 三字段 → `wiki-service` 的 **git publisher**（默认 off，best-effort）把 `projects/<id>/` 整目录 `git commit + push` 到独立 wiki 内容 git 仓（失败仅 `notify(category="wiki_publish_failed")`，不抛、不回滚 DB，业务库完整）→ wiki.js 与该远端双向同步渲染；拥有者获授权后可在 wiki.js 编辑，改动经 git 回流、可走 PR 审查。
+
+### 7.5 sheets 协作（Web ↔ MC 对等 + 通知流转）
+
+sheets 协作端点对 Web（JWT）与 MCDR（service-token + `X-Player-UUID` 代玩家）**对等开放**，RBAC 与状态机一致（R-9）。任何写动作都在**同一事务**内记通知（R-10），由 MCDR 后台轮询拉取并 `server.tell` 投递，离线玩家通知落库、上线补推。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as 玩家B(认领者/MC)
+    participant MCDR as MCDR 插件
+    participant API as 后端 API
+    participant DB as PostgreSQL
+    participant O as 拥有者(在线)
+    participant BO as 玩家B(离线→上线)
+
+    Note over B,O: 认领 → 拥有者收到通知
+    B->>MCDR: !!PCH sheet claim <sid> <rid>
+    MCDR->>API: POST /sheets/{sid}/rows/{rid}/claim<br/>(X-Service-Token + X-Player-UUID=B)
+    API->>DB: 事务: 写 sheet_rows(claimed, claimant=B)<br/>+ notify(owner, sheet_claimed)
+    API-->>MCDR: 200 RowDetail
+    MCDR-->>B: §a认领成功
+
+    Note over MCDR,O: 后台轮询拉取 + tell 拥有者
+    MCDR->>API: GET /notifications/pending?player_uuid=<owner>
+    API-->>MCDR: [{category:sheet_claimed, ...}]
+    MCDR->>O: server.tell: 「B 认领了 [清单名] 的 [铁锭]」
+    MCDR->>API: POST /notifications/ack {player_uuid, ids}
+
+    Note over O,BO: 拥有者打回 → 认领人收到通知
+    O->>API: POST /sheets/{sid}/rows/{rid}/reject<br/>(JWT 或 service-token+UUID)
+    API->>DB: 事务: 写 sheet_rows(done→claimed, delivered=0)<br/>+ notify(B, sheet_rejected)
+    API-->>O: 200
+
+    Note over MCDR,BO: B 离线堆积，上线补推
+    BO->>MCDR: 上线事件 on_player_joined
+    MCDR->>API: GET /notifications/pending?player_uuid=<B>
+    API-->>MCDR: [{category:sheet_rejected, ...}]
+    MCDR->>BO: server.tell: 「[清单名] 的 [铁锭] 已打回，可重做」
+    MCDR->>API: POST /notifications/ack {player_uuid, ids}
+```
+
+> 详细：[`api/sheets.md`](./architecture/api/sheets.md) §11/§12、[`services/notification-service.md`](./architecture/services/notification-service.md)、[`services/mcdr-plugin.md`](./architecture/services/mcdr-plugin.md)「通知轮询」。
+>
+> **v0.8.0 起**，owner/claimant/manager 判定均升 account 级，`viewer_uuids` = 同 account 所有 UUID 集合；聚合查询 `GROUP BY web_account_id`。
+
+---
+
+## 8. 全局风险矩阵
+
+| 风险 | 影响 | 概率 | 缓解 |
+|---|---|---|---|
+| SNBT 解析自研工作量大 | 扫描不准/开发延期 | 中 | 引入 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)，不自研 |
+| 离线改名 = 换身份 | 历史积分丢失 | 中 | Web 账号作身份锚 + 「改名过户」运维流程 |
+| 物品 block↔item 归一化边界 | 清单与提交对不上 | 中 | 维护无物品黑名单 + 去 properties，集中在 `project-service` |
+| wiki.js Page Rules 优先级绕 | 授权不准 | 中 | 主路径靠 host git 分支保护 + PR；wiki.js 侧 Page Rules 按需补充 + Deny/Allow 测试用例验证 |
+| wiki git publisher 推送失败 | wiki 内容滞后于业务库 | 低-中 | publisher best-effort：失败仅 `notify(category="wiki_publish_failed")`，不回滚 DB；可重试推送，业务库完整（R-1 不变） |
+| Gitea↔wiki.js 同步偶发不稳 | wiki 页面渲染过期 | 中 | 选 GitHub/GitLab 时无此问题；Gitea 部署需在 wiki.js 用「Purge Local Repository」强制重拉（host 选型未决） |
+| RCON 性能（批量扫描） | 卡顿/超时 | 低 | 多箱扫描串行 + 限频 + 超时熔断 |
+| 「扫描成功但上报失败」后清箱 | 材料丢失 | 中 | **先上报成功再清箱**；失败不清箱 + 玩家可重试 |
+| wiki.js API Key 权限过大 | 安全风险 | 低 | 专用 Key + 定期轮换 + 仅内网可达 |
+
+---
+
+## 9. 待确认 / 后续阶段
+
+> 下列项不影响架构骨架，开发前需逐项拍板（各子文档中以 `> 待确认：…` 标注）。
+
+- **积分参数具体值**：负责人系数 `k∈[0.05,0.5]` 的分档、A 类 `α/β`、指数称号的 `S_基 / r`、赛季重置周期。文档将给建议范围。
+- **外置登录站**：若未来从纯离线切换到 authlib-injector 外置登录，UUID 由站下发，`user-service` 需对接。
+- **Fabric 前缀 mod**：首期用 scoreboard team prefix（+ Title Prefix Handler）；若需彩色多行 Tab，再引入 Fabric 前缀 mod。
+- **告警扩展**：QQ/Discord webhook 何时接入（Notifier 已留扩展点）。
+- **MC 服务端容器化**：首版宿主跑，后续按需容器化。
+- **白名单与社区自治联动**：「长期零贡献触发白名单复核」「项目互评信用分」的具体阈值与流程。
+
+---
+
+*本文档与各子文档随项目演进持续更新。所有技术结论附调研证据 URL，可点击复核。*
+**最后更新：2026-07-21**

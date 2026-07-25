@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "HTCMC PCHSystem",
-    "version": "0.1.0"
+    "version": "0.7.0"
   },
   "paths": {
     "/healthz": {
@@ -20,6 +20,68 @@
                   },
                   "type": "object",
                   "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/info": {
+      "get": {
+        "summary": "Info",
+        "operationId": "info_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Info Info Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Password Login",
+        "description": "用户名+密码登录（必须永久账号）→ 完整 AuthResponse。\n\n契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久），\nplayer 取该账号首个绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。\n限频：入口按 IP + (username, ip) 双维度滑窗（bcrypt 慢哈希配合防爆破/撞库）；成功后清零。",
+        "operationId": "password_login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenExchangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -143,6 +205,474 @@
             }
           },
           "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenExchangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/web-accounts/register": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Register",
+        "description": "临时账号注册为永久账号（设置用户名+密码）。\n\n换发新 JWT（active_uuid 保持当前会话的绑定 UUID；若账号尚无 player 则无 active_uuid）。",
+        "operationId": "register_web_accounts_register_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenExchangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/web-accounts/me": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get My Account",
+        "description": "返回当前账号 + 绑定 players 列表（前端 MyAccountResponse shape）。",
+        "operationId": "get_my_account_web_accounts_me_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyAccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Update My Account",
+        "description": "更新当前账号的自定义昵称（display_name，sheets 三端显示名主源）。\n\n空白 strip；schema ``min_length=1`` 拒纯空白（与迁移 CHECK 一致）。",
+        "operationId": "update_my_account_web_accounts_me_patch",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDisplayNameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyAccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bind/token": {
+      "post": {
+        "tags": [
+          "bind"
+        ],
+        "summary": "Issue Bind Token From Game",
+        "description": "游戏内发起绑定（!!PCH bind）→ 生成 game_init 短码。\n\nbody {uuid, name} 由 MCDR bind_client.request_bind_token POST JSON 传入；\n若 Player 不存在则 get_or_create（自动挂临时账号）。",
+        "operationId": "issue_bind_token_from_game_bind_token_post",
+        "parameters": [
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindTokenIssueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bind/issue": {
+      "post": {
+        "tags": [
+          "bind"
+        ],
+        "summary": "Issue Bind Token From Web",
+        "description": "Web 发起绑定 → 生成 web_init 短码（供游戏内 !!PCH bind <code> 消费）。",
+        "operationId": "issue_bind_token_from_web_bind_issue_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindTokenIssueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bind/confirm": {
+      "post": {
+        "tags": [
+          "bind"
+        ],
+        "summary": "Confirm Bind From Game",
+        "description": "Web 确认游戏内发起的绑定（输入短码）→ 挂接 player_uuid 到当前账号。\n\n契约：返回 {player, account}（**不含 token**，绑定不改 account，前端继续用现有 JWT）。\n临时账号 → 403（必须先 register 或 claim 到永久账号）。",
+        "operationId": "confirm_bind_from_game_bind_confirm_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindConfirmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bind/consume": {
+      "post": {
+        "tags": [
+          "bind"
+        ],
+        "summary": "Consume Bind From Web",
+        "description": "游戏内消费 Web 发起的绑定（!!PCH bind <code>）。\n\n契约：MCDR bind_client.consume_bind_code 双头通道（X-Service-Token + X-Player-UUID）POST {short_code}；\n成功响应 {status, account, player}（MCDR 客户端依赖 account+player 渲染回执）。\n\n注：MCDR 仅传 UUID（不传 name）；player 不存在时 get_or_create 用 UUID 字符串作占位名，\n下次 !!PCH login 会刷新 current_name。",
+        "operationId": "consume_bind_from_web_bind_consume_post",
+        "parameters": [
+          {
+            "name": "X-Player-UUID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "X-Player-Uuid"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindConsumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindConsumeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bind/claim": {
+      "post": {
+        "tags": [
+          "bind"
+        ],
+        "summary": "Claim Bind To Permanent",
+        "description": "临时账号绑定到已有永久账号（输入永久账号用户名+密码）。\n\n将当前临时账号名下所有 player 迁移到目标永久账号；返回目标账号的 JWT。",
+        "operationId": "claim_bind_to_permanent_bind_claim_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimBindRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
@@ -1649,7 +2179,7 @@
           "sheets"
         ],
         "summary": "Advance Sheet Phase",
-        "description": "项目阶段流转（owner/admin）。",
+        "description": "项目阶段流转。\n\ntier 分流（迁移 0014）：归档（→archived）是 tier A 高危操作，仅 owner/超管；\n进入施工（→constructing）是 tier B 常规操作，manager 也可触发。先按 target\n分流权限，再做状态机校验——manager 调 ``?to=archived`` 立即收到 403，不被\n先报 409 误导。",
         "operationId": "advance_sheet_phase_sheets__sheet_id__advance_post",
         "parameters": [
           {
@@ -1939,15 +2469,116 @@
         }
       }
     },
-    "/parsing/litematic": {
+    "/sheets/{sheet_id}/managers": {
+      "get": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "List Managers",
+        "operationId": "list_managers_sheets__sheet_id__managers_get",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SheetManagerEntry"
+                  },
+                  "title": "Response List Managers Sheets  Sheet Id  Managers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
-          "parsing"
+          "sheets"
         ],
-        "summary": "Parse Litematic",
-        "description": "上传 ``.litematic`` → 解析材料 + 翻译中文 → 分组预览（方块组 + 容器组）。",
-        "operationId": "parse_litematic_parsing_litematic_post",
+        "summary": "Grant Manager",
+        "description": "授予协管员（account 锚）。\n\n- 非 tier A → 403；archived → 409。\n- target Player 不存在或 ``web_account_id is None`` → 422（B7）。\n- target account == owner account → 409 ``SheetOwnerCannotBeManager``（B7）。\n- 幂等重授（is_new=False）不重发通知（PK 防重复）。",
+        "operationId": "grant_manager_sheets__sheet_id__managers_post",
         "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -2000,9 +2631,112 @@
         "requestBody": {
           "required": true,
           "content": {
-            "multipart/form-data": {
+            "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Body_parse_litematic_parsing_litematic_post"
+                "$ref": "#/components/schemas/ManagerGrantRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SheetManagerEntry"
+                  },
+                  "title": "Response Grant Manager Sheets  Sheet Id  Managers Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sheets"
+        ],
+        "summary": "Revoke Manager",
+        "description": "撤销协管员（account 锚）。\n\n- self-revoke 放行当 ``player.web_account_id is not None`` 且等于\n  ``body.web_account_id``（B6：显式拒 ``None==None`` 误匹配）。\n- 否则需 tier A；archived → 409；manager 不存在 → 404。\n- self-revoke 不通知（发起方即受影响方）；其他撤销通知 target 账号全部 UUID。",
+        "operationId": "revoke_manager_sheets__sheet_id__managers_delete",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-service-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Token"
+            }
+          },
+          {
+            "name": "x-player-uuid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagerRevokeRequest"
               }
             }
           }
@@ -2013,7 +2747,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ParsedMaterialPreview"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SheetManagerEntry"
+                  },
+                  "title": "Response Revoke Manager Sheets  Sheet Id  Managers Delete"
                 }
               }
             }
@@ -2031,14 +2769,14 @@
         }
       }
     },
-    "/parsing/nbt": {
+    "/parsing/batch": {
       "post": {
         "tags": [
           "parsing"
         ],
-        "summary": "Parse Nbt",
-        "description": "上传 ``.nbt``（Create 蓝图 / structure）→ 解析材料 + 翻译中文 → 分组预览（方块组 + 容器组）。",
-        "operationId": "parse_nbt_parsing_nbt_post",
+        "summary": "Parse Batch",
+        "description": "批量上传多个 ``.litematic`` / ``.nbt`` → 每文件独立预览（不落库、不收 multiplier）。\n\n单文件失败不影响其他文件（per-file error isolation）；倍数与跨文件聚合由前端在\n解析结果上计算（便于随时调倍数无需重新上传）。执行分两阶段：\n\n1. async 阶段：逐文件 ``await read()`` + 单文件级校验（扩展名 / 非空 / 单文件大小），\n   累计总字节做整请求总大小护栏。``await file.read()`` 不能进线程，故在读阶段完成。\n2. 单个 ``asyncio.to_thread``：一个线程内顺序解析所有合法文件（不并行——大文件解析\n   已是 CPU 密集，并行反而抢线程池），``try/except`` per-file 隔离解析失败。",
+        "operationId": "parse_batch_parsing_batch_post",
         "parameters": [
           {
             "name": "authorization",
@@ -2094,7 +2832,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/Body_parse_nbt_parsing_nbt_post"
+                "$ref": "#/components/schemas/Body_parse_batch_parsing_batch_post"
               }
             }
           }
@@ -2105,7 +2843,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ParsedMaterialPreview"
+                  "$ref": "#/components/schemas/BatchParsedPreview"
                 }
               }
             }
@@ -2213,7 +2951,7 @@
           "notifications"
         ],
         "summary": "Ack",
-        "description": "标投递：仅命中 body.player_uuid 名下的 id（C-1 防越权，跨玩家 id 计 0）。",
+        "description": "标投递：仅命中 body.player_uuid 同账号名下的 id（C-1 防跨账号越权）。",
         "operationId": "ack_notifications_ack_post",
         "parameters": [
           {
@@ -2273,7 +3011,7 @@
           "notifications"
         ],
         "summary": "Mark Read",
-        "description": "标已读：仅当 notification 归属 player_uuid（C-1 防越权，跨玩家 404）。\n\nL-2：已读必然已投递，mark_read 同步幂等置 delivered_at。",
+        "description": "标已读：仅当 notification 归属 player_uuid 同账号（C-1 防跨账号越权，跨账号 404）。\n\nL-2：已读必然已投递，mark_read 同步幂等置 delivered_at。",
         "operationId": "mark_read_notifications__notification_id__read_post",
         "parameters": [
           {
@@ -2338,14 +3076,35 @@
         }
       }
     },
-    "/me": {
+    "/players": {
       "get": {
-        "tags": [
-          "me"
-        ],
-        "summary": "Get Me",
-        "operationId": "get_me_me_get",
+        "summary": "Search Players",
+        "operationId": "search_players_players_get",
         "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "玩家名前缀（大小写不敏感，至少 1 字符）",
+              "default": "",
+              "title": "Q"
+            },
+            "description": "玩家名前缀（大小写不敏感，至少 1 字符）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -2392,6 +3151,60 @@
                 }
               ],
               "title": "X-Player-Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/app__schemas__player__PlayerBrief"
+                  },
+                  "title": "Response Search Players Players Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Get Me",
+        "description": "返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。",
+        "operationId": "get_me_me_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -2503,33 +3316,253 @@
   },
   "components": {
     "schemas": {
-      "Body_parse_litematic_parsing_litematic_post": {
+      "AccountBrief": {
         "properties": {
-          "file": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "is_temporary": {
+            "type": "boolean",
+            "title": "Is Temporary"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "role": {
             "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
+            "title": "Role"
           }
         },
         "type": "object",
         "required": [
-          "file"
+          "id",
+          "is_temporary",
+          "role"
         ],
-        "title": "Body_parse_litematic_parsing_litematic_post"
+        "title": "AccountBrief",
+        "description": "Web 账号摘要（与前端 Frontend/src/api/identity.ts AccountBrief 对齐）。"
       },
-      "Body_parse_nbt_parsing_nbt_post": {
+      "BatchFilePreview": {
         "properties": {
-          "file": {
+          "filename": {
             "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
+            "title": "Filename"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParsedMaterialPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
           }
         },
         "type": "object",
         "required": [
-          "file"
+          "filename",
+          "kind",
+          "status"
         ],
-        "title": "Body_parse_nbt_parsing_nbt_post"
+        "title": "BatchFilePreview",
+        "description": "``POST /parsing/batch`` 中单个文件的结果（成功 / 失败隔离）。\n\n后端只负责解析、不收 multiplier（倍数是纯 UI 概念，前端聚合时应用，便于\n随时调倍数无需重新上传）。失败文件仍标 ``kind``（按扩展名判定的意图类型），\n``status=\"error\"`` 时 ``error`` 必填为玩家可读中文文案。"
+      },
+      "BatchParsedPreview": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/BatchFilePreview"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "BatchParsedPreview",
+        "description": "``POST /parsing/batch`` 响应：每文件独立预览（聚合在前端做，后端不收 multiplier）。"
+      },
+      "BindConfirmRequest": {
+        "properties": {
+          "short_code": {
+            "type": "string",
+            "title": "Short Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "short_code"
+        ],
+        "title": "BindConfirmRequest"
+      },
+      "BindConfirmResponse": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/app__schemas__auth__PlayerBrief"
+          },
+          "account": {
+            "$ref": "#/components/schemas/AccountBrief"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player",
+          "account"
+        ],
+        "title": "BindConfirmResponse",
+        "description": "POST /bind/confirm 响应（前端 BindResultResponse）。\n\n契约：绑定不改 account，前端继续用现有 JWT；响应只含 player + account，不含 token。"
+      },
+      "BindConsumeRequest": {
+        "properties": {
+          "short_code": {
+            "type": "string",
+            "title": "Short Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "short_code"
+        ],
+        "title": "BindConsumeRequest",
+        "description": "POST /bind/consume 请求体（仅 short_code；UUID 走 X-Player-UUID header）。"
+      },
+      "BindConsumeResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "player": {
+            "$ref": "#/components/schemas/app__schemas__auth__PlayerBrief"
+          },
+          "account": {
+            "$ref": "#/components/schemas/AccountBrief"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "player",
+          "account"
+        ],
+        "title": "BindConsumeResponse",
+        "description": "POST /bind/consume 响应（MCDR bind_client.consume_bind_code 依赖）。\n\n契约：{status, account, player} —— MCDR 客户端用 account+player 渲染回执。"
+      },
+      "BindTokenIssueResponse": {
+        "properties": {
+          "short_code": {
+            "type": "string",
+            "title": "Short Code"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          }
+        },
+        "type": "object",
+        "required": [
+          "short_code",
+          "expires_in"
+        ],
+        "title": "BindTokenIssueResponse",
+        "description": "绑定短码响应（前端 BindCodeResponse）。"
+      },
+      "BindTokenRequest": {
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "name"
+        ],
+        "title": "BindTokenRequest",
+        "description": "POST /bind/token 请求体（MCDR bind_client.request_bind_token POST JSON body {uuid, name}）。"
+      },
+      "Body_parse_batch_parsing_batch_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_parse_batch_parsing_batch_post"
+      },
+      "ClaimBindRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "ClaimBindRequest"
       },
       "HTTPValidationError": {
         "properties": {
@@ -2564,29 +3597,82 @@
         ],
         "title": "LastSheetResponse"
       },
-      "MeResponse": {
+      "ManagerGrantRequest": {
         "properties": {
-          "uuid": {
+          "player_uuid": {
             "type": "string",
             "format": "uuid",
-            "title": "Uuid"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "role": {
-            "type": "string",
-            "title": "Role"
+            "title": "Player Uuid"
           }
         },
         "type": "object",
         "required": [
-          "uuid",
-          "name",
-          "role"
+          "player_uuid"
         ],
-        "title": "MeResponse"
+        "title": "ManagerGrantRequest",
+        "description": "``POST /sheets/{id}/managers``：授予协管员。\n\n按 player_uuid 授予（MCDR 端先用 uuid_api_remake 把玩家名转 UUID 再调本端点）。\n后端解析 target Player → ``web_account_id``；未绑 Web 账号 → 422（B7）。\n目标 account == owner account → 409 ``SheetOwnerCannotBeManager``（B7）。"
+      },
+      "ManagerRevokeRequest": {
+        "properties": {
+          "web_account_id": {
+            "type": "integer",
+            "title": "Web Account Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "web_account_id"
+        ],
+        "title": "ManagerRevokeRequest",
+        "description": "``DELETE /sheets/{id}/managers``：撤销协管员（account 锚）。\n\n收 ``web_account_id``（非 player_uuid）以匹配存储模型；同一账号下任一 UUID\n都可 self-revoke（B6 守卫：``player.web_account_id is not None`` 显式拒\nNone==None 误匹配——未绑账号玩家不能 self-revoke）。"
+      },
+      "MeResponse": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AccountBrief"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/app__schemas__auth__PlayerBrief"
+            },
+            "type": "array",
+            "title": "Players"
+          },
+          "active_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Active Uuid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account",
+          "players",
+          "active_uuid"
+        ],
+        "title": "MeResponse",
+        "description": "当前身份响应（升级为 account + players + active_uuid）。"
+      },
+      "MyAccountResponse": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AccountBrief"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/app__schemas__auth__PlayerBrief"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account",
+          "players"
+        ],
+        "title": "MyAccountResponse",
+        "description": "GET /web-accounts/me 响应（前端 MyAccountResponse）。\n\n契约：{account: AccountBrief, players: [PlayerBrief]}。"
       },
       "NotificationAckRequest": {
         "properties": {
@@ -2728,31 +3814,25 @@
           "untranslated"
         ],
         "title": "ParsedMaterialPreview",
-        "description": "``POST /parsing/litematic`` 响应：分组材料预览（不落库）。"
+        "description": "``POST /parsing/batch`` 响应中每文件的 ``preview`` 负载：分组材料预览（不落库）。"
       },
-      "PlayerBrief": {
+      "PasswordLoginRequest": {
         "properties": {
-          "uuid": {
+          "username": {
             "type": "string",
-            "format": "uuid",
-            "title": "Uuid"
+            "title": "Username"
           },
-          "name": {
+          "password": {
             "type": "string",
-            "title": "Name"
-          },
-          "role": {
-            "type": "string",
-            "title": "Role"
+            "title": "Password"
           }
         },
         "type": "object",
         "required": [
-          "uuid",
-          "name",
-          "role"
+          "username",
+          "password"
         ],
-        "title": "PlayerBrief"
+        "title": "PasswordLoginRequest"
       },
       "PreviewItem": {
         "properties": {
@@ -2834,6 +3914,24 @@
         ],
         "title": "RefreshRequest"
       },
+      "RegisterRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "RegisterRequest"
+      },
       "RowContributeRequest": {
         "properties": {
           "qty": {
@@ -2851,23 +3949,42 @@
       },
       "RowContributor": {
         "properties": {
-          "player_uuid": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Player Uuid"
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
           },
-          "player_name": {
+          "display_name": {
             "type": "string",
-            "title": "Player Name"
+            "title": "Display Name"
+          },
+          "member_uuids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Member Uuids"
+          },
+          "contributed_qty": {
+            "type": "integer",
+            "title": "Contributed Qty"
           }
         },
         "type": "object",
         "required": [
-          "player_uuid",
-          "player_name"
+          "display_name",
+          "member_uuids",
+          "contributed_qty"
         ],
         "title": "RowContributor",
-        "description": "progress 行的贡献者（上交过材料的玩家）。"
+        "description": "progress 行的贡献者（按 Web 账号聚合：同账号多 UUID 合并为一条）。\n\n``account_id`` 为 None 表示该贡献者未绑 Web 账号（历史数据），按 player 退化为一对一。\n``display_name`` 统一显示名（自定义昵称优先，否则该账号下最近活跃 UUID 的游戏名）。"
       },
       "RowDeliveryRequest": {
         "properties": {
@@ -3194,6 +4311,22 @@
             },
             "type": "array",
             "title": "Rows"
+          },
+          "viewer_uuids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Viewer Uuids"
+          },
+          "managers": {
+            "items": {
+              "$ref": "#/components/schemas/SheetManagerEntry"
+            },
+            "type": "array",
+            "title": "Managers",
+            "default": []
           }
         },
         "type": "object",
@@ -3337,6 +4470,40 @@
         "title": "SheetItemIn",
         "description": "``/sheets/from-items`` 批量建行条目（继承 ``RowUpsertRequest`` 字段 + 校验，mode 默认 lock）。\n\n投影解析 ``PreviewItem`` 透传 ``registry_id``（= ``item_id``）+ 中文 ``item_name``。\n每条均为**新建**（新表无既有行可定位）→ ``row_id`` 在此无意义，禁止携带：\n否则会绕过父类「name/registry 至少一个」校验（该豁免仅服务更新路径），\n使 ``item_name=None & registry_id=None`` 直抵 ``_resolve_item_name`` 的防御点 → 500。"
       },
+      "SheetManagerEntry": {
+        "properties": {
+          "web_account_id": {
+            "type": "integer",
+            "title": "Web Account Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "member_uuids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Member Uuids"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Granted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "web_account_id",
+          "display_name",
+          "member_uuids",
+          "granted_at"
+        ],
+        "title": "SheetManagerEntry",
+        "description": "项目级协管员（迁移 0014，account 锚，R-5 落地）。\n\n- ``web_account_id``：manager 锚定的 Web 账号 id（PK 一员）。\n- ``display_name``：账号显示名（``WebAccount.display_name`` 优先，否则账号下\n  ``last_seen_at`` 最新 UUID 的 ``current_name``）——经\n  ``web_account_repo.resolve_account_briefs`` 解析。\n- ``member_uuids``：账号下全部 UUID（含 inactive）；客户端按 viewer_uuids 做\n  交集判定 ``is_manager``（前端 auth store 持有绑定 UUIDs；MCDR sheet detail\n  持有 viewer_uuids），无需感知 account_id。"
+      },
       "SheetPatchRequest": {
         "properties": {
           "title": {
@@ -3451,16 +4618,27 @@
             "default": "Bearer"
           },
           "player": {
-            "$ref": "#/components/schemas/PlayerBrief"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/app__schemas__auth__PlayerBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "account": {
+            "$ref": "#/components/schemas/AccountBrief"
           }
         },
         "type": "object",
         "required": [
           "access_token",
           "refresh_token",
-          "player"
+          "account"
         ],
-        "title": "TokenExchangeResponse"
+        "title": "TokenExchangeResponse",
+        "description": "exchange / login / register / claim-bind 共用 shape（前端 AuthResponse）。\n\nplayer 永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号）；\nregister/claim 边界场景下若暂无 player 允许 None，由调用方保证语义。"
       },
       "TokenIssueRequest": {
         "properties": {
@@ -3494,6 +4672,17 @@
           "previous_tokens_revoked": {
             "type": "integer",
             "title": "Previous Tokens Revoked"
+          },
+          "frontend_online": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frontend Online"
           }
         },
         "type": "object",
@@ -3503,6 +4692,22 @@
           "previous_tokens_revoked"
         ],
         "title": "TokenIssueResponse"
+      },
+      "UpdateDisplayNameRequest": {
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "UpdateDisplayNameRequest",
+        "description": "PATCH /web-accounts/me 请求体：设置自定义昵称（sheets 三端显示名主源）。\n\n空白 strip；schema ``min_length=1`` 拒纯空白（与迁移 CHECK 一致）。"
       },
       "ValidationError": {
         "properties": {
@@ -3543,6 +4748,50 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "app__schemas__auth__PlayerBrief": {
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "role"
+        ],
+        "title": "PlayerBrief"
+      },
+      "app__schemas__player__PlayerBrief": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "player_name": {
+            "type": "string",
+            "title": "Player Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "player_name"
+        ],
+        "title": "PlayerBrief",
+        "description": "玩家简要信息（联想 / 列表用）。身份锚 = player_uuid。"
       }
     }
   }

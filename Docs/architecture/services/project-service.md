@@ -1,5 +1,7 @@
 # 服务文档：project-service（项目与材料清单）
 
+> ⚠️ **归档（规划期设计，多数未落地）**：本文描述的 `/projects` 端点、`draft→active→settling→archived` 四态、`projects`/`material_lists` 表**从未实现**。实际项目协作走 `/sheets` 三态（`collecting→constructing→archived`，迁移 0009），权威文档见 [`../api/sheets.md`](../api/sheets.md) + [`../../architecture.md`](../../architecture.md) §7。保留作历史参考，**端点 / 状态机 / 表结构均过时**。
+
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5
 > **数据模型**：[`../data-model.md`](../data-model.md) §3（`projects` schema）
 
