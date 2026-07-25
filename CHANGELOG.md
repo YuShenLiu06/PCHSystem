@@ -23,7 +23,8 @@
 
 ### Fixed
 
-- _暂无_
+- **前端（#42）**：账号密码登录后 1–3 小时即被踢回登录页。根因：前端从未调用 `POST /auth/refresh`，7 天 refresh token 闲置；access token（1h）一过期，401 拦截器直接清登录态跳转。已接入：受保护请求 401 时用 refresh 续签并重放原请求（并发去重共享一次 refresh / 凭证端点 `/auth/login` `/auth/exchange` `/bind/claim` 及 refresh 自身不续签，防死循环），会话滑动 7 天，用户无感。后端零改动（滑动 refresh 早就在）。
+- **后端 / 前端（#41）**：表格 owner 添加协管员时联想下拉只显游戏名、不显昵称，且按昵称搜不到。根因：`GET /players` 直接用 `current_name` 构造响应，绕过了已存在的 `web_account_repo.resolve_display_names`（含 display_name → 同账号最新 member current_name → 自身名 回退链）。已修：响应带 `display_name`（复用回退链，多数未设昵称用户回退到游戏名）、按昵称前缀双向匹配、过滤未绑 WebAccount 的玩家（授予必 422，联想无意义）；前端下拉主显昵称、与游戏名不同时副显游戏名。
 
 ### Security
 
