@@ -31,7 +31,9 @@
 
 ### Docs
 
-- _暂无_
+- **顶层架构文档重构（v0.9）**：`Docs/architecture.md` 精简为索引版（约 150 行，只做全局导航、不含时序图 / SQL / 端点表等实现细节，§7 改为流程索引一句话 + 状态徽标）；旧版（362 行，含规划期 `/projects` 等过时内容）归档至 `Docs/architecture/legacy/architecture-pre-v0.9.md`，顶部加过时横幅。三个抽象层（施工进度统计 / 归档生成 / 积分结算）的端到端 flow 指南设计已收敛，作为后续独立任务产出。
+- **归档流程指南**：新增 [`Docs/architecture/flows/archive-generation.md`](Docs/architecture/flows/archive-generation.md)——归档层端到端二次开发指南（Route C 抽象四件套 + service 7 步编排 + writer 落盘/事务一致性 + publisher wiki 推送 + §7 三条改造路线：接线 `markdown_fragments_dir` 死代码 / `ChartRenderer` Protocol / `markdown_render/helpers.py` helper 库）。
+- **flows 指南补齐 + 服务文档过时标注**：新增 [`Docs/architecture/flows/`](Docs/architecture/flows/) 下施工进度统计、积分结算两份**设计契约**指南——施工含 S-1 MCDR 方块事件 API 待核实清单（§9）+ 每玩家单源策略 + 鉴权矩阵；积分含 `ScoreCalculator` Strategy Protocol + 终算制（推翻旧即时记账）+ `account_id` 归属锚（R-5）+ 多平台 OpenAPI 优先；旧规划 [`Docs/architecture/services/project-service.md`](Docs/architecture/services/project-service.md)（`/projects` 四态从未实现）+ [`Docs/architecture/services/scoring-service.md`](Docs/architecture/services/scoring-service.md)（即时记账 / per-UUID 已推翻）顶部加过时横幅，指向实际权威；顶层 [`Docs/architecture.md`](Docs/architecture.md) §7 施工 / 积分两行链接落地。
 
 ---
 

@@ -1,5 +1,7 @@
 # 服务文档：scoring-service（积分结算引擎）
 
+> ⚠️ **归档（规划期设计，关键决策已推翻）**：本文描述的**即时记账**（`/submissions` 提交即记分）、**per-UUID 归属**、`/projects/{id}/settle` 端点**均未实现且已被推翻**。当前设计权威见 [`../flows/scoring-settlement.md`](../flows/scoring-settlement.md)：**终算制**（archived 一次性结算）/ **account_id 归属锚**（R-5）/ **ScoreCalculator Strategy Protocol** / 砍外部第三方。**§3.2 公式仍有效**，其余实现细节已过时。
+
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5 / §7.2
 > **数据模型**：[`../data-model.md`](../data-model.md) §4（`scoring` schema）
 > **玩法公式依据**：[`../../guied.md`](../../guied.md) 黄皮子积分体系
