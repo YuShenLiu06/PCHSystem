@@ -291,9 +291,11 @@ export async function revokeSheetManager(id: number, webAccountId: number): Prom
 export interface PlayerBrief {
   player_uuid: string
   player_name: string
+  // 三端统一显示名（#41）：后端 resolve_display_names 解析，必非空（含回退链）。
+  display_name: string
 }
 
-/** GET /players?q=<prefix> —— 按玩家名前缀联想（任意登录玩家可调）。前端选中后内部传 uuid 调 grant。 */
+/** GET /players?q=<prefix> —— 按玩家名 / 昵称前缀联想（任意登录玩家可调）。前端选中后内部传 uuid 调 grant。 */
 export async function searchPlayers(q: string): Promise<PlayerBrief[]> {
   const { data } = await http.get<PlayerBrief[]>('/players', { params: { q } })
   return data
