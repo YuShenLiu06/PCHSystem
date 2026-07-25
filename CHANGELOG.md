@@ -38,6 +38,7 @@
 ### Fixed
 
 - **更新脚本半途中断**：当 `.env` 已补齐所有所需键时，`Scripts/update.sh` 会在拉取新版代码后立即静默退出，跳过容器重建、数据库迁移、前端构建与部署记录刷新，实例卡在「代码已新版、容器与迁移仍停留旧版」的半途中断状态。现已修复，更新可一次跑完全流程。
+- **版本号元数据**：`McdrPlugin/mcdreforged.plugin.json` 的 `version` 由 0.8.1 补齐为 0.8.2（与发版线一致）；`archive_name: pch_system-v{version}` 按 plugin.json 的 version 打包，漏改会使 v0.8.2 的 `.mcdr` 产物误命名（首次发版曾产出 `pch_system-v0.8.1.mcdr`）。
 
 ### 升级指引
 
