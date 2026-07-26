@@ -9,3 +9,6 @@ class PlayerBrief(BaseModel):
 
     player_uuid: UUID
     player_name: str
+    # 三端统一显示名（#41）：由 web_account_repo.resolve_display_names 解析，
+    # 含回退链（display_name → 同 account 最新 member current_name → 自身名），必非空。
+    display_name: str

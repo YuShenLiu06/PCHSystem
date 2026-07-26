@@ -3,6 +3,7 @@
 覆盖：前缀匹配、大小写不敏感、空 q 返空、LIKE 通配符转义、需 JWT。
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -30,6 +31,37 @@ async def _make_player(name: str) -> tuple[uuid.UUID, str]:
         await s.commit()
         account_id = account.id
     return u, f"Bearer {create_access_token(account_id, 'user', active_uuid=u)}"
+
+
+async def _make_player_with_display(
+    name: str, display_name: str | None, *, last_seen_at: datetime | None = None
+) -> uuid.UUID:
+    """建 Player + WebAccount（display_name 可设），返回 player_uuid（仅作被搜目标，不签 token）。"""
+    u = uuid.uuid4()
+    async with async_session_factory() as s:
+        account = WebAccount(role="user", display_name=display_name)
+        s.add(account)
+        await s.flush()
+        s.add(
+            Player(
+                uuid=u,
+                current_name=name,
+                role="user",
+                web_account_id=account.id,
+                last_seen_at=last_seen_at,
+            )
+        )
+        await s.commit()
+    return u
+
+
+async def _make_unbound_player(name: str) -> uuid.UUID:
+    """建未绑 WebAccount 的 Player（web_account_id=None），用于验证被联想过滤。"""
+    u = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=u, current_name=name, role="user"))
+        await s.commit()
+    return u
 
 
 def _auth(bearer: str) -> dict[str, str]:
@@ -85,3 +117,81 @@ async def test_search_returns_uuid_and_name(client):
     assert len(body) == 1
     assert body[0]["player_uuid"] == str(target_u)
     assert body[0]["player_name"] == "carol"
+
+
+@pytest.mark.asyncio
+async def test_search_returns_display_name_when_set(client):
+    """account 设了 display_name → 响应带 display_name（#41 三端显示名主源）。"""
+    _, bearer = await _make_player("alice")
+    await _make_player_with_display("alex", "亚历克斯")
+    resp = await client.get("/players?q=al", headers=_auth(bearer))
+    body = resp.json()
+    alex = next(p for p in body if p["player_name"] == "alex")
+    assert alex["display_name"] == "亚历克斯"
+
+
+@pytest.mark.asyncio
+async def test_search_display_name_fallback_to_own_name(client):
+    """display_name 为空 → 回退到自身 current_name（多数用户场景）。"""
+    _, bearer = await _make_player("alice")
+    resp = await client.get("/players?q=al", headers=_auth(bearer))
+    body = resp.json()
+    alice = next(p for p in body if p["player_name"] == "alice")
+    assert alice["display_name"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_search_display_name_fallback_to_latest_sibling(client):
+    """display_name 空 + 同 account 多 UUID → 回退到 last_seen_at 最新 member 的 current_name。"""
+    _, bearer = await _make_player("searcher")
+    async with async_session_factory() as s:
+        account = WebAccount(role="user")  # display_name=None
+        s.add(account)
+        await s.flush()
+        s.add(
+            Player(
+                uuid=uuid.uuid4(),
+                current_name="older",
+                role="user",
+                web_account_id=account.id,
+                last_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+        )
+        s.add(
+            Player(
+                uuid=uuid.uuid4(),
+                current_name="newer",
+                role="user",
+                web_account_id=account.id,
+                last_seen_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            )
+        )
+        await s.commit()
+    # 搜 "old" 命中 older；其 display_name 回退 = 最新 member "newer"（非 older 自己）
+    resp = await client.get("/players?q=old", headers=_auth(bearer))
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["player_name"] == "older"
+    assert body[0]["display_name"] == "newer"
+
+
+@pytest.mark.asyncio
+async def test_search_matches_display_name_prefix(client):
+    """按昵称前缀也能命中（双向匹配，不止 current_name）。"""
+    _, bearer = await _make_player("searcher")
+    await _make_player_with_display("carol", "凯萝")  # current_name=carol / display_name=凯萝
+    resp = await client.get("/players?q=凯", headers=_auth(bearer))  # 不匹配 carol，仅匹配昵称
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["player_name"] == "carol"
+    assert body[0]["display_name"] == "凯萝"
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_unbound_players(client):
+    """未绑 WebAccount 的玩家不可授予 manager → 不出现在联想（过滤未绑）。"""
+    _, bearer = await _make_player("alice")
+    await _make_unbound_player("alex_unbound")
+    resp = await client.get("/players?q=al", headers=_auth(bearer))
+    names = {p["player_name"] for p in resp.json()}
+    assert names == {"alice"}  # alex_unbound 被过滤掉

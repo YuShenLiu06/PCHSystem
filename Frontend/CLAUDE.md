@@ -48,7 +48,7 @@ Vue 3 + Element Plus 后台，三端架构中的网页端：管理员/负责人�
 |---|---|
 | `POST /auth/exchange` | 一次性 token → JWT pair（`/auth` 页 `onMounted` 调用） |
 | `GET /me` | 取当前身份（`/me` 页展示 UUID/名称/角色） |
-| `POST /auth/refresh` | access 过期前用 refresh 续签（待接入） |
+| `POST /auth/refresh` | access 过期自动续签 + 重放原请求（`utils/http.ts` 401 拦截器调，#42，滑动 7 天；业务代码不直接调） |
 | `POST /auth/login` | 密码登录（`Login.vue`，v0.8.0） |
 | `POST /web-accounts/register` · `GET /web-accounts/me` · `PATCH /web-accounts/me` | 临时账号转正 / 账号信息 / 改昵称 `display_name`（`Register.vue` / `Me.vue`，v0.8.0） |
 | `POST /bind/issue` · `POST /bind/confirm` · `POST /bind/claim` | Web 账号绑多 MC 身份双向短码（`BindConfirm.vue` game_init / `ClaimBind.vue` web_init，v0.8.0）；详见 [`frontend.md`](../Docs/architecture/frontend.md) §3.2 |

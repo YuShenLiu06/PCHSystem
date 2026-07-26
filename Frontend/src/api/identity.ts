@@ -66,6 +66,13 @@ export async function passwordLogin(username: string, password: string): Promise
   return data
 }
 
+/** POST /auth/refresh —— 用 refresh token 续签，返回新 JWT pair（滑动 7 天，#42）
+ *  由 utils/http.ts 的 401 拦截器调用（access 过期自动续签 + 重放），业务代码通常不直接调。 */
+export async function refreshToken(refreshToken: string): Promise<AuthResponse> {
+  const { data } = await http.post<AuthResponse>('/auth/refresh', { refresh_token: refreshToken })
+  return data
+}
+
 /** GET /me —— 取当前身份信息（账号 + 绑定的玩家列表 + 当前激活 uuid） */
 export async function fetchMe(): Promise<MeResponse> {
   const { data } = await http.get<MeResponse>('/me')

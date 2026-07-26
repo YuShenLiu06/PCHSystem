@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import Player
+from app.models.user import Player, WebAccount
 from app.repositories import web_account_repo
 
 
@@ -40,22 +40,34 @@ async def get_by_uuid(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def search_by_name_prefix(
+async def search_for_manager(
     session: AsyncSession, prefix: str, limit: int = 10
 ) -> list[Player]:
-    """按 ``current_name`` 前缀（大小写不敏感）搜索玩家，供协管员授予联想。
+    """协管员授予联想：按 ``current_name`` 或 ``WebAccount.display_name`` 前缀（大小写
+    不敏感）搜索，仅返回已绑 WebAccount 的玩家（未绑玩家授予 manager 必 422，联想无意义）。
 
-    空 prefix → 返空列表（不返回全库随机前 N）。LIKE 特殊字符（``%`` ``_`` ``\\``）
-    已转义，避免被当通配符。身份锚 = uuid（返回全 Player 对象，调用方按需取字段）。
+    空 prefix → 返空列表（不返回全库随机前 N）。LIKE 特殊字符（``%`` ``_`` ``\\``）已转义。
+    身份锚 = uuid（返回全 Player 对象，display_name 由调用方经
+    ``web_account_repo.resolve_display_names`` 解析，带回退链）。display_name 为空的账号
+    仅靠 current_name 命中——双向匹配对设了自定义昵称的玩家才有增量。
     """
     prefix = (prefix or "").strip()
     if not prefix:
         return []
     # 转义 LIKE 通配符，escape='\\' 告知 PG 反斜杠为转义符
     escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"{escaped}%"
+    # inner join（非 outerjoin）：WHERE web_account_id IS NOT NULL 已排除未绑玩家，
+    # outerjoin 的 NULL 合成行永远不会出现，故语义等价 inner join——用 .join() 明示意图（CR #4/#5）。
     stmt = (
         select(Player)
-        .where(Player.current_name.ilike(f"{escaped}%", escape="\\"))
+        .join(WebAccount, WebAccount.id == Player.web_account_id)
+        .where(
+            or_(
+                Player.current_name.ilike(pattern, escape="\\"),
+                WebAccount.display_name.ilike(pattern, escape="\\"),
+            )
+        )
         .order_by(Player.current_name.asc())
         .limit(limit)
     )

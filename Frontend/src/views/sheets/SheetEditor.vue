@@ -185,14 +185,22 @@ function back(): void {
         <template v-if="canManage">
           <el-autocomplete
             v-model="managerInputName"
-            :fetch-suggestions="(q: string, cb: (r: { player_uuid: string; player_name: string }[]) => void) => searchPlayers(q).then(cb).catch(() => cb([]))"
-            placeholder="玩家名（输入联想）"
-            value-key="player_name"
+            :fetch-suggestions="(q: string, cb: (r: { player_uuid: string; player_name: string; display_name: string }[]) => void) => searchPlayers(q).then(cb).catch(() => cb([]))"
+            placeholder="玩家名 / 昵称（输入联想）"
+            value-key="display_name"
             size="small"
-            style="width: 220px;"
+            style="width: 240px;"
             @select="(item: { player_uuid: string }) => { managerPickedUuid = item.player_uuid }"
             @input="managerPickedUuid = ''"
-          />
+          >
+            <!-- #41：主显昵称（display_name），与游戏名不同时副显游戏名提示 -->
+            <template #default="{ item }">
+              <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
+                <span>{{ item.display_name }}</span>
+                <span v-if="item.display_name !== item.player_name" style="color: #999; font-size: 12px;">{{ item.player_name }}</span>
+              </div>
+            </template>
+          </el-autocomplete>
           <el-button size="small" type="primary" plain @click="onGrantManager">添加协管员</el-button>
         </template>
       </div>
