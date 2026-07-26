@@ -75,6 +75,7 @@ def git(*args: str) -> str:
 
 def fail(message: str) -> NoReturn:
     print(f"::error::{message}", file=sys.stderr)
+    write_output("error_msg", message)  # 供 comment 步在 PR 留言指明问题
     sys.exit(1)
 
 
@@ -246,6 +247,7 @@ def run_validate() -> None:
     if not checked:
         fail("未检测到任何组件 version 变化（不应到达，请反馈）")
 
+    write_output("checked", ", ".join(checked))  # 供 comment 步展示通过项
     print(f"✓ 版本元数据校验通过: {', '.join(checked)}（来源: {source}）")
     sys.exit(0)
 
