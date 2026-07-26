@@ -13,6 +13,8 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 数据在 PostgreSQL 的 `sheets` schema，由 FastAPI 后端**独占**读写（红线 R-1）。前端只走 HTTP，MCDR 经 service token 读。
 
 > **术语演进**：sheet 在玩法语义中已升级为「项目」（前端文案统一改「项目」），但 URL `/sheets`、API 类型名 `Sheet*`、表名 `sheets` 保留不变（YAGNI，避免书签/外链失效）。本文档与代码标识符沿用 `sheet*`。
+>
+> **批量提交（二次开发）**：`POST /sheets/{id}/submit-batch` 的程序化提交入口（信任边界 / 双鉴权 / 典型场景 / 回执解读）见 [`submit-extension.md`](./submit-extension.md)。
 
 **项目三阶段生命周期**：每个 sheet（项目）有阶段状态 `collecting`（材料收集，默认）→ `constructing`（施工占位）→ `archived`（只读终态）。owner/admin 经 `POST /sheets/{id}/advance` 流转阶段；进入 `archived` 时后端渲染 markdown 归档 + 贡献占比饼图原子落盘到 `ARCHIVE_ROOT/projects/<id>/`（DB 存相对路径 `archived_path`，为 wiki-service git publisher 同步入口），任意登录玩家可 `GET /sheets/{id}/archive` 取回 markdown、`GET /sheets/{id}/archive/assets/{filename}` 取回归档资产（如饼图 PNG）。详见 §4.1「项目阶段状态机」。
 

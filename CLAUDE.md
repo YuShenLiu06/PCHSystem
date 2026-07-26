@@ -131,6 +131,7 @@ PCHSystem/
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | sheets API | [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) | sheets HTTP 端点 / 鉴权 / 行状态机（认领·交付·解除·打回·贡献·进度）/ 权限矩阵 / 错误码 / CSV 列 |
+| submit-extension API | [`Docs/architecture/api/submit-extension.md`](./Docs/architecture/api/submit-extension.md) | `POST /sheets/{id}/submit-batch` 程序化批量提交入口 · 双鉴权（服务端组件 service-token+UUID / 客户端 mod JWT）· 4 类典型场景 · reason 枚举 · 回执折叠策略 |
 | parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + `POST /parsing/nbt` Create 蓝图解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
 
 ---

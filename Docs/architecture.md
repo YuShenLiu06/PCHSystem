@@ -90,6 +90,7 @@ Docker Compose 三服务（postgres + backend + 可选 web），开发态源码�
 | **身份与绑定**（JWT + service-token 双通道 / Web 账号绑多 MC 身份）| ✅ 已实现 | [`api/sheets.md`](./architecture/api/sheets.md) §2 + [`Backend/CLAUDE.md`](../Backend/CLAUDE.md) RS-8 |
 | **投影 / 蓝图解析建表**（`.litematic` / `.nbt` → 中文翻译 → 材料清单 → 项目表）| ✅ 已实现 | [`api/parsing.md`](./architecture/api/parsing.md) + [`api/sheets.md`](./architecture/api/sheets.md) §5.1 |
 | **材料收集协作**（认领 / 上交 / 打回 / 进度，sheet 行状态机，Web↔MC 对等）| ✅ 已实现 | [`api/sheets.md`](./architecture/api/sheets.md) §5 / §7 / §11 / §14 |
+| **程序化批量提交**（`POST /sheets/{id}/submit-batch`，服务端 mod / 脚本 / 跨服桥接 / 玩家客户端 mod 二次开发入口）| ✅ 已实现 | [`api/submit-extension.md`](./architecture/api/submit-extension.md)（双鉴权同 construction-report） |
 | **归档文档生成**（markdown 渲染 + 贡献占比 PNG + wiki 推送）| ✅ 已实现 | [`flows/archive-generation.md`](./architecture/flows/archive-generation.md) + [`Backend/CLAUDE.md`](../Backend/CLAUDE.md) RS-10 / RS-11 |
 | **施工进度统计**（可插拔上报 API + MCDR 方块变化量默认实现）| 🚧 规划中 | [`flows/construction-progress.md`](./architecture/flows/construction-progress.md)（设计契约，S-1 待核实）|
 | **积分结算**（ScoreCalculator 抽象 + 终算制 + append-only 流水）| 🚧 规划中 | [`flows/scoring-settlement.md`](./architecture/flows/scoring-settlement.md)（设计契约）|

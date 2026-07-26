@@ -222,3 +222,5 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 *增量（2026-07-11）：`!!submit` 回执进一步降噪：已备齐/进度已满行折叠（`scanner.skip_is_ready` + `SHEET_SUBMIT_READY_FOLDED_LINE`）；新增 `!!submit` 第三命令根（无参重开上次表格直接提交），复用 `!!sheet` 的 `GET /me/last_sheet` 存储；与本人无关的跳过行折叠为末尾计数（`SHEET_SUBMIT_FOLDED_LINE`）；归桶 ready 优先*
 
 *增量（2026-07-09）：子物品嵌套行 issue #19 + sheets.py 包化重构：新增 `addsub`/`delsub`/`setsub` 命令；`messages.py` 缩进渲染子行 + 父行 `+N子件` 徽标；按钮紧凑化（单字 `[认][改][-][+]` + RText hover）；`scanner.py` 不改（子行同列表自动匹配）；后端包化拆分 `sheets/` 包 + `translation.py` 公共翻译；详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §14 增量日志）*
+
+*增量（2026-07-26，后端 submit-batch 端点）：后端新增 `POST /sheets/{id}/submit-batch`（程序化批量提交入口），二次开发指南见 [`Docs/architecture/api/submit-extension.md`](../Docs/architecture/api/submit-extension.md)——双鉴权与 construction-report §3 共语义（MCDR 走既有 service-token+UUID 双头零改动；玩家客户端 mod 走 JWT 通道只写自己）；reason 字面量与本服务 `scanner.py:202-226` 对齐（P3 薄壳化时零适配）。§5 文档索引表待用 `service-claude-md` skill 重生成（暂不手改），届时补 submit-extension.md 一行。*

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -196,3 +197,77 @@ class SheetFromItemsRequest(BaseModel):
 
     title: str = Field(min_length=1, max_length=128)
     items: list[SheetItemIn] = Field(default_factory=list, max_length=2000)
+
+
+class BatchSubmitItem(BaseModel):
+    """批量提交单条材料（``POST /sheets/{id}/submit-batch``）。
+
+    ``registry_id`` 精确匹配行（``namespace:path``，如 ``minecraft:oak_log``）；
+    ``qty`` 为本次申报数量（0 = 未携带/申报零；progress 视为「未提交此物」→ skip）。
+    """
+
+    registry_id: str = Field(min_length=1, max_length=128)
+    qty: int = Field(ge=0)
+
+
+class BatchSubmitRequest(BaseModel):
+    """批量提交请求体：仅材料列表，actor 由鉴权决定（JWT 或 service-token+UUID）。
+
+    ``to_map`` 聚合重复 registry_id（求和 qty），用于 batch_submit 内部按
+    registry_id 单次匹配行。
+    """
+
+    items: list[BatchSubmitItem] = Field(min_length=1, max_length=2000)
+
+    def to_map(self) -> dict[str, int]:
+        """聚合重复 registry_id（求和 qty）。"""
+        agg: dict[str, int] = {}
+        for it in self.items:
+            agg[it.registry_id] = agg.get(it.registry_id, 0) + it.qty
+        return agg
+
+
+class BatchRowOutcome(BaseModel):
+    """批量提交单行结果。
+
+    - ``action``：``delivered``（lock 完成）/ ``contributed``（progress 上交）/ ``skipped``。
+    - ``qty``：实际交付/上交量；skipped=0。
+    - ``reason``：skipped 时填（``BATCH_REASON_READY``/``BATCH_REASON_NO_ITEM``/
+      ``需先认领``/``已被他人认领``/``无需求``/``数量不足（{have}/{need}）``/
+      ``不满足上交条件``/``行状态变化``/``行已删除``）。
+    - ``is_claimant``：lock 行 claimant ∈ actor account_uuids（P3 MCDR skip_is_noise
+      折叠用——非本人认领的 lock skip 行折叠）。
+    - ``delivered_qty``/``need_qty``：写后行快照（skipped 取当前值）。
+    """
+
+    row_id: int
+    registry_id: str
+    item_name: str
+    mode: int  # 0=lock, 1=progress
+    action: Literal["delivered", "contributed", "skipped"]
+    qty: int = 0
+    reason: str = ""
+    is_claimant: bool = False
+    delivered_qty: int
+    need_qty: int
+
+
+class BatchSubmitTotals(BaseModel):
+    """批量提交汇总（按 action 分类计数）。"""
+
+    delivered: int = 0
+    contributed: int = 0
+    skipped: int = 0
+
+
+class BatchSubmitResult(BaseModel):
+    """批量提交完整结果（HTTP 200 响应体）。
+
+    ``actor_uuid`` 由鉴权决定：JWT 通道 = ``JWT.active_uuid``；service-token 通道
+    = ``X-Player-UUID``。客户端据此渲染回执。
+    """
+
+    sheet_id: int
+    actor_uuid: UUID
+    outcomes: list[BatchRowOutcome]
+    totals: BatchSubmitTotals
