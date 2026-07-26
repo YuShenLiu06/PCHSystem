@@ -15,7 +15,7 @@
 
 ### Added
 
-- _暂无_
+- **后端批量提交端点**：新增 `POST /sheets/{id}/submit-batch`——第三方集成方（服务端 mod / 服主脚本 / 跨服桥接 / 玩家客户端 mod）传一份 `{registry_id, qty}` 材料清单，后端按行 mode 自动分发 `delivery` / `contribute` 并返回逐行回执。双鉴权（service-token+UUID 代玩家写 / JWT 只写自己，镜像 construction-progress §3）；决策逻辑从 `McdrPlugin/pch_system/scanner.py` 移植为后端单一权威实现（reason 字面量逐字对齐，MCDR P3 薄壳化零适配）。详见 [`Docs/architecture/api/submit-extension.md`](Docs/architecture/api/submit-extension.md)。
 
 ### Changed
 
