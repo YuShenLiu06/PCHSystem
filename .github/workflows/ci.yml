@@ -185,12 +185,40 @@ jobs:
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
             const LABEL = 'release';
+            async function ensureLabel() {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: LABEL });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+                core.info(`bootstrap: creating label ${LABEL}`);
+                try {
+                  await github.rest.issues.createLabel({
+                    owner, repo, name: LABEL, color: '1D76DB',
+                    description: 'release 意图 PR（version bump / release 分支等）',
+                  });
+                } catch (e2) {
+                  if (e2.status === 403) { core.warning(`forbidden creating ${LABEL}: ${e2.message}`); return; }
+                  throw e2;
+                }
+              }
+            }
             async function addLabel() {
               try {
                 await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [LABEL] });
                 core.info(`added label: ${LABEL}`);
               } catch (e) {
-                if (e.status === 403 || e.status === 404) {
+                if (e.status === 404) {
+                  await ensureLabel(); // release 标签不存在则创建（label-pr 的 ci:pass/ci:fail 同模式）
+                  try {
+                    await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [LABEL] });
+                    core.info(`bootstrapped + added label: ${LABEL}`);
+                  } catch (e2) {
+                    if (e2.status === 403) { core.warning(`cannot add ${LABEL} after bootstrap: ${e2.message}`); return; }
+                    throw e2;
+                  }
+                  return;
+                }
+                if (e.status === 403) {
                   core.warning(`cannot add ${LABEL} (fork PR 只读 token?): ${e.message}`);
                   return;
                 }
