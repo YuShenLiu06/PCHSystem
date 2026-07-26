@@ -87,7 +87,7 @@ SemVer：BREAKING→MAJOR、兼容新功能→MINOR、兼容修复→PATCH；预
 
 **Backend / Frontend（手工）**：改版本号文件 + CHANGELOG 段 → `git tag` 并推 → Releases 页手工创建（部署从源码 compose build，无二进制 asset）。
 
-> **版本门禁**：release 意图 PR（命中任一：`release/**` / `hotfix/**` 分支、标题含 `release`、`release` label、改了**任一** version 字段（`plugin.json` / `package.json` / `pyproject.toml`）、commit 被任一 release tag（`pch_system-v*` / `backend-v*` / `frontend-v*`）指向）→ [`ci.yml`](./.github/workflows/ci.yml) 的 `version-metadata` job 自动打 `release` 标签，并要求**至少 bump 了一个 version 字段**（否则 block）；其中 **MCDR（`plugin.json`）发版**额外校验 SemVer 合法 + 严格前进 + CHANGELOG `## [pch_system-vX.Y.Z]` 段，失败则 block 合并。backend / frontend 手动发版仅打标签、不强制校验。直接进 main 的 MCDR 发版由 `release.yml` `version==tag` 兜底。脚本 [`check_version_bump.py`](./.github/scripts/check_version_bump.py)。
+> **版本门禁**：release 意图 PR（命中任一：`release/**` / `hotfix/**` 分支、标题含 `release`、`release` label、改了**任一** version 字段（`plugin.json` / `package.json` / `pyproject.toml`）、commit 被任一 release tag（`pch_system-v*` / `backend-v*` / `frontend-v*`）指向）→ [`ci.yml`](./.github/workflows/ci.yml) 的 `version-metadata` job 自动打 `release` 标签，并要求**至少 bump 了一个 version 字段**（否则 block）；**每个被 bump 的组件**都校验对应 CHANGELOG 段（`## [pch_system-vX.Y.Z]` / `## [backend-vX.Y.Z]` / `## [frontend-vX.Y.Z]`），**MCDR（`plugin.json`）**额外校验 SemVer 合法 + 严格前进，失败则 block 合并。直接进 main 的 MCDR 发版由 `release.yml` `version==tag` 兜底。脚本 [`check_version_bump.py`](./.github/scripts/check_version_bump.py)。
 >
 > **破坏性变更**：会话失效 / 数据迁移 / API 契约变更的版本，CHANGELOG 段开头加粗标注，例 `**破坏性变更：所有玩家需重新 !!PCH login 登录。**`。
 
