@@ -34,12 +34,12 @@
 
 <!--
 命中任一信号 CI 即视为 release PR：release/hotfix 分支、标题含 release、release label、
-改了 plugin.json version、commit 被 pch_system-v* tag 指向。version-metadata job 会校验，
-命中自动打 release 标签；普通功能/修复 PR 不命中则跳过、无需填本栏。
+改了任一 version 字段（plugin.json/package.json/pyproject.toml）、commit 被任一 release tag 指向。
+version-metadata job 自动打 release 标签 + 要求至少 bump 一个 version；MCDR(plugin.json) 发版
+额外校验严格前进 + CHANGELOG 段。普通 PR 不命中则跳过、无需填本栏。
 -->
-- [ ] 已 bump `McdrPlugin/mcdreforged.plugin.json` 的 `version`
-- [ ] `CHANGELOG.md` 有 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段
-- [ ] 版本严格前进于最新 `pch_system-v*` tag（非同版本/倒退）
+- [ ] 已 bump 对应组件 version（`plugin.json` / `package.json` / `pyproject.toml`）
+- [ ] （MCDR 发版）`CHANGELOG.md` 有 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段 + 严格前进于最新 `pch_system-v*` tag
 
 ## 测试
 
