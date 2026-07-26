@@ -39,7 +39,7 @@ version-metadata job 自动打 release 标签 + 要求至少 bump 一个 version
 额外校验严格前进 + CHANGELOG 段。普通 PR 不命中则跳过、无需填本栏。
 -->
 - [ ] 已 bump 对应组件 version（`plugin.json` / `package.json` / `pyproject.toml`）
-- [ ] （MCDR 发版）`CHANGELOG.md` 有 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段 + 严格前进于最新 `pch_system-v*` tag
+- [ ] `CHANGELOG.md` 有对应段（`## [pch_system-vX.Y.Z]` / `[backend-vX.Y.Z]` / `[frontend-vX.Y.Z]`）；MCDR 发版额外须严格前进于最新 `pch_system-v*` tag
 
 ## 测试
 
