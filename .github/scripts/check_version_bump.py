@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 REPO = Path(__file__).resolve().parents[2]
 CHANGELOG = REPO / "CHANGELOG.md"
@@ -72,7 +73,7 @@ def git(*args: str) -> str:
     return proc.stdout
 
 
-def fail(message: str) -> "NoReturn":  # noqa: F821
+def fail(message: str) -> NoReturn:
     print(f"::error::{message}", file=sys.stderr)
     sys.exit(1)
 
@@ -185,7 +186,7 @@ def write_output(key: str, value: str) -> None:
 # --------------------------------------------------------------------------- #
 # 模式入口
 # --------------------------------------------------------------------------- #
-def run_detect_only() -> "NoReturn":  # noqa: F821
+def run_detect_only() -> NoReturn:
     is_release, source = detect_intent(os.environ)
     write_output("is_release", "true" if is_release else "false")
     print(f"release 意图: {is_release}" + (f"（命中来源: {source}）" if is_release else "（非 release PR，跳过）"))
