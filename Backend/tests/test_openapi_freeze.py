@@ -21,6 +21,7 @@ def test_paths_present():
         "/sheets/{sheet_id}/rows/{row_id}/delivery",
         "/sheets/{sheet_id}/rows/{row_id}/release",
         "/sheets/{sheet_id}/rows/{row_id}/reject",
+        "/sheets/{sheet_id}/submit-batch",
         "/notifications/pending",
         "/notifications/ack",
         "/notifications/{notification_id}/read",

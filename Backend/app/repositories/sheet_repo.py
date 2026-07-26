@@ -36,6 +36,12 @@ MODE_LOCK, MODE_PROGRESS = 0, 1
 # status（D-6，spec §5.2）
 STATUS_OPEN, STATUS_CLAIMED, STATUS_DONE = "open", "claimed", "done"
 
+# 批量提交（batch_submit）reason 字面量——字面量逐字对齐 McdrPlugin scanner.py
+# REASON_NO_ITEM/REASON_READY + _skip_reason_lock/_skip_reason_progress。MCDR 客户端
+# 按 reason 字符串折叠回执（skip_is_noise/skip_is_ready）；改字面量会破 P3 薄壳化适配。
+BATCH_REASON_READY = "已备齐"          # lock done / progress done 或 delivered>=need
+BATCH_REASON_NO_ITEM = "背包没有此物"   # progress 未提交此物
+
 _CSV_HEADER = [
     "sheet_id",
     "item_name",
@@ -740,6 +746,19 @@ async def claim_row(
     return row
 
 
+async def _apply_delivery(row: SheetRow, delivered_qty: int) -> None:
+    """行内设 delivered_qty + 重算 status（lock 路径）。
+
+    前置：已 ``_assert_writable`` + ``_lock_row`` + 校验 ``mode == MODE_LOCK`` 与
+    ``status ∈ (STATUS_CLAIMED, STATUS_DONE)``。不 flush（调用方负责）。
+
+    纯函数化的状态机：delivered>=need → done；否则 claimed。need=0 时 delivered>=0
+    恒为 True（与 set_row_delivery 既有行为一致：need=0 行进 done）。
+    """
+    row.delivered_qty = delivered_qty
+    row.status = STATUS_DONE if delivered_qty >= row.need_qty else STATUS_CLAIMED
+
+
 async def set_row_delivery(
     session: AsyncSession, sheet_id: int, row_id: int, delivered_qty: int
 ) -> SheetRow | None:
@@ -752,8 +771,7 @@ async def set_row_delivery(
         raise SheetRowConflict("progress rows use contribute, not delivery")
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
         raise SheetRowConflict(f"cannot set delivery on row in status {row.status}")
-    row.delivered_qty = delivered_qty
-    row.status = STATUS_DONE if delivered_qty >= row.need_qty else STATUS_CLAIMED
+    await _apply_delivery(row, delivered_qty)
     await session.flush()
     return row
 
@@ -854,6 +872,37 @@ async def reject_row(
     return row
 
 
+async def _apply_contribution(
+    session: AsyncSession,
+    row: SheetRow,
+    player_uuid: uuid.UUID,
+    qty: int,
+) -> None:
+    """行内增 delivered_qty + 重算 status + 贡献者幂等 upsert（progress 路径）。
+
+    前置：已 ``_assert_writable`` + ``_lock_row`` + 校验 ``mode == MODE_PROGRESS``
+    + ``(need == 0 OR status != STATUS_DONE)``。不 flush（调用方负责）。
+
+    - delivered_qty += qty（增量；允许超额，status=done）。
+    - need>0 且 delivered>=need → done；否则 claimed（need=0 永不 done）。
+    - 贡献者 ON CONFLICT DO UPDATE 累加 contributed_qty（幂等，支持同玩家多次上交）。
+    """
+    row.delivered_qty += qty
+    row.status = (
+        STATUS_DONE
+        if (row.need_qty > 0 and row.delivered_qty >= row.need_qty)
+        else STATUS_CLAIMED
+    )
+    await session.execute(
+        pg_insert(SheetRowContributor)
+        .values(row_id=row.id, player_uuid=player_uuid, contributed_qty=qty)
+        .on_conflict_do_update(
+            index_elements=["row_id", "player_uuid"],
+            set_={"contributed_qty": SheetRowContributor.contributed_qty + qty},
+        )
+    )
+
+
 async def contribute_row(
     session: AsyncSession,
     sheet_id: int,
@@ -876,23 +925,309 @@ async def contribute_row(
     # need=0 = 无目标（无限收集），永不 done，可一直上交；仅 need>0 的 done 行拒绝重复上交
     if row.status == STATUS_DONE and row.need_qty > 0:
         raise SheetRowConflict("cannot contribute on done row")
-    row.delivered_qty += qty
-    row.status = (
-        STATUS_DONE
-        if (row.need_qty > 0 and row.delivered_qty >= row.need_qty)
-        else STATUS_CLAIMED
-    )
-    # 幂等加贡献者并累加每人累计上交量（contributed_qty 供按贡献量排序显示）
-    await session.execute(
-        pg_insert(SheetRowContributor)
-        .values(row_id=row.id, player_uuid=player_uuid, contributed_qty=qty)
-        .on_conflict_do_update(
-            index_elements=["row_id", "player_uuid"],
-            set_={"contributed_qty": SheetRowContributor.contributed_qty + qty},
-        )
-    )
+    await _apply_contribution(session, row, player_uuid, qty)
     await session.flush()
     return row
+
+
+async def batch_submit(
+    session: AsyncSession,
+    sheet_id: int,
+    *,
+    items_map: dict[str, int],
+    player_uuid: uuid.UUID,
+    account_uuids: set[uuid.UUID],
+) -> "BatchSubmitResult":
+    """批量提交：客户端只传 ``{registry_id: qty}``，后端按 mode 分发 deliver/contribute。
+
+    移植 ``McdrPlugin/pch_system/scanner.py:148-199`` 决策逻辑（MCDR P3 薄壳化的
+    单一权威实现）。单事务 + 逐行 FOR UPDATE，HTTP 响应即回执。
+
+    算法（plan §1.2 C）：
+    1. ``_assert_writable`` 一次（archived → ``SheetArchived`` → API 层 409 整批回滚）。
+    2. ``list_rows`` 枚举所有行（不锁；只读 ``claimant_name`` 给 outcome.item_name）。
+    3. 逐行（含子物品行）：``registry_id is None/empty`` → 静默跳过（不产 outcome，
+       对齐 scanner「无 registry_id 不参与」）；其余每行恰好产一个 outcome。
+    4. 按 mode 算 action：
+       - lock：claimant ∈ account_uuids + status=claimed + need>0 + have>=need →
+         ``_apply_delivery(need)``；
+       - progress：need>0 + status≠done + delivered<need + have>0 →
+         ``_apply_contribution(min(have, need-delivered))``；
+       - 其余 → skip，reason 字面量见 ``BATCH_REASON_*`` + 内联（对齐 scanner.py）。
+    5. 仅对 deliver/contribute 行 ``_lock_row`` FOR UPDATE + 重校验前置 + ``_apply_*``：
+       - 行已删（None）→ skip「行已删除」；
+       - mode/status 变化违反前置 → ``SheetRowConflict`` 捕获 → skip「行状态变化」
+         （不回滚，保部分成功）。
+    6. 末尾 ``session.flush()``；汇总 totals；返回 ``BatchSubmitResult``。
+
+    事务边界：单事务，逐行 FOR UPDATE；skipped 是 outcome 不是错误；仅
+    ``SheetArchived`` 整批回滚。
+    锁序不变量：按 ``list_rows`` 稳定序（父先于子、id 升序）处理，避免死锁。
+    """
+    from app.schemas.sheet import (
+        BatchRowOutcome,
+        BatchSubmitResult,
+        BatchSubmitTotals,
+    )
+
+    # 步骤 1：archived 守卫（不存在的 sheet 在 list_rows 返空 → 下游产空 outcomes）
+    await _assert_writable(session, sheet_id)
+
+    # 步骤 2：枚举行（非 FOR UPDATE——仅取 claimant_name 给 outcome.item_name）
+    rows_with_names = await list_rows(session, sheet_id)
+
+    outcomes: list[BatchRowOutcome] = []
+    totals = BatchSubmitTotals()
+
+    for row, _claimant_name in rows_with_names:
+        # 步骤 3：无 registry_id 不参与（不产 outcome）
+        if not row.registry_id:
+            continue
+
+        # 移植 scanner.py:171 —— inventory.get(rid, 0)：物品清单未含此行视为 have=0
+        have = items_map.get(row.registry_id, 0)
+        item_name = row.item_name  # outcome 的物品名 = 行 item_name（非认领人名）
+
+        if row.mode == MODE_LOCK:
+            outcome = await _batch_decide_lock(
+                session,
+                sheet_id=sheet_id,
+                row=row,
+                item_name=item_name,
+                have=have,
+                account_uuids=account_uuids,
+            )
+        else:
+            outcome = await _batch_decide_progress(
+                session,
+                sheet_id=sheet_id,
+                row=row,
+                item_name=item_name,
+                have=have,
+                player_uuid=player_uuid,
+            )
+        outcomes.append(outcome)
+        if outcome.action == "delivered":
+            totals.delivered += 1
+        elif outcome.action == "contributed":
+            totals.contributed += 1
+        else:
+            totals.skipped += 1
+
+    await session.flush()
+    return BatchSubmitResult(
+        sheet_id=sheet_id,
+        actor_uuid=player_uuid,
+        outcomes=outcomes,
+        totals=totals,
+    )
+
+
+def _skip_reason_lock(
+    status: str, need: int, have: int, *, is_claimant: bool = False
+) -> str:
+    """lock 行 skip reason（字面量逐字对齐 ``scanner._skip_reason_lock``）。"""
+    if status == STATUS_OPEN:
+        return "需先认领"
+    if status == STATUS_CLAIMED and not is_claimant:
+        return "已被他人认领"
+    if status == STATUS_DONE:
+        return BATCH_REASON_READY
+    if need <= 0:
+        return "无需求"
+    return f"数量不足（{have}/{need}）"
+
+
+def _skip_reason_progress(
+    status: str, need: int, delivered: int, have: int
+) -> str:
+    """progress 行 skip reason。
+
+    need=0 = 无限收集模式（永不 done），仅在未提交时 skip「背包没有此物」；
+    need>0 时 done / delivered>=need →「已备齐」。与 scanner 分歧：batch 允许
+    need=0 上交（对齐后端 ``contribute_row``），scanner 历史 skip need=0（P3 删除）。
+    """
+    if need > 0 and (status == STATUS_DONE or delivered >= need):
+        return BATCH_REASON_READY
+    if have <= 0:
+        return BATCH_REASON_NO_ITEM
+    return "不满足上交条件"
+
+
+async def _batch_decide_lock(
+    session: AsyncSession,
+    *,
+    sheet_id: int,
+    row: SheetRow,
+    item_name: str,
+    have: int,
+    account_uuids: set[uuid.UUID],
+):
+    """lock 行批量决策（移植 ``scanner.match_rows`` lock 分支）。
+
+    前置：row.mode == MODE_LOCK。仅对 deliver 行 ``_lock_row`` + 重校验 + ``_apply_delivery``。
+    其余行产 skip outcome 不上锁。``SheetRowConflict`` 捕获 → skip「行状态变化」（不回滚）。
+    """
+    from app.schemas.sheet import BatchRowOutcome
+
+    is_claimant = (
+        row.claimant_uuid is not None and row.claimant_uuid in account_uuids
+    )
+    want_deliver = (
+        is_claimant
+        and row.status == STATUS_CLAIMED
+        and row.need_qty > 0
+        and have >= row.need_qty
+    )
+
+    if not want_deliver:
+        return BatchRowOutcome(
+            row_id=row.id,
+            registry_id=row.registry_id,  # type: ignore[arg-type]
+            item_name=item_name,
+            mode=MODE_LOCK,
+            action="skipped",
+            reason=_skip_reason_lock(
+                row.status, row.need_qty, have, is_claimant=is_claimant
+            ),
+            is_claimant=is_claimant,
+            delivered_qty=row.delivered_qty,
+            need_qty=row.need_qty,
+        )
+
+    # 锁行 + 重校验（status 可能并发变化）
+    locked = await _lock_row(session, sheet_id, row.id)
+    if locked is None:
+        return BatchRowOutcome(
+            row_id=row.id,
+            registry_id=row.registry_id,  # type: ignore[arg-type]
+            item_name=item_name,
+            mode=MODE_LOCK,
+            action="skipped",
+            reason="行已删除",
+            is_claimant=is_claimant,
+            delivered_qty=row.delivered_qty,
+            need_qty=row.need_qty,
+        )
+    try:
+        if locked.mode != MODE_LOCK:
+            raise SheetRowConflict("mode changed")
+        if locked.status not in (STATUS_CLAIMED, STATUS_DONE):
+            raise SheetRowConflict(f"status changed to {locked.status}")
+        await _apply_delivery(locked, locked.need_qty)
+    except SheetRowConflict:
+        return BatchRowOutcome(
+            row_id=locked.id,
+            registry_id=locked.registry_id,  # type: ignore[arg-type]
+            item_name=item_name,
+            mode=MODE_LOCK,
+            action="skipped",
+            reason="行状态变化",
+            is_claimant=is_claimant,
+            delivered_qty=locked.delivered_qty,
+            need_qty=locked.need_qty,
+        )
+    return BatchRowOutcome(
+        row_id=locked.id,
+        registry_id=locked.registry_id,  # type: ignore[arg-type]
+        item_name=item_name,
+        mode=MODE_LOCK,
+        action="delivered",
+        qty=locked.need_qty,
+        is_claimant=is_claimant,
+        delivered_qty=locked.delivered_qty,
+        need_qty=locked.need_qty,
+    )
+
+
+async def _batch_decide_progress(
+    session: AsyncSession,
+    *,
+    sheet_id: int,
+    row: SheetRow,
+    item_name: str,
+    have: int,
+    player_uuid: uuid.UUID,
+):
+    """progress 行批量决策（移植 ``scanner.match_rows`` progress 分支）。
+
+    前置：row.mode == MODE_PROGRESS。仅对 contribute 行 ``_lock_row`` + 重校验 +
+    ``_apply_contribution``。其余行产 skip outcome 不上锁。``SheetRowConflict``
+    捕获 → skip「行状态变化」（不回滚）。
+    """
+    from app.schemas.sheet import BatchRowOutcome
+
+    # need=0 = 无限收集模式（永不 done）→ have>0 即上交（不封顶）；
+    # need>0 → 未满才上交（封顶 need-delivered）。故 batch 允许 need=0 上交，
+    # 对齐后端 ``contribute_row``（scanner 历史 skip need=0，P3 薄壳化后删除）。
+    want_contribute = (
+        row.status != STATUS_DONE
+        and have > 0
+        and (row.need_qty <= 0 or row.delivered_qty < row.need_qty)
+    )
+
+    if not want_contribute:
+        return BatchRowOutcome(
+            row_id=row.id,
+            registry_id=row.registry_id,  # type: ignore[arg-type]
+            item_name=item_name,
+            mode=MODE_PROGRESS,
+            action="skipped",
+            reason=_skip_reason_progress(
+                row.status, row.need_qty, row.delivered_qty, have
+            ),
+            delivered_qty=row.delivered_qty,
+            need_qty=row.need_qty,
+        )
+
+    # 锁行 + 重校验
+    locked = await _lock_row(session, sheet_id, row.id)
+    if locked is None:
+        return BatchRowOutcome(
+            row_id=row.id,
+            registry_id=row.registry_id,  # type: ignore[arg-type]
+            item_name=item_name,
+            mode=MODE_PROGRESS,
+            action="skipped",
+            reason="行已删除",
+            delivered_qty=row.delivered_qty,
+            need_qty=row.need_qty,
+        )
+    try:
+        if locked.mode != MODE_PROGRESS:
+            raise SheetRowConflict("mode changed")
+        if locked.status == STATUS_DONE and locked.need_qty > 0:
+            raise SheetRowConflict("row already done")
+        # 重算 contribute qty（delivered 可能并发增长）；need=0 无限模式不封顶
+        if locked.need_qty <= 0:
+            qty = have
+        else:
+            remaining = locked.need_qty - locked.delivered_qty
+            qty = min(have, max(remaining, 0))
+        if qty <= 0:
+            raise SheetRowConflict("no remaining need")
+        await _apply_contribution(session, locked, player_uuid, qty)
+    except SheetRowConflict:
+        return BatchRowOutcome(
+            row_id=locked.id,
+            registry_id=locked.registry_id,  # type: ignore[arg-type]
+            item_name=item_name,
+            mode=MODE_PROGRESS,
+            action="skipped",
+            reason="行状态变化",
+            delivered_qty=locked.delivered_qty,
+            need_qty=locked.need_qty,
+        )
+    return BatchRowOutcome(
+        row_id=locked.id,
+        registry_id=locked.registry_id,  # type: ignore[arg-type]
+        item_name=item_name,
+        mode=MODE_PROGRESS,
+        action="contributed",
+        qty=qty,
+        delivered_qty=locked.delivered_qty,
+        need_qty=locked.need_qty,
+    )
 
 
 async def list_contributors(

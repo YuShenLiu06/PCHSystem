@@ -9,7 +9,7 @@
 """
 from fastapi import APIRouter
 
-from app.api.sheets import collab, lifecycle, managers, rows, sheets_crud
+from app.api.sheets import collab, lifecycle, managers, rows, sheets_crud, submit
 
 router = APIRouter()
 
@@ -18,3 +18,4 @@ router.include_router(rows.router, prefix="/sheets", tags=["sheets"])
 router.include_router(collab.router, prefix="/sheets", tags=["sheets"])
 router.include_router(lifecycle.router, prefix="/sheets", tags=["sheets"])
 router.include_router(managers.router, prefix="/sheets", tags=["sheets"])
+router.include_router(submit.router, prefix="/sheets", tags=["sheets"])
