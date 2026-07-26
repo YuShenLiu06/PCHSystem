@@ -32,7 +32,7 @@ async def search_players(
         PlayerBrief(
             player_uuid=p.uuid,
             player_name=p.current_name,
-            display_name=display_names[p.uuid],
+            display_name=display_names.get(p.uuid, p.current_name),  # CR #7：理论 race 缺失回退玩家名
         )
         for p in players
     ]

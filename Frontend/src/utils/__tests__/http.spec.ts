@@ -237,4 +237,47 @@ describe('http 响应拦截器 · 401 自动 refresh 续签重放（#42）', () 
     expect(mocks.clear).toHaveBeenCalledTimes(1)
     expect(mocks.push).toHaveBeenCalledWith('/auth')
   })
+
+  it('并发 401 + refresh 失败 → clear / push 各只一次（CR #1：double navigation）', async () => {
+    mocks.accessToken = 'acc'
+    mocks.refreshToken = 'ref-stale'
+    let refreshCalls = 0
+    http.defaults.adapter = (async (config: { url?: string }) => {
+      if (config.url === '/auth/refresh') {
+        refreshCalls++
+        await new Promise((r) => setTimeout(r, 20)) // 拉宽并发窗口，保证两请求共享同一 refreshPromise
+        return reject401(config, 'invalid refresh')
+      }
+      return reject401(config)
+    }) as AxiosAdapter
+
+    const [r1, r2] = await Promise.allSettled([http.get('/x'), http.get('/y')])
+    expect(r1.status).toBe('rejected')
+    expect(r2.status).toBe('rejected')
+    expect(refreshCalls).toBe(1) // 共享一次 refresh，不重复
+    expect(mocks.clear).toHaveBeenCalledTimes(1) // CR #1：refreshSession.catch 只跑一次
+    expect(mocks.push).toHaveBeenCalledTimes(1)
+  })
+
+  it('重放请求再次 401 → 不再递归 refresh（CR #2：_replayed flag 防无界循环）', async () => {
+    mocks.accessToken = 'acc'
+    mocks.refreshToken = 'ref'
+    let refreshCalls = 0
+    let xCalls = 0
+    http.defaults.adapter = (async (config: { url?: string }) => {
+      if (config.url === '/auth/refresh') {
+        refreshCalls++
+        return { data: refreshResp() }
+      }
+      if (config.url === '/x') {
+        xCalls++
+        return reject401(config) // 恒 401（新 token 仍被拒）
+      }
+      return Promise.reject({ config, response: { status: 500 } })
+    }) as AxiosAdapter
+
+    await expect(http.get('/x')).rejects.toBeTruthy()
+    expect(refreshCalls).toBe(1) // 原 401 触发一次 refresh；重放 401 因 _replayed 不再 refresh
+    expect(xCalls).toBe(2) // 原请求 + 重放
+  })
 })

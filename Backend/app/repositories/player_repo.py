@@ -57,11 +57,11 @@ async def search_for_manager(
     # 转义 LIKE 通配符，escape='\\' 告知 PG 反斜杠为转义符
     escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     pattern = f"{escaped}%"
+    # inner join（非 outerjoin）：WHERE web_account_id IS NOT NULL 已排除未绑玩家，
+    # outerjoin 的 NULL 合成行永远不会出现，故语义等价 inner join——用 .join() 明示意图（CR #4/#5）。
     stmt = (
         select(Player)
-        .select_from(Player)
-        .outerjoin(WebAccount, WebAccount.id == Player.web_account_id)
-        .where(Player.web_account_id.is_not(None))
+        .join(WebAccount, WebAccount.id == Player.web_account_id)
         .where(
             or_(
                 Player.current_name.ilike(pattern, escape="\\"),
