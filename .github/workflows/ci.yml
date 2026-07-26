@@ -390,40 +390,44 @@ jobs:
             }
 
             const icon = { success: '✅', failure: '❌', skipped: '⏭️', cancelled: '🚫' };
-            let message = null;
-            if (!allOk) {
-              const lines = Object.entries(jobs).map(([j, r]) => {
-                let line = `- ${icon[r] || '❓'} **${j}**`;
-                if (r === 'failure') {
-                  if (j === 'version-metadata' && vmError) {
-                    line += `：${vmError}`;
-                  } else if (stepDetail[j]) {
-                    line += ` — 失败步骤：${stepDetail[j].join('、')}`;
-                  }
+            const lines = Object.entries(jobs).map(([j, r]) => {
+              let line = `- ${icon[r] || '❓'} **${j}**`;
+              if (r === 'failure') {
+                if (j === 'version-metadata' && vmError) {
+                  line += `：${vmError}`;
+                } else if (stepDetail[j]) {
+                  line += ` — 失败步骤：${stepDetail[j].join('、')}`;
                 }
-                return line;
-              });
+              }
+              return line;
+            });
+
+            // 永久 sticky 状态评论：全绿 ✅ / 有失败 ⚠️（始终在，每次 push 更新）
+            let message;
+            if (allOk) {
+              message = `### ✅ CI 全部通过\n\n${lines.join('\n')}`;
+            } else {
               message = `### ⚠️ CI 未通过\n\n${lines.join('\n')}\n\n详见 \`Checks\`；修正后推送即自动重跑，本评论自动更新。`;
             }
 
             const marker = '<!-- ci-report -->';
-            const body = message ? `${marker}\n${message}` : null;
+            const body = `${marker}\n${message}`;
             try {
               const comments = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+              // 顺手清理旧 marker（ci-version-metadata 迁移残留）孤立评论
+              for (const c of comments.data) {
+                if (c.body && c.body.includes('<!-- ci-version-metadata -->')) {
+                  await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id });
+                  core.info(`deleted stale ci-version-metadata comment ${c.id}`);
+                }
+              }
               const existing = comments.data.find((c) => c.body && c.body.includes(marker));
               if (existing) {
-                if (body === null) {
-                  await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
-                  core.info('deleted report (all pass)');
-                } else {
-                  await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-                  core.info('updated report');
-                }
-              } else if (body !== null) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                core.info('updated report');
+              } else {
                 await github.rest.issues.createComment({ owner, repo, issue_number, body });
                 core.info('created report');
-              } else {
-                core.info('all pass, no report needed');
               }
             } catch (e) {
               if (e.status === 403 || e.status === 404) {
