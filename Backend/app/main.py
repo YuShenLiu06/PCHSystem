@@ -3,6 +3,7 @@ from importlib.metadata import PackageNotFoundError, version as pkg_version
 from fastapi import FastAPI
 
 from app.api.auth import router as auth_router, top_router
+from app.api.construction import router as construction_router
 from app.api.identity import (
     auth_router as identity_auth_router,
     bind_router,
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(parsing_router)
     app.include_router(notifications_router)
     app.include_router(players_router)
+    app.include_router(construction_router)
     app.include_router(top_router)
     return app
 

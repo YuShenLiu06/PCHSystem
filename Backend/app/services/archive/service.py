@@ -190,6 +190,10 @@ async def archive_sheet(
             },
         )
         await session.commit()
+        # TODO(scoring): 归档成功（已 commit）后接施工积分终算——best-effort，不阻塞归档：
+        #   totals = await construction_repo.aggregate_placement_totals(session, sheet_id)
+        #   await score_service.settle(sheet_id, placement_totals=totals)  # BuildAScoreCalculator
+        # 详见 Docs/architecture/api/construction.md §7 + flows/scoring-settlement.md §2/§4。
         # post-commit：把产物推送到 wiki git 仓（默认 off；best-effort，绝不影响归档结果）。
         # publisher 内部已 best-effort（失败仅通知 owner），这里再兜一层防御：任何意外上抛都吞掉。
         try:

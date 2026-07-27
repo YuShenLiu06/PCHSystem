@@ -1,6 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
+function isAdmin(): boolean {
+  const auth = useAuthStore()
+  return auth.account?.role === 'admin' || auth.account?.role === 'owner'
+}
+
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -17,6 +22,12 @@ export const router = createRouter({
     { path: '/sheets', component: () => import('../views/sheets/SheetList.vue') },
     { path: '/sheets/:id', component: () => import('../views/sheets/SheetEditor.vue') },
     { path: '/parsing/batch', component: () => import('../views/parsing/BatchImport.vue') },
+    // admin 模块（仅可见性；真实拒绝靠后端 RBAC 403，R-9/RS-2）
+    {
+      path: '/admin/construction',
+      component: () => import('../views/admin/ConstructionSettings.vue'),
+      meta: { requiresAdmin: true },
+    },
     { path: '/', redirect: '/me' },
   ],
 })
@@ -24,4 +35,6 @@ export const router = createRouter({
 router.beforeEach((to) => {
   const auth = useAuthStore()
   if (!to.meta.public && !auth.isAuthenticated) return '/auth'
+  // admin 守卫：非 admin/owner 访问 admin 路由 → 回 /me（后端 RBAC 仍会 403 兜底）
+  if (to.meta.requiresAdmin && !isAdmin()) return '/me'
 })

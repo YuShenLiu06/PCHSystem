@@ -1,11 +1,13 @@
 # 施工进度统计 · 端到端流程指南（设计契约）
 
-> 本文件是施工进度统计层的**设计契约**：施工贡献怎么上报、怎么归因、怎么喂给积分层。本层 🚧 规划中（未实现），本文是后续实现的对照基线。
+> 本文件是施工进度统计层的**设计契约**：施工贡献怎么上报、怎么归因、怎么喂给积分层。
+> **后端 + 前端 + 测试脚本已实现（迁移 0017，2026-07-27）**；MCDR 默认方块追踪器（§5）待 S-1 单独 PR。
+> 端点参考见 [`../api/construction.md`](../api/construction.md)（含「默认追踪器实现契约」C-1~C-10）。
 > 顶层索引见 [`../../architecture.md`](../../architecture.md) §7；红线见根 [`../../../CLAUDE.md`](../../../CLAUDE.md) §3（尤其 R-7 MCDR 纯客户端 / R-12 @new_thread）。
 
 **读者**：要实现施工上报 / 写服务端 mod 上报源 / 接入玩家客户端 mod 的二次开发者。
 
-**状态**：🚧 规划中。**关键 MCDR 方块事件 API 待 S-1 联网核实**（见 §9），实现前必查 <https://docs.mcdreforged.com/zh-cn/latest/>。
+**状态**：✅ 后端 + 前端已实现；🚧 MCDR 默认方块追踪器（§5）待 S-1 联网核实（见 §9）后单独 PR，实现时照 [`../api/construction.md`](../api/construction.md) §5 契约。
 
 ---
 
@@ -132,8 +134,80 @@ def on_break(ctx):
 | **`allow_client_mods` 总开关** | Web 管理面板（默认 true）+ 玩家 `!!PCH` | 服主开总开关，玩家自主决定是否用客户端 mod |
 | **玩家客户端 mod 管理** | `!!PCH construction sources list` / `!!PCH mod-token` / `!!PCH mod-token revoke` | 玩家自主权 |
 | **玩家切源** | `!!PCH construction switch <source>` | 见 §3.1 单源策略 |
+| **休眠源一键切回**（迭代 2） | Web `Me.vue`「上报源」控件 | 见 §6.1 |
+| **进度图表化**（迭代 2） | Web `ConstructionProgress.vue`（折线/柱/饼） | 见 §6.2 |
 
 **开关默认值**：`allow_client_mods = true` / `official_tracker_enabled = true` / `allow_server_mods = true`（宽松默认，纯荣誉 + 白名单服，刷分影响可控）。
+
+### 6.1 休眠源切换流程（迭代 2）
+
+「休眠源」= 玩家此前用过的 `client_mod` 源、当前 `disabled_at` 非空（详见 [`api/construction.md`](../api/construction.md) §6 `dormant_sources`）。
+**严格单源不变**——休眠源不参与 `/report` 单源校验，仅作历史展示 + 快速切回入口。
+
+```mermaid
+sequenceDiagram
+    participant User as 玩家
+    participant Web as Me.vue 上报源控件
+    participant API as construction API
+    participant DB as player_sources / history
+
+    User->>Web: 打开「上报源」面板
+    Web->>API: GET /v1/construction/source/me
+    API->>DB: 查 active + history + 休眠源（client_mod 且 disabled_at 非空）
+    API-->>Web: {active, history, dormant_sources: [{source_id, last_active_at}]}
+    Note over Web: 渲染休眠源列表（一键「切回」按钮）
+
+    User->>Web: 点「切回 <mod_id>」
+    Web->>API: POST /v1/construction/source/switch-self {mode:"local", source_id:"<mod_id>"}
+    API->>DB: 旧 active disabled_at=now() + 插新 active + 写 history（from→to）
+    API-->>Web: {source_type:"client_mod", source_id:"<mod_id>"}
+    Note over Web: 旧 active 自动加入新的 dormant_sources；<br/>玩家用 mod-token JWT 上报
+```
+
+实现要点：
+- 切回流程等价于显式 `switch-self`（无特例），仍需玩家之后用 mod-token JWT 上报——服务端不存 JWT、不代铸。
+- 休眠源列表的去重 + 取最近激活时间，在 `construction_repo.list_dormant_sources(player_uuid)` 单次查询完成（避免 N+1）。
+- 前端展示上限：列表默认展示前 5 个（按 `last_active_at` 倒序），其余折叠。
+
+### 6.2 进度图表化 + 具名 slot（迭代 2）
+
+`ConstructionProgress.vue`（项目详情「施工进度」tab）从「纯文本表格」升级为图表化展示，对应 `GET /{sheet_id}/progress` 的三个聚合字段（[`api/construction.md`](../api/construction.md) §4）：
+
+| 图表 | 数据源 | 用途 | 库 |
+|---|---|---|---|
+| **折线图（时序趋势）** | `timeline`（时序快照，limit 200） | X 轴 `recorded_at`、Y 轴 `total_net`，每账号一条线 → 看施工进度趋势、谁在何时贡献了多少 | ECharts `LineSeries` |
+| **柱状图（材料完成度）** | `material_completion` | X 轴 `item_name`、Y 轴 `net_qty` + 目标线 `need_qty` → 一眼看出哪些材料还缺 | ECharts `BarSeries` + `markLine` |
+| **饼图（账号占比）** | `account_totals` | 按账号 `net_qty` 占比 → 谁造得最多（对齐归档 `contributions.png` 风格） | ECharts `PieSeries` |
+
+**降级**：timeline 缺数据（snapshot 写失败、迁移 0018 前的历史项目）→ 折线图退化为单点（仅显示当前 `account_totals.net_qty`），不阻断整页渲染。
+
+**具名 slot `name="charts"` 自定义扩展点**：
+
+```vue
+<template>
+  <!-- 默认渲染：折线 + 柱 + 饼三件套 -->
+  <slot name="charts" :timeline="timeline" :completion="material_completion" :totals="account_totals">
+    <LineChart v-if="timeline.length" :data="timeline" />
+    <BarChart :data="material_completion" />
+    <PieChart :data="account_totals" />
+  </slot>
+
+  <!-- 明细表格始终渲染（不可覆盖） -->
+  <ProgressTable :breakdown="breakdown" />
+</template>
+```
+
+二次开发者可在自己的 `SheetEditor.vue` 注入自定义图表组件（如服主想加「按区块热力图」），不修改 `ConstructionProgress.vue` 源码：
+
+```vue
+<ConstructionProgress :sheet-id="sheetId">
+  <template #charts="{ timeline, completion, totals }">
+    <MyCustomHeatmap :data="timeline" />
+  </template>
+</ConstructionProgress>
+```
+
+设计契约：默认 slot 内容是「公开 API」——具名 `charts` 的 prop 集合（`timeline`/`completion`/`totals`）跨版本稳定（与 `GET /{sheet_id}/progress` 响应字段对齐），修改需发版说明。
 
 ---
 
@@ -218,4 +292,6 @@ config（`.env`）仅留连接串 / 密钥（R-11）/ 启动默认。
 
 ---
 
-*创建：2026-07-25（v0.9 文档重构）。本层 🚧 规划中，本文为设计契约基线；§5 默认实现依赖 S-1 核实，§9 是核实清单。数据流向 [积分层](./scoring-settlement.md)，constructing 状态来自 [sheets API](../api/sheets.md) §5.2。*
+*创建：2026-07-25（v0.9 文档重构）。本层 🚧 规划中，本文为设计契约基线；§5 默认实现依赖 S-1 核实，§9 是核实清单。数据流向 [积分层](./scoring-settlement.md)，constructing 状态来自 [sheets API](../api/sheets.md) §5.2。
+
+迭代 2 增量（2026-07-27）：§6.1 休眠源切换流程（local 模式选休眠源 → switch-self 唤醒）+ §6.2 进度图表化（折线时序 + 柱图材料完成度 + 饼图账号占比）+ 具名 slot `name="charts"` 自定义扩展点。*
