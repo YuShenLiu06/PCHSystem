@@ -2,6 +2,14 @@
 
 通过 importlib 直接按文件路径加载 scanner.py，绕过 ``pch_system/__init__.py``
 （后者会 import mcdreforged，测试环境无该依赖）。scanner 本身只依赖标准库。
+
+覆盖范围（P3 薄壳化后）：
+- 背包 / 手持扫描（``expand_items`` / ``scan_inventory`` / ``read_held_item``）—— 一键提交、
+  ``addhand`` / ``setreg`` / ``addsub`` 共用；
+- 回执折叠谓词（``skip_is_noise`` / ``skip_is_ready``）—— 取基元参数，与后端
+  ``batch_submit`` reason 字面量对齐（``REASON_NO_ITEM`` / ``REASON_READY``）。
+
+行级决策（match_rows）已移交后端 ``sheet_repo.batch_submit`` 单一权威实现，本端不再复刻。
 """
 import importlib.util
 from collections import Counter
@@ -19,7 +27,6 @@ expand_items = scanner.expand_items
 _extract_nested_items = scanner._extract_nested_items
 scan_inventory = scanner.scan_inventory
 read_held_item = scanner.read_held_item
-match_rows = scanner.match_rows
 skip_is_noise = scanner.skip_is_noise
 skip_is_ready = scanner.skip_is_ready
 REASON_NO_ITEM = scanner.REASON_NO_ITEM
@@ -196,295 +203,82 @@ class TestReadHeldItem:
         assert read_held_item(None, "Steve") is None
 
 
-# ---- match_rows ----
-# lock 行需带 claimant_uuid 用于判定 is_claimant（与后端 _row_dict 字段一致）
-ROWS = [
-    {"id": 1, "item_name": "石头", "registry_id": "minecraft:stone", "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "open", "claimant_uuid": None},
-    {"id": 2, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot", "need_qty": 32, "delivered_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"},
-    {"id": 3, "item_name": "橡木板", "registry_id": "minecraft:oak_planks", "need_qty": 128, "delivered_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"},
-    {"id": 4, "item_name": "无注册名", "registry_id": None, "need_qty": 10, "mode": 0, "status": "open"},
-    {"id": 5, "item_name": "圆石", "registry_id": "minecraft:cobblestone", "need_qty": 100, "delivered_qty": 40, "mode": 1, "status": "claimed"},
-    {"id": 6, "item_name": "泥土", "registry_id": "minecraft:dirt", "need_qty": 10, "delivered_qty": 10, "mode": 1, "status": "done"},
-]
-
-
-def _by_row(actions, row_id):
-    return next(a for a in actions if a.row_id == row_id)
-
-
-class TestMatchRows:
-    def test_lock_open_未认领_skip(self):
-        # lock open 行：必须先手动认领，不进入一键提交
-        a1 = _by_row(match_rows(ROWS, {"minecraft:stone": 64}, player_uuid="uuid-A"), 1)
-        assert a1.action == "skip"
-        assert "需先认领" in a1.reason
-
-    def test_lock_claimed_自己认领_够数_deliver(self):
-        # lock claimed + 自己是认领人 + have>=need → 直接 deliver（不再 claim）
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 2)
-        assert a2.action == "deliver"
-        assert a2.qty == 32
-
-    def test_lock_claimed_他人认领_skip(self):
-        # lock claimed 但自己是其他玩家 → skip
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-B"), 2)
-        assert a2.action == "skip"
-        assert "已被他人认领" in a2.reason
-
-    def test_lock_claimed_自己认领_不够数_skip(self):
-        # lock claimed + 自己认领但数量不足 → skip
-        a3 = _by_row(match_rows(ROWS, {"minecraft:oak_planks": 64}, player_uuid="uuid-A"), 3)
-        assert a3.action == "skip"
-        assert "不足" in a3.reason
-
-    def test_lock_未传player_uuid视为非认领人_skip(self):
-        # 不传 player_uuid（默认空串）→ lock claimed 行也 skip
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}), 2)
-        assert a2.action == "skip"
-        assert "已被他人认领" in a2.reason
-
-    def test_无registry_id不产生action(self):
-        actions = match_rows(ROWS, {})
-        assert all(a.row_id != 4 for a in actions)
-
-    def test_progress_封顶到need(self):
-        # have=64, need=100, delivered=40 → contribute min(64, 60)=60
-        a5 = _by_row(match_rows(ROWS, {"minecraft:cobblestone": 64}), 5)
-        assert a5.action == "contribute"
-        assert a5.qty == 60
-
-    def test_progress_已done跳过(self):
-        a6 = _by_row(match_rows(ROWS, {"minecraft:dirt": 99}), 6)
-        assert a6.action == "skip"
-        assert "备齐" in a6.reason
-
-    def test_progress_背包没有此物跳过(self):
-        rows = [{"id": 7, "item_name": "金锭", "registry_id": "minecraft:gold_ingot", "need_qty": 10, "delivered_qty": 0, "mode": 1, "status": "open"}]
-        a7 = _by_row(match_rows(rows, {}), 7)
-        assert a7.action == "skip"
-        assert "没有此物" in a7.reason
-
-    def test_匹配行各一个action(self):
-        # row4 无 rid 被排除，其余 5 行各 1 个 action
-        actions = match_rows(ROWS, {
-            "minecraft:stone": 64,
-            "minecraft:iron_ingot": 1,
-            "minecraft:oak_planks": 1,
-            "minecraft:cobblestone": 64,
-            "minecraft:dirt": 1,
-        }, player_uuid="uuid-A")
-        assert sorted(a.row_id for a in actions) == [1, 2, 3, 5, 6]
-
-    def test_lock_need为0跳过(self):
-        rows = [{"id": 8, "item_name": "x", "registry_id": "minecraft:stone", "need_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"}]
-        a8 = _by_row(match_rows(rows, {"minecraft:stone": 99}, player_uuid="uuid-A"), 8)
-        assert a8.action == "skip"
-        assert "无需求" in a8.reason
-
-
-class TestMatchRowsSubItems:
-    """子物品匹配测试（issue #19）。
-
-    子行（parent_row_id 非空）是普通行，按 registry_id 匹配，参与 submit。
-    parent_row_id 不影响匹配逻辑（scanner.py 不改）。
-    """
-
-    def test_sub_row_lock_mode_自己认领_够数_deliver(self):
-        """子行 lock 模式：自己认领 + have>=need → deliver。"""
-        rows = [
-            {"id": 10, "item_name": "铁棒父", "registry_id": "minecraft:iron_ingot", "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "open"},
-            {"id": 11, "item_name": "铁棒子", "registry_id": "minecraft:iron_ingot", "parent_row_id": 10, "need_qty": 64, "delivered_qty": 0, "mode": 0, "status": "claimed", "claimant_uuid": "uuid-A"},
-        ]
-        actions = match_rows(rows, {"minecraft:iron_ingot": 64}, player_uuid="uuid-A")
-        a11 = _by_row(actions, 11)
-        assert a11.action == "deliver"
-        assert a11.qty == 64
-
-    def test_sub_row_progress_mode_未满_contribute(self):
-        """子行 progress 模式：未满 → contribute。"""
-        rows = [
-            {"id": 20, "item_name": "圆石父", "registry_id": "minecraft:cobblestone", "need_qty": 100, "delivered_qty": 0, "mode": 1, "status": "open"},
-            {"id": 21, "item_name": "圆石子", "registry_id": "minecraft:cobblestone", "parent_row_id": 20, "need_qty": 100, "delivered_qty": 40, "mode": 1, "status": "claimed"},
-        ]
-        actions = match_rows(rows, {"minecraft:cobblestone": 64})
-        a21 = _by_row(actions, 21)
-        assert a21.action == "contribute"
-        assert a21.qty == 60  # min(64, 100-40)=60
-
-    def test_sub_row_parent_row_id_不影响匹配(self):
-        """parent_row_id 字段存在但不影响匹配逻辑。"""
-        rows = [
-            {"id": 30, "item_name": "木板父", "registry_id": "minecraft:oak_planks", "need_qty": 64, "delivered_qty": 0, "mode": 1, "status": "open"},
-            {"id": 31, "item_name": "木板子", "registry_id": "minecraft:oak_planks", "parent_row_id": 30, "need_qty": 32, "delivered_qty": 0, "mode": 1, "status": "open"},
-        ]
-        # 父行和子行都按 registry_id 匹配
-        actions = match_rows(rows, {"minecraft:oak_planks": 96})
-        assert sorted(a.row_id for a in actions) == [30, 31]
+# ---- 回执折叠谓词（取基元参数；调用方从后端 BatchRowOutcome 抽字段传入）----
+# reason 字面量与后端 sheet_repo.batch_submit 逐字对齐：
+#   BATCH_REASON_READY = "已备齐"（lock done / progress done 或 delivered>=need）
+#   BATCH_REASON_NO_ITEM = "背包没有此物"（progress 未提交此物）
+# 后端新增的「行状态变化」「行已删除」属 neither-ready-nor-noise，逐行展示。
 
 
 class TestSkipIsNoise:
-    """skip_is_noise 折叠判定测试。"""
+    """skip_is_noise：skip 行是否与本人无关 → 回执折叠（不逐行展示）。
 
-    def test_lock_非本人认领_is_claimant_False_折叠(self):
-        """lock 行非本人认领（他人认领 / 需先认领）→ 折叠。"""
-        # 他人认领的 lock 行
-        a = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-B"), 2)
-        assert a.action == "skip"
-        assert a.is_claimant is False
-        assert skip_is_noise(a) is True
+    - lock 行非本人认领（is_claimant=False）→ 折叠；
+    - progress 行未携带（reason=REASON_NO_ITEM）→ 折叠；
+    其余（本人认领的 lock 未完成、progress 已备齐 / 无需求 / 状态变化）→ 逐行展示。
+    """
 
-    def test_lock_本人认领_is_claimant_True_不折叠(self):
-        """lock 行本人认领但数量不足 → 逐行展示（提示玩家去补货）。"""
-        a = _by_row(match_rows(ROWS, {"minecraft:oak_planks": 64}, player_uuid="uuid-A"), 3)
-        assert a.action == "skip"
-        assert a.is_claimant is True
-        assert skip_is_noise(a) is False
+    def test_lock_非本人认领_折叠(self):
+        # 他人认领 / 需先认领 → is_claimant=False
+        assert skip_is_noise(mode=0, is_claimant=False, reason="已被他人认领") is True
+        assert skip_is_noise(mode=0, is_claimant=False, reason="需先认领") is True
 
-    def test_lock_open_非认领_is_claimant_False_折叠(self):
-        """lock open 行（需先认领）非认领人 → 折叠。"""
-        a = _by_row(match_rows(ROWS, {"minecraft:stone": 64}, player_uuid="uuid-A"), 1)
-        assert a.action == "skip"
-        assert a.is_claimant is False
-        assert skip_is_noise(a) is True
+    def test_lock_本人认领_不折叠(self):
+        # 本人认领但数量不足 → 逐行展示（提示玩家补货）
+        assert skip_is_noise(mode=0, is_claimant=True, reason="数量不足（0/10）") is False
 
-    def test_progress_背包没有此物_折叠(self):
-        """progress 行 reason=REASON_NO_ITEM → 折叠。"""
-        rows = [{"id": 7, "item_name": "金锭", "registry_id": "minecraft:gold_ingot", "need_qty": 10, "delivered_qty": 0, "mode": 1, "status": "open"}]
-        a = _by_row(match_rows(rows, {}), 7)
-        assert a.action == "skip"
-        assert a.reason == REASON_NO_ITEM
-        assert skip_is_noise(a) is True
+    def test_progress_未携带_折叠(self):
+        assert skip_is_noise(mode=1, is_claimant=False, reason=REASON_NO_ITEM) is True
 
     def test_progress_已备齐_不折叠(self):
-        """progress 行已备齐 → 逐行展示（已达成）。"""
-        a6 = _by_row(match_rows(ROWS, {"minecraft:dirt": 99}), 6)
-        assert a6.action == "skip"
-        assert a6.reason == "已备齐"
-        assert skip_is_noise(a6) is False
+        # 已备齐归 ready 桶（skip_is_ready），非 noise
+        assert skip_is_noise(mode=1, is_claimant=False, reason=REASON_READY) is False
 
     def test_progress_无需求_不折叠(self):
-        """progress 行无需求 → 逐行展示。"""
-        rows = [{"id": 8, "item_name": "x", "registry_id": "minecraft:stone", "need_qty": 0, "delivered_qty": 0, "mode": 1, "status": "open"}]
-        a = _by_row(match_rows(rows, {}), 8)
-        assert a.action == "skip"
-        assert a.reason == "无需求"
-        assert skip_is_noise(a) is False
+        assert skip_is_noise(mode=1, is_claimant=False, reason="无需求") is False
 
-    def test_非skip_action_不折叠(self):
-        """deliver / contribute action → 不折叠。"""
-        # deliver
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 2)
-        assert a2.action == "deliver"
-        assert skip_is_noise(a2) is False
-
-        # contribute
-        a5 = _by_row(match_rows(ROWS, {"minecraft:cobblestone": 64}), 5)
-        assert a5.action == "contribute"
-        assert skip_is_noise(a5) is False
+    def test_progress_状态变化_不折叠(self):
+        # 后端新增 reason：行状态变化 / 行已删除 → 逐行展示（异常需玩家感知）
+        assert skip_is_noise(mode=1, is_claimant=False, reason="行状态变化") is False
+        assert skip_is_noise(mode=0, is_claimant=True, reason="行状态变化") is False
+        assert skip_is_noise(mode=1, is_claimant=False, reason="行已删除") is False
 
 
 class TestSkipIsReady:
-    """skip_is_ready 已备齐/进度已满折叠判定测试。"""
+    """skip_is_ready：skip 行是否已备齐 / 进度已满 → 回执折叠。"""
 
-    def test_progress_已备齐_is_ready(self):
-        """progress 行已备齐（delivered>=need）→ ready 折叠。"""
-        a6 = _by_row(match_rows(ROWS, {"minecraft:dirt": 99}), 6)
-        assert a6.action == "skip"
-        assert a6.reason == REASON_READY
-        assert skip_is_ready(a6) is True
+    def test_ready_reason_折叠(self):
+        assert skip_is_ready(REASON_READY) is True
 
-    def test_progress_状态done_is_ready(self):
-        """progress 行 status=done（即便 delivered<need）→ ready。"""
-        rows = [{"id": 9, "item_name": "x", "registry_id": "minecraft:stone",
-                 "need_qty": 100, "delivered_qty": 5, "mode": 1, "status": "done"}]
-        a = _by_row(match_rows(rows, {"minecraft:stone": 99}), 9)
-        assert a.action == "skip"
-        assert a.reason == REASON_READY
-        assert skip_is_ready(a) is True
+    def test_其它reason_不折叠(self):
+        assert skip_is_ready("需先认领") is False
+        assert skip_is_ready("已被他人认领") is False
+        assert skip_is_ready(REASON_NO_ITEM) is False
+        assert skip_is_ready("数量不足（0/10）") is False
+        assert skip_is_ready("无需求") is False
+        assert skip_is_ready("不满足上交条件") is False
+        assert skip_is_ready("行状态变化") is False
+        assert skip_is_ready("") is False
 
-    def test_lock_本人认领且done_is_ready(self):
-        """lock 行本人认领且 status=done → ready（不再逐行展示备齐）。"""
-        rows = [{"id": 10, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot",
-                 "need_qty": 32, "mode": 0, "status": "done", "claimant_uuid": "uuid-A"}]
-        a = _by_row(match_rows(rows, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 10)
-        assert a.action == "skip"
-        assert a.is_claimant is True
-        assert a.reason == REASON_READY
-        assert skip_is_ready(a) is True
-
-    def test_lock_他人认领且done_is_ready(self):
-        """lock 行他人认领且 done → ready（reason 命中，与归属无关；同时亦为 noise，ready 优先）。"""
-        rows = [{"id": 11, "item_name": "铁锭", "registry_id": "minecraft:iron_ingot",
-                 "need_qty": 32, "mode": 0, "status": "done", "claimant_uuid": "uuid-A"}]
-        a = _by_row(match_rows(rows, {"minecraft:iron_ingot": 99}, player_uuid="uuid-B"), 11)
-        assert a.action == "skip"
-        assert a.reason == REASON_READY
-        assert skip_is_ready(a) is True
-        # 归属上仍属 noise，但归桶时 ready 优先（_sheet_submit_impl 先判 ready）
-        assert skip_is_noise(a) is True
-
-    def test_progress_无需求_not_ready(self):
-        """progress 行无需求（need=0）→ 非 ready（属其它展示类）。"""
-        rows = [{"id": 12, "item_name": "x", "registry_id": "minecraft:stone",
-                 "need_qty": 0, "delivered_qty": 0, "mode": 1, "status": "open"}]
-        a = _by_row(match_rows(rows, {}), 12)
-        assert a.action == "skip"
-        assert a.reason == "无需求"
-        assert skip_is_ready(a) is False
-
-    def test_progress_未携带_not_ready(self):
-        """progress 行未携带（REASON_NO_ITEM）→ 非 ready（属 noise）。"""
-        rows = [{"id": 13, "item_name": "金锭", "registry_id": "minecraft:gold_ingot",
-                 "need_qty": 10, "delivered_qty": 0, "mode": 1, "status": "open"}]
-        a = _by_row(match_rows(rows, {}), 13)
-        assert a.action == "skip"
-        assert a.reason == REASON_NO_ITEM
-        assert skip_is_ready(a) is False
-
-    def test_lock_本人认领数量不足_not_ready(self):
-        """lock 行本人认领但数量不足（未 done）→ 非 ready。"""
-        a3 = _by_row(match_rows(ROWS, {"minecraft:oak_planks": 64}, player_uuid="uuid-A"), 3)
-        assert a3.action == "skip"
-        assert a3.is_claimant is True
-        assert "不足" in a3.reason
-        assert skip_is_ready(a3) is False
-
-    def test_非skip_action_not_ready(self):
-        """deliver / contribute action → 非 ready。"""
-        # deliver
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 2)
-        assert a2.action == "deliver"
-        assert skip_is_ready(a2) is False
-        # contribute
-        a5 = _by_row(match_rows(ROWS, {"minecraft:cobblestone": 64}), 5)
-        assert a5.action == "contribute"
-        assert skip_is_ready(a5) is False
-
-    def test_reason常量值向后兼容(self):
-        """REASON_READY 仍为 '已备齐'（_skip_reason_* 返回值不变）。"""
+    def test_常量值对齐后端(self):
+        """REASON_READY / REASON_NO_ITEM 与后端 BATCH_REASON_* 字面量逐字一致。"""
         assert REASON_READY == "已备齐"
-        # progress done 行的 reason 即此常量
-        a6 = _by_row(match_rows(ROWS, {"minecraft:dirt": 99}), 6)
-        assert a6.reason == "已备齐"
+        assert REASON_NO_ITEM == "背包没有此物"
 
 
-class TestMatchRowsIsClaimant:
-    """match_rows is_claimant 字段透传测试。"""
+def test_reason_常量与后端_batch_reason_逐字对齐():
+    """契约测试：前端 scanner.REASON_* 与后端 sheet_repo.BATCH_REASON_* 必须逐字相等。
 
-    def test_lock_自己认领_is_claimant为True(self):
-        """lock 行 claimant_uuid==player_uuid → is_claimant=True。"""
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-A"), 2)
-        assert a2.is_claimant is True
-        assert a2.action == "deliver"
-
-    def test_lock_他人认领_is_claimant为False(self):
-        """lock 行被他人认领 → is_claimant=False。"""
-        a2 = _by_row(match_rows(ROWS, {"minecraft:iron_ingot": 99}, player_uuid="uuid-B"), 2)
-        assert a2.is_claimant is False
-        assert a2.action == "skip"
-
-    def test_progress_is_claimant默认False(self):
-        """progress 行的 is_claimant 默认 False（用不到）。"""
-        a5 = _by_row(match_rows(ROWS, {"minecraft:cobblestone": 64}), 5)
-        assert a5.is_claimant is False
-        assert a5.action == "contribute"
+    折叠判定是字符串硬等（``reason == REASON_READY``），任一端单改字面量会让回执
+    静默退化为逐行刷屏（已备齐行不再折叠）。两端是独立 Python 包不能共享常量，
+    故用文本正则抓后端字面量断言对齐。漂移时本测即红。
+    """
+    import re
+    repo_path = Path(__file__).resolve().parents[2] / "Backend" / "app" / "repositories" / "sheet_repo.py"
+    text = repo_path.read_text(encoding="utf-8")
+    be_ready = re.search(r'BATCH_REASON_READY\s*=\s*"([^"]+)"', text)
+    be_no_item = re.search(r'BATCH_REASON_NO_ITEM\s*=\s*"([^"]+)"', text)
+    assert be_ready is not None, "后端 BATCH_REASON_READY 常量缺失（重命名了？）"
+    assert be_no_item is not None, "后端 BATCH_REASON_NO_ITEM 常量缺失（重命名了？）"
+    assert be_ready.group(1) == REASON_READY
+    assert be_no_item.group(1) == REASON_NO_ITEM
