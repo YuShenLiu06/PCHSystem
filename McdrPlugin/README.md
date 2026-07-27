@@ -1,6 +1,6 @@
 # PCH System
 
-PCHSystem 的**游戏内端**——把「项目制工程协作 + 荣誉激励」搬进 Minecraft：玩家在游戏里登录后台、协作完成工程项目、提交材料、（将来）赚取积分与称号。
+PCHSystem 的**游戏内端**——把「项目制工程协作 + 荣誉激励」搬进 Minecraft：玩家在游戏里登录后台、协作完成工程项目、提交材料、（将来）赚取积分与兑换。
 
 > ⚠️ **非即装即用 · 强依赖后端**
 > 本插件是 [PCHSystem](https://github.com/YuShenLiu06/PCHSystem) 后端（FastAPI + PostgreSQL）的游戏内客户端，**必须先自部署后端**才能工作。单独安装本插件不会有任何功能——所有命令都是对后端的 HTTP 调用，插件市场 / `!!MCDR plugin install` **不进行完整部署** 具体查看 [部署](#部署) 章节。
@@ -152,10 +152,10 @@ bash Scripts/install.sh
 |---|---|
 | `!!PCH login` | 申请 Web 登录，回显可点击链接 |
 | `!!PCH bind` / `!!PCH bind <短码>` | 发起 / 确认绑定，把游戏身份挂到 Web 账号 |
-| `!!PCH sheet manager <编号> add\|remove\|list <玩家名>` | 项目协管员授予 / 撤销 / 查看 |
+| `!!PCH sheet manager <编号> add / remove / list <玩家名>` | 项目协管员授予 / 撤销 / 查看 |
 | `!!PCH sheet list / view / add / claim / deliver / contribute / advance / ...` | 项目协作全套 |
 | `!!sheet` / `!!sheet <id>` | 快速重开上次 / 指定项目 |
-| `!!submit` / `!!submit <id>` | 一键扫背包提交匹配材料到上次打开的项目 / 制定项目 |
+| `!!submit` / `!!submit <id>` | 一键扫背包提交匹配材料到上次打开的项目 / 指定项目 |
 | `!!PCH sheet list -m / -c / -t / -a / -l` | 列表筛选简写旗标（可组合，如 `-ma`） |
 
 
