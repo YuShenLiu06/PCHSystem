@@ -622,6 +622,23 @@ class SubmitBatchReceiptTest(unittest.TestCase):
         scan_mock.assert_not_called()
         submit_mock.assert_not_called()
 
+    def test_unknown_action_shown_explicitly_not_folded(self):
+        # 后端未来新增 action（非 delivered/contributed/skipped）→ 显式逐行展示带动作名，
+        # 不静默折叠（MEDIUM①：else 兜底显式化，违 coding-style「禁静默吞」）
+        src, told = self._make_src()
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 0, "contributed": 0, "skipped": 0},
+            "outcomes": [self._mk_outcome(row_id=8, action="rolled_back",
+                                         item_name="铁锭", mode=0, is_claimant=True,
+                                         reason="")],
+        }
+        self._run(src, inventory={"minecraft:iron_ingot": 1}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("铁锭", msg)
+        self.assertIn("未知动作", msg)
+        self.assertIn("rolled_back", msg)
+
     def test_archived_409_shows_readonly(self):
         # 后端返 409 归档 → _resolve 译 SHEET_ARCHIVED_READONLY
         src, told = self._make_src()

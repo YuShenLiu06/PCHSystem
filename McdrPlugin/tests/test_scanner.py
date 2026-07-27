@@ -264,3 +264,21 @@ class TestSkipIsReady:
         """REASON_READY / REASON_NO_ITEM 与后端 BATCH_REASON_* 字面量逐字一致。"""
         assert REASON_READY == "已备齐"
         assert REASON_NO_ITEM == "背包没有此物"
+
+
+def test_reason_常量与后端_batch_reason_逐字对齐():
+    """契约测试：前端 scanner.REASON_* 与后端 sheet_repo.BATCH_REASON_* 必须逐字相等。
+
+    折叠判定是字符串硬等（``reason == REASON_READY``），任一端单改字面量会让回执
+    静默退化为逐行刷屏（已备齐行不再折叠）。两端是独立 Python 包不能共享常量，
+    故用文本正则抓后端字面量断言对齐。漂移时本测即红。
+    """
+    import re
+    repo_path = Path(__file__).resolve().parents[2] / "Backend" / "app" / "repositories" / "sheet_repo.py"
+    text = repo_path.read_text(encoding="utf-8")
+    be_ready = re.search(r'BATCH_REASON_READY\s*=\s*"([^"]+)"', text)
+    be_no_item = re.search(r'BATCH_REASON_NO_ITEM\s*=\s*"([^"]+)"', text)
+    assert be_ready is not None, "后端 BATCH_REASON_READY 常量缺失（重命名了？）"
+    assert be_no_item is not None, "后端 BATCH_REASON_NO_ITEM 常量缺失（重命名了？）"
+    assert be_ready.group(1) == REASON_READY
+    assert be_no_item.group(1) == REASON_NO_ITEM

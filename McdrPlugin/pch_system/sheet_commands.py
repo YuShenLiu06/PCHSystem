@@ -1336,7 +1336,7 @@ def _build_submit_receipt(result: dict) -> RTextList:
                 delivered=format_qty_safe(o.get("delivered_qty", 0)),
                 need=format_qty_safe(o.get("need_qty", 0)),
             )))
-        else:  # skipped
+        elif action == "skipped":
             reason = o.get("reason", "")
             if scanner.skip_is_ready(reason):
                 ready_folded += 1
@@ -1349,6 +1349,12 @@ def _build_submit_receipt(result: dict) -> RTextList:
             else:
                 shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
                     item=item, reason=reason)))
+        else:
+            # 未知 action：后端 BatchRowOutcome.action 当前 Literal[3]，本分支防御未来
+            # 扩展（如 rolled_back/partial）。显式逐行展示带动作名，绝不静默折叠
+            # （违 coding-style「禁静默吞」——让未知值可见可反馈，而非悄悄归类）。
+            shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                item=item, reason=f"未知动作 {action!r}")))
 
     if not done_lines and not shown_skips and ready_folded == 0 and folded == 0:
         return RTextList(RText(SHEET_SUBMIT_HEAD), RText(SHEET_SUBMIT_NO_ROWS))
