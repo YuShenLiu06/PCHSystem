@@ -21,7 +21,6 @@ item dict 形态随版本（scanner 两条路径都探；真机只验 1.20.1，1
   * 中文名不在此处翻译——后端 ``LangJsonTranslator`` 据 registry_id 自动补。
 """
 from collections import Counter
-from dataclasses import dataclass
 from typing import Optional
 
 
@@ -117,134 +116,37 @@ def read_held_item(api, player: str) -> Optional[tuple]:
     return (rid, count)
 
 
-# === 行匹配（纯函数）===
+# === 回执折叠判定（纯函数）===
+#
+# 行级决策（lock→deliver / progress→contribute / skip + reason）的权威实现已移交后端
+# ``sheet_repo.batch_submit``（单事务逐行 FOR UPDATE）；MCDR ``!!submit`` 薄壳化后只
+# 扫背包 + POST /submit-batch + 渲染 outcomes，不再在客户端复刻决策逻辑（消除双份漂移）。
+#
+# 以下两个谓词供回执渲染折叠跳过行用，取**基元参数**（调用方从后端 ``BatchRowOutcome``
+# dict 抽 mode/is_claimant/reason 传入）。reason 字面量与后端 ``BATCH_REASON_*`` 逐字
+# 对齐，改字面量会破折叠适配（后端 ``sheet_repo.py:39-43`` 注释为证）。
 
-@dataclass
-class MatchAction:
-    """一行匹配结果。``action`` ∈ {"deliver", "contribute", "skip"}。
+REASON_NO_ITEM = "背包没有此物"   # progress 行未提交此物（后端 _batch_decide_progress）
+REASON_READY = "已备齐"           # lock done / progress done 或 delivered>=need
 
-    * deliver：lock 行已认领且自己为认领人，have≥need，``deliver_row(need)`` 绝对值 → done。``qty=need``。
-    * contribute：progress 行未满，``contribute(min(have, need-delivered))`` 封顶到 need。
-    * skip：不符合条件（``reason`` 给中文原因供回执）。
+
+def skip_is_noise(*, mode: int, is_claimant: bool, reason: str) -> bool:
+    """skip 行是否与本人当前无关 → 回执折叠（不逐行展示）。
+
+    - lock 行非本人认领（``is_claimant=False``，含「需先认领」「已被他人认领」）→ 折叠；
+    - progress 行未携带（``reason == REASON_NO_ITEM``）→ 折叠；
+    其余跳过（本人认领的 lock 未完成、progress 已备齐 / 无需求 / 「行状态变化」「行已删除」
+    等后端新增 reason）逐行展示——这些是玩家本次可操作或需感知的项。
     """
-
-    row_id: int
-    registry_id: str
-    item_name: str
-    mode: int
-    action: str
-    qty: int = 0
-    reason: str = ""
-    is_claimant: bool = False
+    if mode == 0:
+        return not is_claimant
+    return reason == REASON_NO_ITEM
 
 
-def _to_int(value, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+def skip_is_ready(reason: str) -> bool:
+    """skip 行是否已备齐 / 进度已满 → 回执折叠。
 
-
-def match_rows(rows: list, inventory: dict, player_uuid: str = "", *, viewer_uuids=None) -> list:
-    """按 registry_id 精确匹配表行 → ``list[MatchAction]``。
-
-    无 registry_id 的行不参与（不产生 action）；每个匹配行恰好一个 action（含 skip）。
-
-    lock 模式必须**已是认领人**才进入提交（R-5 account 级）：``viewer_uuids`` 含行的
-    ``claimant_uuid``（同 account 任一 UUID 认领即算本人）且 status=claimed、have≥need →
-    ``deliver``；其余 lock 行 → ``skip``。
-    ``viewer_uuids`` 默认 None → 回退 ``{player_uuid}``（单 UUID，向后兼容旧调用/测试）。
+    判定锚定在 reason 字面量（``REASON_READY``），与 lock/progress、need=0 既有语义无关——
+    后端决策时已把所有「已完成」情形归为同一 reason，客户端无需重算 status/delivered/need。
     """
-    actions: list = []
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        rid = r.get("registry_id")
-        if not isinstance(rid, str) or not rid:
-            continue
-        row_id = _to_int(r.get("id"))
-        item_name = r.get("item_name") or rid
-        mode = _to_int(r.get("mode"))
-        status = r.get("status")
-        need = _to_int(r.get("need_qty"))
-        delivered = _to_int(r.get("delivered_qty"))
-        have = _to_int(inventory.get(rid, 0))
-
-        if mode == 0:  # lock
-            # R-5 account 级：viewer_uuids 含 claimant_uuid → 同 account 任一 UUID 认领都算本人
-            _viewer = (
-                viewer_uuids
-                if viewer_uuids is not None
-                else ({player_uuid} if player_uuid else set())
-            )
-            claimant_uuid = str(r.get("claimant_uuid") or "")
-            is_claimant = bool(claimant_uuid) and claimant_uuid in _viewer
-            if is_claimant and status == "claimed" and need > 0 and have >= need:
-                actions.append(MatchAction(row_id, rid, item_name, mode, "deliver", need, is_claimant=is_claimant))
-            else:
-                actions.append(MatchAction(
-                    row_id, rid, item_name, mode, "skip", 0,
-                    _skip_reason_lock(status, need, have, is_claimant),
-                    is_claimant=is_claimant,
-                ))
-        else:  # progress
-            if need > 0 and status != "done" and delivered < need and have > 0:
-                qty = min(have, need - delivered)
-                actions.append(MatchAction(row_id, rid, item_name, mode, "contribute", qty))
-            else:
-                actions.append(MatchAction(
-                    row_id, rid, item_name, mode, "skip", 0,
-                    _skip_reason_progress(status, need, delivered, have),
-                ))
-    return actions
-
-
-# === skip 原因常量 ===
-REASON_NO_ITEM = "背包没有此物"
-REASON_READY = "已备齐"  # lock status=done / progress status=done 或 delivered>=need（复用此常量判定 skip_is_ready）
-
-
-def _skip_reason_lock(status, need: int, have: int, is_claimant: bool = False) -> str:
-    if status == "open":
-        return "需先认领"
-    if status == "claimed" and not is_claimant:
-        return "已被他人认领"
-    if status == "done":
-        return REASON_READY
-    if need <= 0:
-        return "无需求"
-    return f"数量不足（{have}/{need}）"
-
-
-def _skip_reason_progress(status, need: int, delivered: int, have: int) -> str:
-    if need <= 0:
-        return "无需求"
-    if status == "done" or delivered >= need:
-        return REASON_READY
-    if have <= 0:
-        return REASON_NO_ITEM
-    return "不满足上交条件"
-
-
-def skip_is_noise(action: MatchAction) -> bool:
-    """该跳过行是否与本人当前无关 → 一键提交回执折叠（不逐行展示）。
-
-    - lock 行非本人认领（需先认领 / 已被他人认领 / 非己备齐）→ 折叠
-    - progress 行本人未携带（背包没有此物）→ 折叠
-    其余跳过（本人认领的 lock 未完成、progress 已备齐/无需求）逐行展示。
-    """
-    if action.action != "skip":
-        return False
-    if action.mode == 0:
-        return not action.is_claimant
-    return action.reason == REASON_NO_ITEM
-
-
-def skip_is_ready(action: MatchAction) -> bool:
-    """该跳过行是否已备齐/进度已满 → 一键提交回执折叠（不逐行展示）。
-
-    复用 _skip_reason_lock/_progress 产出的 REASON_READY：行已完成（lock status=done；
-    progress status=done 或 delivered>=need），玩家本次无可操作。判定锚定在 reason
-    字符串上，不重算 status/delivered/need，自然继承 lock/progress 与 need=0 既有语义。
-    """
-    return action.action == "skip" and action.reason == REASON_READY
+    return reason == REASON_READY

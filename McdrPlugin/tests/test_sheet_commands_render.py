@@ -471,5 +471,214 @@ class ListShortIntegrationTest(unittest.TestCase):
         list_mock.assert_not_called()
 
 
+class SubmitBatchReceiptTest(unittest.TestCase):
+    """!!submit 薄壳化（P3）：扫背包 → POST /submit-batch → 渲染回执。
+
+    决策权威在后端 ``sheet_repo.batch_submit``；本端只扫背包 + 编排 items + 渲染 outcomes。
+    覆盖：全 delivered / contribute 进度行 / skip 三桶（ready 折叠 · noise 折叠 · 逐行展示含
+    行状态变化）/ 空 outcomes / 空背包 / 无 data_api / 归档 409。
+    """
+
+    def _make_src(self, player="玩家A", has_api=True):
+        told = []
+        server = mock.Mock()
+        server.tell.side_effect = lambda name, msg: told.append(msg)
+        # minecraft_data_api 插件实例替身（has_api=False 模拟未安装 → None）
+        server.get_plugin_instance.return_value = mock.Mock() if has_api else None
+        src = mock.Mock()
+        src.is_player = True
+        src.player = player
+        src.get_server.return_value = server
+        return src, told
+
+    def _mk_outcome(self, *, row_id, action, item_name="x", registry_id="minecraft:x",
+                 mode=0, qty=0, reason="", is_claimant=False, delivered_qty=0, need_qty=0):
+        return {
+            "row_id": row_id, "action": action, "item_name": item_name,
+            "registry_id": registry_id, "mode": mode, "qty": qty, "reason": reason,
+            "is_claimant": is_claimant, "delivered_qty": delivered_qty, "need_qty": need_qty,
+        }
+
+    def _run(self, src, *, inventory, result):
+        """mock 扫背包 + submit_batch，跑 _sheet_submit_oneclick。"""
+        with mock.patch.object(sheet_commands.scanner, "scan_inventory",
+                               return_value=inventory), \
+             mock.patch.object(sheet_commands.sheet_client, "submit_batch",
+                               return_value=result) as submit_mock:
+            sheet_commands._sheet_submit_oneclick(src, {"sheet_id": 7})
+        return submit_mock
+
+    def test_all_delivered_renders_done_line(self):
+        # lock 行认领人交付完成 → 绿色「完成」行
+        src, told = self._make_src()
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 1, "contributed": 0, "skipped": 0},
+            "outcomes": [self._mk_outcome(row_id=1, action="delivered", item_name="铁锭",
+                                       mode=0, qty=10, is_claimant=True,
+                                       delivered_qty=10, need_qty=10)],
+        }
+        self._run(src, inventory={"minecraft:iron_ingot": 10}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("铁锭", msg)
+        self.assertIn("完成", msg)
+        self.assertIn("已标记 1 行", msg)
+
+    def test_contributed_renders_progress_line(self):
+        # progress 行增量上交 → 累计 delivered/need（format_qty_safe 换算为组：64=1组, 128=2组）
+        src, told = self._make_src()
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 0, "contributed": 1, "skipped": 0},
+            "outcomes": [self._mk_outcome(row_id=2, action="contributed", item_name="圆石",
+                                       mode=1, qty=60, delivered_qty=64, need_qty=128)],
+        }
+        self._run(src, inventory={"minecraft:cobblestone": 64}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("圆石", msg)
+        self.assertIn("累计", msg)
+        self.assertIn("1组/2组", msg)
+
+    def test_skip_ready_folded(self):
+        # 已备齐 skip 行 → 折叠计数（不逐行展示物品名）
+        src, told = self._make_src()
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 0, "contributed": 0, "skipped": 1},
+            "outcomes": [self._mk_outcome(row_id=3, action="skipped", item_name="泥土",
+                                       mode=1, reason="已备齐", delivered_qty=10, need_qty=10)],
+        }
+        self._run(src, inventory={"minecraft:dirt": 99}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("已备齐/进度已满，已折叠", msg)
+        # 物品名不应逐行出现（折叠了）
+        self.assertNotIn("泥土", msg)
+
+    def test_skip_noise_folded(self):
+        # 与本人无关的 skip 行（他人认领 lock / progress 未携带）→ 折叠计数
+        src, told = self._make_src()
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 0, "contributed": 0, "skipped": 2},
+            "outcomes": [
+                self._mk_outcome(row_id=4, action="skipped", item_name="金锭", mode=0,
+                              reason="已被他人认领", is_claimant=False),
+                self._mk_outcome(row_id=5, action="skipped", item_name="木板", mode=1,
+                              reason="背包没有此物", is_claimant=False),
+            ],
+        }
+        self._run(src, inventory={"minecraft:stone": 1}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("与您无关已折叠", msg)
+        self.assertNotIn("金锭", msg)
+        self.assertNotIn("木板", msg)
+
+    def test_skip_shown_includes_row_state_change(self):
+        # 本人认领的 lock 未完成 / 后端「行状态变化」→ 逐行展示（含 reason）
+        src, told = self._make_src()
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 0, "contributed": 0, "skipped": 2},
+            "outcomes": [
+                self._mk_outcome(row_id=6, action="skipped", item_name="橡木板", mode=0,
+                              reason="数量不足（0/128）", is_claimant=True, need_qty=128),
+                self._mk_outcome(row_id=7, action="skipped", item_name="铁锭", mode=1,
+                              reason="行状态变化"),
+            ],
+        }
+        self._run(src, inventory={"minecraft:iron_ingot": 1}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("跳过 2 行", msg)
+        self.assertIn("橡木板", msg)
+        self.assertIn("数量不足", msg)
+        self.assertIn("行状态变化", msg)
+
+    def test_empty_outcomes_shows_no_rows(self):
+        # 后端返空 outcomes（表无配 registry_id 的行）→ 无可匹配的行
+        src, told = self._make_src()
+        result = {"sheet_id": 7, "actor_uuid": "u",
+                  "totals": {"delivered": 0, "contributed": 0, "skipped": 0},
+                  "outcomes": []}
+        self._run(src, inventory={"minecraft:stone": 64}, result=result)
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("无可匹配的行", msg)
+
+    def test_empty_inventory_short_circuits(self):
+        # 空背包 → 直接回 SHEET_SUBMIT_EMPTY_INV，不调 submit_batch（避 422）
+        src, told = self._make_src()
+        submit_mock = self._run(src, inventory={}, result={"outcomes": []})
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("背包为空", msg)
+        submit_mock.assert_not_called()
+
+    def test_no_data_api_shows_hint(self):
+        # minecraft_data_api 未安装 → 回 SHEET_SUBMIT_NO_API，不扫背包 / 不调端点
+        src, told = self._make_src(has_api=False)
+        with mock.patch.object(sheet_commands.scanner, "scan_inventory") as scan_mock, \
+             mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._sheet_submit_oneclick(src, {"sheet_id": 7})
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("minecraft_data_api", msg)
+        scan_mock.assert_not_called()
+        submit_mock.assert_not_called()
+
+    def test_archived_409_shows_readonly(self):
+        # 后端返 409 归档 → _resolve 译 SHEET_ARCHIVED_READONLY
+        src, told = self._make_src()
+        err = sheet_commands.sheet_client.HttpError(status=409, detail="项目已归档，只读")
+        with mock.patch.object(sheet_commands.scanner, "scan_inventory",
+                               return_value={"minecraft:stone": 1}), \
+             mock.patch.object(sheet_commands.sheet_client, "submit_batch",
+                               return_value=err):
+            sheet_commands._sheet_submit_oneclick(src, {"sheet_id": 7})
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("项目已归档，只读", msg)
+
+    def test_submit_batch_receives_inventory_as_items(self):
+        # submit_batch 收到的 items 即 scan_inventory 产出的 {registry_id: qty}
+        src, told = self._make_src()
+        result = {"sheet_id": 7, "actor_uuid": "u",
+                  "totals": {"delivered": 0, "contributed": 0, "skipped": 0},
+                  "outcomes": []}
+        inventory = {"minecraft:stone": 64, "minecraft:dirt": 10}
+        submit_mock = self._run(src, inventory=inventory, result=result)
+        # 签名：submit_batch(cfg, player_uuid, sheet_id, items)
+        args, _ = submit_mock.call_args
+        self.assertEqual(args[2], 7)                 # sheet_id
+        self.assertEqual(args[3], inventory)         # items dict 原样透传
+
+    def test_build_submit_receipt_mixed(self):
+        # 纯函数：混合 outcomes → done 头 + skip 头 + 两类折叠尾齐备
+        result = {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 1, "contributed": 1, "skipped": 4},
+            "outcomes": [
+                self._mk_outcome(row_id=1, action="delivered", item_name="铁锭",
+                              mode=0, qty=10, is_claimant=True, delivered_qty=10, need_qty=10),
+                self._mk_outcome(row_id=2, action="contributed", item_name="圆石",
+                              mode=1, qty=60, delivered_qty=100, need_qty=160),
+                self._mk_outcome(row_id=3, action="skipped", item_name="泥土", mode=1, reason="已备齐"),
+                self._mk_outcome(row_id=4, action="skipped", item_name="金锭", mode=0,
+                              reason="已被他人认领", is_claimant=False),
+                self._mk_outcome(row_id=5, action="skipped", item_name="橡木板", mode=0,
+                              reason="数量不足（0/128）", is_claimant=True, need_qty=128),
+                self._mk_outcome(row_id=6, action="skipped", item_name="木板", mode=1,
+                              reason="背包没有此物"),
+            ],
+        }
+        msg = str(sheet_commands._build_submit_receipt(result))
+        # done 区
+        self.assertIn("已标记 2 行", msg)   # 1 delivered + 1 contributed
+        self.assertIn("铁锭", msg)
+        self.assertIn("圆石", msg)
+        # skip 区（仅逐行展示 1 行：橡木板数量不足）
+        self.assertIn("跳过 1 行", msg)
+        self.assertIn("橡木板", msg)
+        self.assertIn("数量不足", msg)
+        # 折叠尾：ready 1 + noise 2（金锭 + 木板）
+        self.assertIn("另有 1 行已备齐/进度已满，已折叠", msg)
+        self.assertIn("另有 2 行与您无关已折叠", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,12 +3,12 @@
 修复前：归档项目 claim（及 collab 其余写）后端未捕获 SheetArchived → HTTP 500
 → 游戏端 `_resolve` 把 500 译成 SHEET_SERVICE_DOWN「表格服务暂不可用」。
 修复后：后端统一返 409「项目已归档，只读」，`_resolve` 按 detail 含「归档」/「archiv」
-识别归档态 → SHEET_ARCHIVED_READONLY；submit 在 view_sheet 后主动短路。
+识别归档态 → SHEET_ARCHIVED_READONLY；submit 走批量端点时由后端 409 整批裁决。
 
 覆盖：
 - claim 路径经 `_resolve` 识别归档 409（中文 / 英文 detail 两种文案变体）。
 - 非归档 409（row conflict）仍走通用 SHEET_CONFLICT，不误判。
-- submit 归档短路：view_sheet 返 status=archived → SHEET_ARCHIVED_READONLY，且不触发逐行写。
+- submit 归档短路：submit-batch 返 409 归档 → SHEET_ARCHIVED_READONLY，且不触发老单行端点。
 """
 import os
 import sys
@@ -80,19 +80,21 @@ class ClaimArchivedResolveTest(unittest.TestCase):
 
 
 class SubmitArchivedShortCircuitTest(unittest.TestCase):
-    """submit 归档短路：view 带 status=archived → 整体只读回执，零逐行写。"""
+    """submit 归档短路：submit-batch 返 409 归档 → 整体只读回执，零老单行端点调用。"""
 
     def test_submit_on_archived_short_circuits(self):
         server = _FakeServer()
-        view = {"status": "archived", "rows": []}
-        with mock.patch.object(sc.scanner, "scan_inventory", return_value={}), \
-                mock.patch.object(sc.sheet_client, "view_sheet", return_value=view), \
+        inventory = {"minecraft:stone": 64}  # 非空，避免空背包短路先于归档裁决
+        archived_err = sheet_client.HttpError(409, "项目已归档，只读")
+        with mock.patch.object(sc.scanner, "scan_inventory", return_value=inventory), \
+                mock.patch.object(sc.sheet_client, "submit_batch", return_value=archived_err) as m_submit, \
                 mock.patch.object(sc.sheet_client, "deliver_row") as m_deliver, \
                 mock.patch.object(sc.sheet_client, "contribute_row") as m_contrib:
             sc._sheet_submit_impl(server, "tester", "uuid-x", 42)
         self.assertTrue(server.told, "submit 归档应短路回执")
         self.assertEqual(server.told[0][1], SHEET_ARCHIVED_READONLY)
-        m_deliver.assert_not_called()
+        m_submit.assert_called_once()  # 走批量端点
+        m_deliver.assert_not_called()  # 老单行端点不被 submit 触发
         m_contrib.assert_not_called()
 
 

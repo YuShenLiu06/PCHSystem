@@ -190,6 +190,27 @@ def revoke_manager(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, target
     )
 
 
+# === sheets 批量提交（P3：MCDR !!submit 薄壳化的单一端点）===
+# 后端 sheet_repo.batch_submit 单事务逐行 FOR UPDATE，按行 mode 分发 deliver/contribute，
+# 行级冲突转 skip「行状态变化」（保部分成功）；archived → 409 整批回滚。reason 字面量与
+# scanner.REASON_* 对齐，客户端折叠判定复用 scanner.skip_is_ready/skip_is_noise。
+# 请求体不含 actor——service-token + X-Player-UUID（_request 已带）即身份锚。
+
+
+def submit_batch(cfg: PchSystemConfig, player_uuid: str, sheet_id: int, items: dict) -> SheetOutcome:
+    """POST /sheets/{sheet_id}/submit-batch {items:[{registry_id,qty}]} → BatchSubmitResult dict。
+
+    ``items`` = ``scanner.scan_inventory`` 产出的 ``{registry_id: qty}``（重复 registry_id
+    由后端 ``to_map`` 聚合求和）。**空 dict 由调用方短路**（后端 ``items`` min_length=1 → 422），
+    避免无谓往返 + 给玩家更直观的「背包为空」回执。
+
+    成功返 ``{sheet_id, actor_uuid, totals:{delivered,contributed,skipped}, outcomes:[...]}``；
+    404 表不存在 / 409 含「归档」→ HttpError（由 _resolve 译中文）/ 422 等。
+    """
+    body = {"items": [{"registry_id": rid, "qty": q} for rid, q in items.items()]}
+    return _request(cfg, "POST", f"/sheets/{sheet_id}/submit-batch", player_uuid, json_body=body)
+
+
 # === sheets 行级 ===
 
 def upsert_row(
