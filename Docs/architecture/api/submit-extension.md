@@ -23,7 +23,11 @@
 {"items": [{"registry_id": "minecraft:iron_ingot", "qty": 10},
            {"registry_id": "minecraft:oak_log", "qty": 64}]}
 ```
-`items` 1..2000 条；`qty ≥ 0`；重复 `registry_id` 自动求和聚合。
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `items` | array | 材料清单（1..2000 条）；重复 `registry_id` 自动求和聚合 |
+| `items[].registry_id` | string | 物品 registry id（`namespace:path`，如 `minecraft:oak_log`），精确匹配表行 |
+| `items[].qty` | int | 本次申报数量（`≥0`；0 = 未携带/申报零，progress 视为未提交 → skip） |
 
 **响应**：
 ```json
@@ -41,6 +45,26 @@
   ]
 }
 ```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `sheet_id` | int | 目标表 id |
+| `actor_uuid` | UUID | 实际写入者（JWT 通道 = `JWT.active_uuid`；service-token 通道 = `X-Player-UUID`） |
+| `totals` | object | 按 action 分类的行计数（三项之和 = `outcomes` 总数） |
+| `totals.delivered` | int | lock 交付完成行数 |
+| `totals.contributed` | int | progress 上交行数 |
+| `totals.skipped` | int | 跳过行数 |
+| `outcomes` | array | 逐行结果（顺序与表行一致） |
+| `outcomes[].row_id` | int | 命中的表行 id |
+| `outcomes[].registry_id` | string | 行 registry id |
+| `outcomes[].item_name` | string | 行中文名（由 `registry_id` 翻译补全） |
+| `outcomes[].mode` | int | 行模式（0=lock，1=progress） |
+| `outcomes[].action` | string | 本次结果：`delivered` / `contributed` / `skipped` |
+| `outcomes[].qty` | int | 实际交付/上交量（skipped=0） |
+| `outcomes[].reason` | string | skipped 原因（成功时为空串；全集见下文「行为」） |
+| `outcomes[].is_claimant` | bool | lock 行认领人是否在 actor 同账号下（R-5；MCDR 折叠非本人 skip 用） |
+| `outcomes[].delivered_qty` | int | 写后行已交付量快照（skipped 取当前值） |
+| `outcomes[].need_qty` | int | 行需求量快照 |
 
 ## 行为（按行 mode 分流）
 
