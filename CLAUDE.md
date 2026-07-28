@@ -150,110 +150,19 @@ PCHSystem/
 
 ## 7. 当前任务状态
 
-**已完成（2026-07-01）**：
-- [x] 建立根规范（本文件）
-- [x] 禁用与本项目冲突的全局 skill（`naming-conventions`、`persistent-context`，备份于 `~/.claude/.skill-backups/20260701/`）
-- [x] 建立 `service-claude-md` skill（子服务 CLAUDE.md 唯一维护入口）
-
-**已完成（2026-07-02）**：
-- [x] 后端 M1+M2：`users` schema（players / auth_tokens / jwt_revocations）+ auth 链路（`/auth/token`·`/auth/exchange`·`/auth/refresh`·`/me`）
-- [x] 后端双通道鉴权 `get_current_player`（Bearer JWT 优先，否则 service-token + `X-Player-UUID` 代玩家）
-- [x] 后端 sheets 协作（迁移 `0004`/`0005`）+ notifications（迁移 `0006`）
-- [x] 前端 F1–F4：`/auth` 兑换 · `/me` · 路由守卫 · axios 拦截器（含 sheets 列表/详情轮询）
-- [x] MCDR 插件：`!!PCH login/bind` + sheets 命令树 + 通知轮询（`@new_thread`）
-- [x] 子服务 CLAUDE.md：Frontend / McdrPlugin 已由 skill 生成；Backend 为导航待拆分
-- [x] 投影解析生成表格：`POST /parsing/litematic`（上传 `.litematic` → litemapy 解析 → 中文翻译 → 预览，不落库）+ `POST /sheets/from-items`（批量建表+行，`mode` 默认 lock）；仅 Web 端；解析/翻译为 ABC，见 [`api/parsing.md`](./Docs/architecture/api/parsing.md)
-
-**已完成（2026-07-03，v0.3.0 首次正式打 tag）**：
-- [x] sheets progress 多人贡献者：迁移 `0007`（`sheet_row_contributors` 表）+ `0008`（`contributed_qty`）；progress 行不再单人锁定，任意玩家 `POST /contribute` 增量上交；owner `PATCH /progress` 覆写绝对值
-- [x] MCDR deliver 按 mode 分流（progress→`contribute` 增量 / lock→`delivery` 绝对值）+ 贡献者显示
-- [x] MCDR sheet view 特权按钮按查看者身份显隐（对齐后端 RBAC）
-- [x] 前端 sheets 列表/详情轮询自动刷新（`usePolling` composable，后台暂停/退避/草稿保护）+ progress 上交/调整 UI
-- [x] 通知体验修复（文案补清单名 / ack 防越权 body 加 `player_uuid` / 空列表按钮 / 默认轮询 2s 对齐）
-- [x] 三组件分别打 tag `backend-v0.3.0` / `mcdr-v0.3.0` / `frontend-v0.3.0`（首个真正打 git tag 的版本）
-
-**已完成（2026-07-03，sheet 升级为项目三阶段 + 归档自动化）**：
-- [x] 项目三阶段生命周期：迁移 `0009_sheets_lifecycle`（`sheets.sheets` 加 `status` collecting/constructing/archived + `archived_path`/`archived_at` + 双 CHECK `ck_sheets_status_*` + `ix_sheets_status`，可逆）
-- [x] 后端 `POST /sheets/{id}/advance?to=constructing|archived`（owner/admin，缺省按状态机推进；`to=archived` 走归档服务写盘+通知）+ `GET /sheets/{id}/archive`（返 `text/markdown`）+ `GET /sheets?status=collecting|constructing|archived|active` 过滤；archived 终态只读（repo `_assert_writable` 守卫 → 409）
-- [x] markdown_render Route C 抽象（`Backend/app/services/markdown_render/`：`SectionRenderer` Protocol + `TemplateSection`/`FunctionSection` frozen + `MarkdownDocument` 不可变 register+有序聚合；参考 PromptStore 风格但抛弃 template/dispatch/WILD_CARD/body-fallback，零依赖）+ 归档服务 `Backend/app/services/archive/`（渲染→原子写盘→DB+通知→commit，失败 cleanup+rollback）+ `aggregate_contributor_totals` 贡献者精确排行
-- [x] 三端 UI 适配：前端文案「表格」→「项目」+ SheetList tab 进行中/已归档 + SheetEditor 阶段横幅/流转按钮/archived 只读/归档 `<pre>` 预览；MCDR `!!PCH sheet advance <sheet_id> [constructing|archived]` + 阶段横幅 + owner footer 流转按钮 + 回执含归档路径
-- [x] 归档文件系统持久化：docker-compose backend 加 `ARCHIVE_ROOT=/app/archive` + `./Archive:/app/archive` volume；`.env.example` 加 `ARCHIVE_ROOT`/`MARKDOWN_FRAGMENTS_DIR`；`Archive/` 目录骨架（.gitkeep + .gitignore 忽略产物）
-
-**已完成（2026-07-03，sheet registry_id 字段 + 一键提交）**：
-- [x] sheet 行加隐式可空 `registry_id`（迁移 0010，`sheet_rows.registry_id TEXT NULL`，down_revision=`0009`）；`RowUpsertRequest`/`SheetItemIn` 的 `item_name` 改可选 + 新增 `registry_id`（model_validator 至少一个，否则 422）；`item_name` 缺失时后端 `LangJsonTranslator` 据 `registry_id` 自动翻译补中文名（复用投影解析翻译表，新增 mod 只需往 `translators/lang/` 丢 `*.zh_cn.json`）
-- [x] 4 条 registry_id 写入途径打通：投影解析 `from-items` 透传（前端 map 补 `registry_id: r.item_id`）/ Web 行编辑器可选输入框 / MCDR `addhand` 手持新建 / `setreg` 给已有行补
-- [x] MCDR 一键提交 `!!PCH sheet submit`（依赖 minecraft_data_api；扫背包含潜影盒嵌套 → 按 registry_id 精确匹配 → lock claim+deliver(need) / progress contribute 封顶到 need；纯申报不清背包）+ `scanner.py`（1.20.4-/1.20.5+ 双 NBT 路径，纯函数可单测，27 用例）
-- [x] CSV 导出列追加 `registry_id`；全端对齐验证：后端 200 测试绿（含 10 条新用例 + 5 处 CSV 表头修正）/ 前端 19 测试绿 + vue-tsc / MCDR scanner 27 测试绿
-
-**已完成（2026-07-06，sheet 快速重开 + list 增强）**：
-- [x] 快速重开上次表格：迁移 `0011_players_last_sheet_id`（`users.players` 加 `last_sheet_id INTEGER NULL`，无 FK/无索引，对齐 `registry_id` 先例——表删后自然失效）+ `GET /sheets/{id}` JSON 详情路径 best-effort 写入（csv 导出与 404 不记，失败仅记日志）+ 新增 `GET /me/last_sheet`（双通道鉴权 `get_current_player`，响应 `{sheet_id: int|null}`；`player_repo.set_last_sheet`/`get_last_sheet` flush-only）+ MCDR `!!sheet`（无参重开上次 / `<id>` 直开，第二命令根）/ `!!PCH sheet last`（等同无参 `!!sheet`）
-- [x] sheet list 增强：后端 `list_sheets` 加可选 `player_uuid`——参与优先排序（owner / lock 行 claimant / progress 行 contributor 三源 UNION 置顶，组内按 id 升序，`order_by id.in_(involved).desc(), id.asc()`），`GET /sheets` 透传 `player.uuid`，`player_uuid=None` 时按 id 升序向后兼容；`status` 过滤参数后端默认仍 None（由 MCDR 端默认传 `active`）；MCDR `sheet list` 默认进行中（active=collecting+constructing，排除归档）+ 自己参与的优先 + 每行阶段标签（`format_phase_label`）
-- [x] MCDR list 简写旗标：`-m`(mine)/`-c`(collecting)/`-t`(constructing)/`-a`(archived)/`-l`(all)，可组合如 `-ma`；完整 `--mine` 等向后兼容；未知旗标回显助记提示（`_parse_list_flag_tokens` 纯函数化单测）
-
-**已完成（2026-07-07，部署脚本）**：
-- [x] 一键首次安装 `Scripts/install.sh`（12 步幂等）：检测/装 Docker（`get.docker.com --mirror Aliyun` + 发行版包回退）→ GitHub 连通性探测选镜像 → 同步最新发版 tag（或 `--edge` main）→ 生成 `.env`（`openssl rand` 三密钥，已存在绝不覆盖）+ 生产 override（去 `--reload` + 加 healthcheck，保留源码挂载）→ `docker compose up -d` 等 `/healthz` 200 → `alembic upgrade head`（前 `pg_dump`）→ 前端 `npm run build` → 拷 `htcmc_auth` 到 MCDR `plugins/` 并填同值 token → 持久化 `.pchsystem.deploy.env`
-- [x] 一键更新 `Scripts/update.sh`：基于 `git diff` 路径的**智能重建矩阵**（仅 `Backend/Dockerfile` / `pyproject.toml` 变更才 rebuild；`app/**` / `alembic/**` 仅 `--force-recreate` 秒级；无 backend / compose 变更跳过容器操作）+ 迁移前快照不自动 downgrade + dirty 保护（拒跑本地跟踪文件改动）+ `--force` 接管非脚本部署 + `--edge` 临时拉 main
-- [x] 国内网络四类镜像自适应（GitHub clone / Docker Hub / PyPI / npm）：探测 → 候选 → best-effort，单一镜像不可用绝不阻断，全失败回退直连
-- [x] token 双写校验：`.env` `MCDR_SERVICE_TOKEN` 与插件 `config.json` `service_token` 必须同值——install 复用同一密钥双写、update 每次校验仅 warn 不擅改；密钥轮换流程见 [`Scripts/README.md`](./Scripts/README.md) §8
-- [x] 共享函数库 `Scripts/lib/common.sh`（镜像探测 / Docker 安装 / 部署状态读写 / dirty 检查等被两脚本 source）；完整用法与边界见 [`Scripts/README.md`](./Scripts/README.md)
-
-**已完成（2026-07-27，施工进度上报层 + 前端 + 测试脚本）**：
-- [x] **迁移 0017**：`construction` + `system` 两 schema，5 表（`placement_records`/`player_sources`/`player_source_history`/`server_mod_sources` + `system.settings`）；干净库从零建表验证通过
-- [x] **后端 11 端点**（`app/api/construction.py`，前缀 `/v1/construction`）：`POST /report`（双通道：service-token 多玩家 / JWT[mod_id] 强制 active_uuid）+ `GET /active-sheets`（归因）+ `GET /{id}/progress`（进度）+ admin `GET/PATCH /settings`（5 开关）+ `/mod-sources` CRUD（白名单）+ `POST /source/switch-server`（admin）/ `switch-self`（玩家）/ `GET /source/me`；专用 `get_construction_reporter`（不复用 `get_current_player`，H-2 不降级）；严格单源（C-7，不隐式切源）；归因三分支（显式/启发式恰 1/0 或 >1 全 skip）；落库按 (sheet,account,registry) upsert 聚合 net_qty，account_id 锚 WebAccount（R-5）；归档/结算读契约 `aggregate_placement_totals`（D8 hook `# TODO(scoring)` 在 `archive/service.py` post-commit，**未接** settle）；31 集成测试（含全量回归 `--lf` 重试覆盖已知 flakiness）
-- [x] **上报测试脚本** `Scripts/test-construction-report.py`（stdlib only，**兼上报源参考实现**）：bootstrap 玩家+项目 → service-token 多玩家上报 → JWT[mod_id] 上报 → 进度查询
-- [x] **接口文档** [`api/construction.md`](./Docs/architecture/api/construction.md)：含 **C-1~C-10 默认追踪器实现契约**段（供后续 MCDR PR 照实现）+ **归档/结算接入契约**段（D8）；[`flows/construction-progress.md`](./Docs/architecture/flows/construction-progress.md) 状态 🚧→✅（后端+前端落地；MCDR 追踪器待 S-1 单独 PR）；Backend RS-12 红线
-- [x] **前端**：admin 施工管理面板（4 开关 + 白名单 CRUD + 服务端源切换）+ 项目详情「施工进度」tab + Me「上报源」控件 + 路由/守卫/导航
-> **待办（单独 PR）**：MCDR 默认方块追踪器（§5，依赖 S-1 联网核实）+ `!!PCH construction switch` / `!!PCH mod-token`（玩家客户端 mod JWT 出码流，复用 bind 双向短码范式）。
-
-**已完成（2026-07-27，迭代 2：方块清单校验 + 时序快照 + 材料完成度 + 休眠源）**：
-- [x] **后端**：① `POST /report` 加方块清单校验（`registry_id` 不在 `sheet_rows.registry_id` 集合含子物品 → skip `方块不在项目材料清单内`，与 C-6 追踪器侧自过滤叠加双保险）；② 迁移 0018 `construction.placement_snapshots`（sheet_id+account_id+total_net+recorded_at，索引 `sheet_id,recorded_at`），每次 report 落 placement 后对**本轮 accepted 的 account** 各写一条 `INSERT...SELECT` 批量，best-effort（失败仅日志不阻断 report）；③ `GET /{id}/progress` 加 `material_completion`（材料完成度，`completion_pct` 视觉封顶 100%，`need_qty=0→null`，含子物品 `need=ceil(qty_per_unit×父need)`）+ `timeline`（时序快照 limit 200 升序）；④ `GET /source/me` 加 `dormant_sources: [{source_id, last_active_at}]`（曾活跃、当前 disabled_at 非空的 client_mod 源，按 source_id 去重取最近 activated_at；**严格单源不变**，仅作快速切回历史 mod_id 展示）；详见 [`api/construction.md`](./Docs/architecture/api/construction.md) §3.2 / §4 / §4.1 / §6
-- [x] **前端**：① `ConstructionProgress.vue` 图表化（折线时序趋势 + 柱图材料完成度 + 饼图账号占比，ECharts；timeline 缺数据降级单点）+ 具名 slot `name="charts"` 自定义扩展点（slot prop `timeline`/`completion`/`totals` 跨版本稳定）；② `Me.vue` 休眠源列表（前 5 按 `last_active_at` 倒序 + 一键「切回」走显式 `switch-self` mode=local）；③ `SheetEditor.vue` el-tabs 拆「材料清单」/「施工进度」两 tab；详见 [`flows/construction-progress.md`](./Docs/architecture/flows/construction-progress.md) §6.1 / §6.2
-- [x] **测试脚本** `Scripts/test-construction-report.py` 加场景「上报清单外方块」（空清单 sheet → skip `方块不在项目材料清单内` + progress 验证含 `material_completion`/`timeline`）
+> 已完成的工作（按版本 / release 组织）见 [`CHANGELOG.md`](./CHANGELOG.md)——`[Unreleased]` 含最近迭代（submit-batch 批量端点、施工进度上报层迭代 1~3），`vX.Y.Z` 段含历史发版；具体雷点见各子服务 `CLAUDE.md` 与 [`Docs/architecture/`](./Docs/architecture/)。本节只列**未完成**项。
 
 **待处理**：
-- [ ] **既有 bug（v0.3.0 起）**：`!!PCH sheet add/set/addhand ... progress` 的 `Literal` 字面量未写入 `ctx`（MCDR 仅 ArgumentNode 入 context，见 mcdr-api-cheatsheet §4），`ctx.get("mode")` 恒 None → 实际建 lock 行；addhand 镜像继承。待统一修（建议字面量节点回调显式传 mode，或改读 command path）
-- [ ] **施工 switch-self local 的 mod_id 归属校验**（CR M-1，2026-07-27）：`POST /v1/construction/source/switch-self` mode=local 当前接受玩家声明的 `source_id`（mod_id）不校验归属（本 PR documented 妥协，docstring + [`api/construction.md`](./Docs/architecture/api/construction.md) §6 已标注）。**mod-token PR 必须兑现**：签发带 `mod_id` 的 JWT 时绑定 account，switch-self local 校验 `mod_id ∈ 该 account 已签发集`，防玩家冒充他人 mod。
-- [ ] **测试 flakiness 根治**（CR M-2，2026-07-27）：`Backend/tests/conftest.py::_truncate_db` 同步 TRUNCATE 与 async session 偶发死锁，致施工 report 类重 DB 写入测试全量批跑偶发失败（`pytest --lf` 重试全绿，CI 同策略缓解，**非本特性引入**）。根治方案：改异步 fixture 或 `SET lock_timeout`，属基础设施改造。
-- [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
-- [ ] wiki.js 纳入部署 + wiki 内容 git 仓 host 选型（GitHub/Gitea/GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）
-- [ ] 拍板待确认参数（积分 `k / α / β / r`、赛季周期等，见 arch §9）
 
-**已完成（2026-07-09，子物品 issue #19 + sheets.py 包化重构）**：
-- [x] **Phase 1 重构**：`Backend/app/api/sheets.py`（1215 行）包化拆分 → `sheets/` 包（`__init__/_shared/sheets_crud/rows/collab/lifecycle`）；新增公共翻译 `app/services/translation.py`（`get_translator`/`resolve_item_name`）修正 sheets→parsing 反向依赖；通知 helper（`_row_payload`/`notify_owner_row_event`/`notify_uuids`/`_row_response`）；测试保持绿（行为不变）。
-- [x] **Phase 2 子物品（issue #19）**：迁移 0012（`sheet_rows` 加 `parent_row_id`/`qty_per_unit`；部分唯一索引 + CHECK；单层/模式继承/级联重算）；`RowUpsertRequest`/`RowDetail`/CSV 加两字段；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑。详见 [`Docs/architecture/data-model.md`](./Docs/architecture/data-model.md) §10.2 与 [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) §14。
-
-**已完成（2026-07-11，前端部署方案 + MCDR restart 误报修复）**：
-- [x] **容器内 web 服务（默认启用）**：`Frontend/Dockerfile`（多阶段 node 构建 → nginx:stable-alpine 托管 dist，烘焙 `Frontend/nginx.conf`：try_files history fallback + `/api/` 反代 compose 服务名 `backend:8000` + `/assets` 长缓存）+ `Frontend/.dockerignore`；compose 加 `web` 服务（`profiles:["web"]`、`${WEB_PORT:-5173}:80`、`depends_on: backend`）—— `.env` `COMPOSE_PROFILES=web` 默认启用、改空即禁用（满足「允许配置是否启用」）；**端口默认 5173**：免 root + 对齐 `WEB_BASE_URL` 默认值，单机 `!!PCH login` 回链开箱即用
-- [x] **非容器方案**：`Deploy/Nginx/pchsystem.host.conf.example`（root 占位 + `/api/` 反代 `127.0.0.1:8000/` + try_files + `/assets` 缓存）
-- [x] **Scripts 联动**：`common.sh::web_profile_active()` 判定；`install.sh`（`--no-web` 旗标、`ensure_env` 按 `--no-web` 置空 `COMPOSE_PROFILES`、`start_stack` 按 profile 构建 web、`build_frontend` web 激活则跳过宿主 npm、summary Web 行 + `WEB_BASE_URL` 提醒）；`update.sh`（`decide_rebuild` 增 web 镜像重建分支——`Frontend/` 变更且 web 激活则 `compose_build web`+`up -d web`、`update_frontend` web 激活则让位）；`.env.example` 加 `COMPOSE_PROFILES`/`WEB_PORT`/`NPM_REGISTRY`
-- [x] **修复 `update.sh` MCDR restart 误报**：`mcdreforged.plugin.json` 任何字段变更（version/dependencies/name/...）只需 `!!MCDR plugin reload`（reload = unload→load→`DependencyWalker` 重校依赖，源码 `plugin_manager.py`/`multi_file_plugin.py` 验证），折叠原 if/else 为统一 reload 消息
-- [x] 文档：`Scripts/README.md` §10 双方案 + §12 改「默认托管前端」+ §7/§11 reload 说明；`Docs/architecture/frontend.md` §5
-
-**已完成（2026-07-12，MCDR 插件 id 改名 htcmc_auth → pch_system）**：
-- [x] **plugin id 统一为 `pch_system`**（与项目名 PCHSystem / `name: PCH System` 一致；插件不止 auth——含 sheets/submit/notify + 规划中 score/title）：`mcdreforged.plugin.json` 的 `id` 改 `pch_system`。MCDR 硬性要求 `id` = 文件夹名 = 内部包名（S-1 联网核实 [catalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html)「id 需与 plugin_info.json 所在目录同名」+ [metadata](https://docs.mcdreforged.com/en/latest/plugin_dev/metadata.html)「entrypoint 缺省 = id」），故 `git mv McdrPlugin/htcmc_auth → McdrPlugin/pch_system` + 内部包 `htcmc_auth → pch_system` + 类 `HtcmcAuthConfig → PchSystemConfig`；全仓 import / 路径 / logger 名 / 线程名（`htcmc_sheet_*→pch_sheet_*`、`htcmc_health_check→pch_health_check`）/ 脚本 / 编排（`TestServer` Dockerfile + compose + config 文件名）/ 活跃文档对齐。历史 `Docs/Plans/**`、`CHANGELOG`（`htcmc_auth-v*` tag）保留不动，仅声明新前缀 `pch_system-vX.Y.Z`（版本号不改）
-- [x] **已部署实例迁移**：`Scripts/lib/common.sh::migrate_legacy_plugin_name()`——旧 `plugins/htcmc_auth/` 删除（避免与新 `pch_system` 双注册 `!!PCH` 冲突）、`config/htcmc_auth/` 搬到 `config/pch_system/`（保留玩家 `api_url` + `service_token`）；`install.sh` / `update.sh` 部署新插件前调用，幂等
-
-**已完成（2026-07-19，身份主锚升级：Web 账号绑定多 MC UUID / 完善 `!!PCH bind`）**：
-- [x] **后端**（迁移 `0014_web_accounts_bind`，down_revision=`0013`）：新表 `users.web_accounts`（id/username UNIQUE NULL/password_hash NULL/role/wiki_user_id/timestamps；`CHECK ((username IS NULL) = (password_hash IS NULL))` → NULL = 临时账号）+ `users.bind_tokens`（token PK/short_code UNIQUE/direction `game_init`|`web_init`/player_uuid/target_account_id/expires_at/used_at；方向一致性 CHECK + 部分索引 `ix_bind_tokens_active WHERE used_at IS NULL`）；`players` 加 `web_account_id` FK（NULL，不回填，下次 `!!PCH login` 自动建临时账号挂接）。`core/security.py`（bcrypt hash/verify + 6 位 Crockford Base32 短码剔除易混字符）。JWT `sub` 由 `player_uuid` 改 `web_account_id`（+ `active_uuid` claim）——**breaking：现有会话失效需重登**；`role` 权威源迁 account 级（`require_role` 重构，未绑玩家回退 `player.role`）。新端点：`POST /auth/login`（密码登录）/ `POST /web-accounts/register`（临时→永久）/ `GET /web-accounts/me` / `POST /bind/token`（service-token，game_init 出码）/ `POST /bind/issue`（JWT，web_init 出码）/ `POST /bind/confirm`（JWT，消费 game_init）/ `POST /bind/consume`（service-token + `X-Player-UUID`，消费 web_init）/ `POST /bind/claim`（JWT 临时，凭永久账号凭据挂接当前 UUID）。聚合查询（`sheet_repo.list_sheets` 参与优先 / `notification_repo.pending` / `aggregate_contributor_totals` 归档排行）改 `JOIN players → GROUP BY web_account_id`（NULL 用 `COALESCE` 回退按 uuid；`min(uuid)` 统一 cast text 规避 PG 限制），业务表零迁移；`score_ledger`（未建）将来建时直接加 `owner_account_id`。pyproject 加 `bcrypt>=4.1`。26 条 identity 集成测试单跑全绿（批量跑受既有 `conftest::_truncate_db` 同步 TRUNCATE 与 async session 死锁 flakiness 影响偶发失败，非本特性引入）。
-- [x] **MCDR**：`!!PCH bind`（无参 → game_init 出短码）+ `!!PCH bind <code>`（消费 web_init 码，挂接当前 UUID）；新增 `bind_client.py`（`request_bind_token` 单头 / `consume_bind_code` 双头，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None` 复用 sheet_client 骨架）；`commands.py` 加 `_bind`/`_bind_consume`（镜像 `_login` 的 `@new_thread('pch_system bind')` 模板）；`__init__.py` 命令树替换 `_not_impl("bind")` stub 为 `Literal("bind").runs(_bind).then(Text("code").runs(_bind_consume))`；短码回执整行 `§7` 灰（敏感信息规则，禁 `§` 高亮）；`_pch_root` 帮助文案 bind 移入「已上线」。S-1 联网核实 Text 节点存值入 ctx（[command.html](https://docs.mcdreforged.com/en/latest/code_references/command.html)），与 sheets mode Literal 不进 ctx 的已知 bug 无关。11 条 bind_client 测试覆盖率 100%（总 336 passed）。
-- [x] **前端**：新增 `src/api/identity.ts`（9 函数 + 7 类型，顺手封装原 inline 的 `exchangeToken`/`fetchMe`）+ `stores/auth.ts` 加 `account: AccountBrief | null` 字段 + `isTemporaryAccount` getter；新增 4 视图 `views/identity/{Register,Login,BindConfirm,ClaimBind}.vue`；`Me.vue` 升级为账号 + 绑定 UUID 列表 + `active_uuid` 标记 + 临时账号引导横幅；`AuthExchange.vue` 按账号临时/永久分流到 `/register` 或 `/me`；router 加 4 路由 + `App.vue` nav「身份」。14 条新测试（identity.spec.ts + auth.spec.ts），vitest 9 文件 / 103 测试全绿 + `vue-tsc` 干净 + build 通过。
-> **待办**：`Identities.vue`（账号下多 UUID 列表 + active_uuid 切换 UI）尚未实现，规划中。
-
-**已完成（2026-07-19，merge origin/main 协管员 + manager 升 account 级）**：
-- [x] **迁移链重编号**（两侧都占 0014 号）：`0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（单 head 0016；main 原 `0014_sheet_managers` 重编号为 `0016`、down_revision 改写为 `0015_web_account_display_name`；HEAD 的 0014/0015 保持原号）。dev DB 需 `docker compose down -v && up -d` + `alembic upgrade head` 重置重放（项目未上线，无数据迁移负担）。
-- [x] **SheetManager 锚 `web_account_id`（account 级 manager，R-5 一致）**：重做 main 原 per-UUID `0014_sheet_managers`——列 `player_uuid UUID` → `web_account_id BIGINT FK→users.web_accounts.id ON DELETE CASCADE`；PK `(sheet_id, web_account_id)` 天然防重复授予；索引 `ix_sheet_managers_account`；`granted_by_uuid` 保留作审计。**同账号任一 UUID 继承 manager**（M11/M12 必测）；`web_accounts` 删除 → `sheet_managers` CASCADE → 该账号 UUID 立即失权（E5）。
-- [x] **权限 helper 重构**（`Backend/app/api/sheets/_shared.py`，5 个 helper，**删 `_can_edit` deprecated 别名 B4**，HEAD 7 处调用点机械替换为 `_can_manage`/`_can_operate`）：`_is_owner(sheet, account_uuids)`（`owner_uuid in account_uuids`，不收 player 防误读 `player.uuid`）/`_is_superuser(player)`（★切 `_resolve_role` 与全局 RBAC 一致，避免「绑 account 但 `player.role` 仍是旧值」，B1，M05 必测）/`_can_manage(sheet, player, account_uuids)`（tier A = owner ‖ superuser）/`_is_account_manager(sheet, player)`（`aid=player.web_account_id`；`aid is None → False`，B3；直接读 `sheet.managers` 删 `getattr` 兜底，B5；漏加载显式报错）/`_can_operate(sheet, player, account_uuids)`（tier B = `_can_manage` ‖ `_is_account_manager`）。`_can_operate` 文档字符串固化前置条件：「调用前必须经 `_load_sheet_or_404`/`sheet_repo.get_sheet` 加载以触发 selectin 预加载」（N4）。
-- [x] **★行为变化（PR 必写）**：`advance ?to=constructing` 由 HEAD 的 tier A 改采 main 的 tier B（manager 也能推进施工）——HEAD 漏分流修正（M07 必测，owner 收到「施工开始」通知）。
-- [x] **新端点**（`Backend/app/api/sheets/managers.py`，按契约重写 account 锚）：`POST /sheets/{id}/managers {player_uuid}`（后端解析 target account：未绑 → 422 B7；与 owner 同账号 → 409 `SheetOwnerCannotBeManager` B7；重复授予幂等 201 不重发通知 M21）+ `DELETE /sheets/{id}/managers {web_account_id}`（self-revoke 放行当 `player.web_account_id is not None and web_account_id == player.web_account_id`，**B6 NULL 守卫** M23 必测；他人 revoke 需 `_can_manage`）+ `GET /sheets/{id}/managers`（返 account 简报，透明全员可读）。`SheetManagerEntry = {web_account_id, display_name, member_uuids, granted_at}`（结构与 `RowContributor` 对齐）；`SheetDetail` 同时挂 `viewer_uuids`（HEAD）+ `managers`（main-account）。`Backend/app/api/players.py` 并入（玩家名→UUID 联想，grant 依赖）。
-- [x] **权限矩阵 M01–M26 + E1–E5 落地**：扩充 `Backend/tests/` 权限集成测试（与 identity 既有 26 条互补）+ 整张表搬进 [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) §7.1 作三端权限对账权威。身份档位 8 类（Owner-S/Owner-M/SuperAdmin/Mgr-Other/Mgr-Same/Mgr-Bind/Unbound/Stranger）× 动作 × 期望 × 关键点全覆盖；**tier A/B 均在 account 级 owner 锚下判定，manager 亦 account 级**（非 main 原 per-UUID 措辞）。
-- [x] **前端**：`SheetEditor` 的 owner / 认领人 / manager 判定全用 `viewer_uuids`（HEAD 已升）+ `managers[].member_uuids`（main-account，新增）；`isManager` 单一 computed（N2 DRY）封装 `managers.some(m => m.member_uuids.some(u => viewerUuids.includes(u)))`（viewerUuids = auth store 绑定 UUIDs + 当前 UUID）；协管员管理面板 owner 可增删（`display_name` 展示、revoke 传 `web_account_id`），全员可见列表；改名/删表/归档按钮 owner 专属（`canManage` tier A），协管员可见 tier B 按钮。
-- [x] **MCDR**：`!!PCH sheet manager <表id> [list|add <玩家名>|remove <玩家名>]`（add/remove 先 `uuid_api_remake.get_uuid(玩家名)` 转 UUID，后端解析 account）；`_render_sheet_detail` 的 `is_manager` 改 account 级——新增 `_is_manager(managers, viewer_uuids)` 单一 helper（N2 DRY，`any(uuid in viewer_uuids for m in managers for uuid in (m.get("member_uuids") or []))`）；行级 `[改][-][子][调]` 与底部 `[进入施工][新增物品]` 按钮对协管员可见，归档/改名/删表按钮仅 owner 可见。`messages.py::format_row_clickable` 签名合并 5 kwarg（`is_owner/is_manager/viewer_uuids/player_name/player_uuid`）。**HEAD 预存 3 个红测随合流修复**：`tests/test_messages.py` contributors fixture 改 account-level shape（`{account_id, display_name, member_uuids, contributed_qty}`），此前 HEAD 的 `_format_contributors` 已改读 `display_name` → 旧 fixture 即红。
-
-**已完成（2026-07-25，PR CI 流水线 + 自动标签）**：
-- [x] 新增 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)：PR（`opened/synchronize/reopened/ready_for_review`，目标 `main`）+ `workflow_dispatch` 触发，`concurrency` 按 `head_ref` 取消旧 run。4 job——`backend`（`postgres:16` service + `alembic upgrade head` + `pytest`；已知 `conftest._truncate_db` 同步 TRUNCATE 与 async session 死锁 flakiness 用 `pytest -q --lf` 重试一次失败项，真失败不被掩盖）/ `frontend`（Node 22，`npm run build`含 `vue-tsc -b` + `vitest run`）/ `mcdr`（`PYTHONPATH=McdrPlugin pytest McdrPlugin/tests`）/ `label-pr`（`needs:[backend,frontend,mcdr]` + `if: always() && event_name=='pull_request'`，`pull-requests: write` 权限，`actions/github-script@v7` 据三 job 结果打互斥标签 `ci:pass`/`ci:fail`——先 `removeLabel(opposite)` 再 `addLabel(target)`，标签不存在 `createLabel` bootstrap，fork PR 403 swallow）。env 块逐字复用 `release.yml`（`MCDR_SERVICE_TOKEN` 必非空，否则 `config.py` validator fail-fast）。三端命令与 `release.yml` 一致（DRY，复制而非抽 composite action——仅 2 处复用）。失败定位走 PR `Checks` 面板 + step 日志（`pytest`/`vitest` 输出含 `文件:行号`）；**不引第三方 annotate action**（未联网核实维护状态，核心需求不依赖）。手动重跑：PR Checks→`Re-run`（刷新标签）/ Actions→`Run workflow`（无 PR 上下文，label-pr 跳过）。语法逐条对照 GitHub 官方文档 `docs.github.com/en/actions` 核实。`CONTRIBUTING.md` §3/§4、PR 模板、本节同步。
+- [ ] **玩家客户端 mod 相关命令** `!!PCH construction switch`（切上报源）/ `!!PCH mod-token`（JWT 出码流，复用 bind 双向短码范式）。**MCDR 默认方块追踪器已落地**（v0.9.0 追踪器 + v0.9.1 按玩家路由 + `!!PCH construction join/leave/current` 命令，[`api/construction.md`](./Docs/architecture/api/construction.md) §5 C-1~C-10 已兑现）；后端 `get_construction_reporter` 双通道 + 加入施工 + 上报事件流水 + 按材料封顶均已就绪。
+- [ ] **施工 switch-self local 的 mod_id 归属校验**（CR M-1，2026-07-27）：`POST /v1/construction/source/switch-self` mode=local 当前接受玩家声明的 `source_id`（mod_id）不校验归属（docstring + [`api/construction.md`](./Docs/architecture/api/construction.md) §6 已标注妥协）。**mod-token PR 必须兑现**：签发带 `mod_id` 的 JWT 时绑定 account，switch-self local 校验 `mod_id ∈ 该 account 已签发集`，防玩家冒充他人 mod。
+- [ ] **既有 bug（v0.3.0 起）**：`!!PCH sheet add/addhand ... progress` 的 `Literal` 字面量未写入 `ctx`（MCDR 仅 ArgumentNode 入 context，见 [`mcdr-api-cheatsheet`](./Docs/McdrPlugin/mcdr-api-cheatsheet.md) §4），`_sheet_upsert`/`_sheet_addhand` 读 `ctx.get("mode")` 恒 None → 实际建 lock 行。`set` 已规避（`_sheet_set` 不再接 mode 字面量、只改 need/sort）；`addsub`/`setsub` 已用闭包 `lambda s,c: _fn(s,c,mode=...)` 正确烘入 mode，可作修法范本（建议 add/addhand 同样改闭包显式传 mode，或改读 command path）。
+- [ ] **测试 flakiness 根治**（CR M-2，2026-07-27）：`Backend/tests/conftest.py::_truncate_db` 同步 TRUNCATE 与 async session 偶发死锁，致重 DB 写入测试全量批跑偶发失败（`pytest --lf` 重试全绿，CI 同策略缓解，**非本特性引入**）。根治方案：改异步 fixture 或 `SET lock_timeout`。
+- [ ] **前端 `Identities.vue`**：账号下多 UUID 列表 + `active_uuid` 切换 UI 尚未实现（身份主锚升 account 级后规划，2026-07-19）。
+- [ ] **后端拆分为 `user_service/` 等子目录**后，用 `service-claude-md` skill 生成各子服务 CLAUDE.md（当前 Backend 仍为单 CLAUDE.md 导航待拆分）。
+- [ ] **wiki.js 纳入部署 + wiki 内容 git 仓 host 选型**（GitHub / Gitea / GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）。
+- [ ] **拍板待确认参数**：积分 `k / α / β / r`、赛季周期等（见 [`architecture.md`](./Docs/architecture.md) §9）。
 
 ---
 
-*最后更新：2026-07-27（迭代 2 增量：后端方块清单校验 + 迁移 0018 `placement_snapshots` 时序快照表 + `material_completion` 材料完成度 + `dormant_sources` 休眠源查询；前端 `ConstructionProgress.vue` 图表化 + 具名 slot `name="charts"` + `Me.vue` 休眠源列表 + `SheetEditor.vue` el-tabs 拆分；详见 [`api/construction.md`](./Docs/architecture/api/construction.md) §3.2/§4/§4.1/§6、[`flows/construction-progress.md`](./Docs/architecture/flows/construction-progress.md) §6.1/§6.2）*
-
-*迭代 1（2026-07-27）：施工进度上报层：迁移 0017 `construction`+`system` schema 5 表 + 后端 11 端点 `app/api/construction.py` + `get_construction_reporter` 双通道专用鉴权 + 严格单源 + 归档/结算读契约 `aggregate_placement_totals`（D8 hook 未接 settle）+ 31 集成测试 + `Scripts/test-construction-report.py` 参考实现 + [`api/construction.md`](./Docs/architecture/api/construction.md)（C-1~C-10 默认追踪器实现契约）+ 前端 admin 面板/进度 tab/上报源控件；MCDR 默认追踪器待 S-1 单独 PR*
+*最后更新：2026-07-28（精简 §7：已完成项的历史统一迁至 [`CHANGELOG.md`](./CHANGELOG.md)，本节仅保留未完成项；迭代 4-5 落地：加入施工机制 + 上报事件流水 + 按材料封顶 + 图表 xAxis/0 锚点修复 + MCDR 按玩家路由 + join/leave/current 命令，详见各子服务 CLAUDE.md「增量(2026-07-28)」段）*

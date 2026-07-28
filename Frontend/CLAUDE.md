@@ -56,6 +56,7 @@ Vue 3 + Element Plus 后台，三端架构中的网页端：管理员/负责人�
 | `GET/POST/DELETE /sheets/{id}/managers` | 项目协管员（v0.8.0，account 锚）：`SheetEditor` 内联面板（owner 增/撤销 + 全员可见列表）；`useSheetDetail` 三层 RBAC（`canManage`/`isManager`/`canEdit`）；详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §5.6 / §7.1 |
 | `POST /parsing/batch` | **唯一解析端点**（v0.8.0 起合并，原 `/parsing/litematic` + `/parsing/nbt` 已删）：`BatchImport.vue` 一次上传 1..N 个 `.litematic`/`.nbt`（混型）→ 每文件独立预览 + 倍数聚合（`utils/batchAggregate.ts`）→ 单次 `/sheets/from-items` 生成单表；详见 [`api/parsing.md`](../Docs/architecture/api/parsing.md) §8 |
 | `/v1/construction/{report,progress,source/me}`（迭代 2） | `ConstructionProgress.vue` 图表化（折线时序趋势 + 柱图材料完成度 + 饼图账号占比，ECharts；`timeline` 缺数据降级单点）+ **具名 slot `name="charts"` 自定义扩展点**（slot prop `timeline`/`completion`/`totals` 跨版本稳定）；`Me.vue` 休眠源列表（`GET /source/me` 返 `dormant_sources: [{source_id, last_active_at}]`，前 5 按 `last_active_at` 倒序 + 一键「切回」走显式 `switch-self` mode=local）；`SheetEditor.vue` el-tabs 拆「材料清单」/「施工进度」两 tab；详见 [`flows/construction-progress.md`](../Docs/architecture/flows/construction-progress.md) §6.1/§6.2 |
+| `/v1/construction/me/{construction,join,switch,leave,report-events}`（迭代 4-5） | `Me.vue` 加「当前施工项目」卡片（活跃 participant 显示 sheet_title/joined_at/join_source + 退出按钮调 `POST /me/leave`）+「我的上报历史」面板（`GET /me/report-events` 时间轴，`accepted` 绿/`skipped` 红，含 sheet_title/registry_id/被拒 reason/尝试量 net_delta）；`SheetEditor.vue` 加入/切换施工按钮（三态依赖 `GET /me/construction`：未加入→`POST /me/join` / 已加入本项目→禁用 / 已加入他项目→`POST /me/switch` + 二次确认，按钮出现条件 = sheet 可写且 collecting/constructing）；`ConstructionProgress.vue` 图表 xAxis 锚定 `construction_started_at` → `archived_at`（archived 态）或当前时间（constructing 态，随轮询刷新），`utils/timelineFill.ts` 加 0 锚点（`startTime` 严格早于首点时在该 account 线最前补 `[startTime, 0]` 让线从 y=0 升起）+ `compareTs` 数值时间戳比较（真实 ISO 走 `Date.parse` 容错 `+08:00`/`Z`/不同精度，非日期占位串回退字典序）；详见 [`flows/construction-progress.md`](../Docs/architecture/flows/construction-progress.md) §6.1/§6.2 |
 
 > **术语演进**：玩法语义 sheet 已升级为「项目」，UI 文案统一改「项目」（`App.vue` 导航 / `SheetList` / `SheetEditor`），但 URL `/sheets`、API 类型名 `Sheet*` 保留不变（YAGNI，避免书签/外链失效）。
 
@@ -129,9 +130,13 @@ npm run dev                 # 启 Vite dev server（默认 http://localhost:5173
 
 ---
 
-*最后更新：2026-07-25（v0.8.0 文档同步：解析端点合并为唯一入口 `/parsing/batch`——`BatchImport.vue` 替代 `LitematicImport.vue`，多文件 + 倍数聚合生成单表）*
+*最后更新：2026-07-28（迭代 4-5：加入施工 UI + 上报历史面板 + 图表 xAxis/0 锚点修复，详见 §4 端点表新增行）*
+
+*增量（2026-07-28 迭代 4-5）：§4 端点表加 `/v1/construction/me/{construction,join,switch,leave,report-events}` 行——`Me.vue` 加「当前施工项目」卡片（活跃 participant + 退出按钮）+「我的上报历史」面板（`report-events` 时间轴，迭代 5）；`SheetEditor.vue` 加入/切换施工按钮三态（未加入/已加入本项目/已加入他项目 → join/禁用/switch + 二次确认）；`ConstructionProgress.vue` 图表 xAxis 锚定 `construction_started_at` → `archived_at` 或当前时间；`utils/timelineFill.ts` 0 锚点 + `compareTs` 数值时间戳比较（容错不同 ISO 格式 + 占位串回退字典序）。详见 [`flows/construction-progress.md`](../Docs/architecture/flows/construction-progress.md) §6.1/§6.2。*
 
 *增量（2026-07-27 迭代 2）：§4 端点表加 `/v1/construction/{report,progress,source/me}` 行——`ConstructionProgress.vue` 图表化（折线/柱/饼 + 具名 slot `name="charts"` 自定义扩展点）+ `Me.vue` 休眠源列表（前 5 按 `last_active_at` 倒序 + 一键切回）+ `SheetEditor.vue` el-tabs 拆「材料清单」/「施工进度」两 tab。详见 [`flows/construction-progress.md`](../Docs/architecture/flows/construction-progress.md) §6.1/§6.2。*
+
+*增量（2026-07-25）：v0.8.0 文档同步——解析端点合并为唯一入口 `/parsing/batch`（`BatchImport.vue` 替代 `LitematicImport.vue`，多文件 + 倍数聚合生成单表）。*
 
 *增量（2026-07-24）：解析端点合并（issue #16）——删 `POST /parsing/litematic` + `POST /parsing/nbt`，统一 `POST /parsing/batch`（单文件等价批量 1 个）；`LitematicImport.vue` 移除，`BatchImport.vue` 成为唯一解析视图（多文件上传 + 每文件整数倍数 + `utils/batchAggregate.ts::aggregateItems` 跨文件按 `item_id` 聚合 → 单次 `/sheets/from-items` 生成单表，>2000 种禁用生成）；§4 端点表 + §5 文档索引同步。前端登录链路修复（PR #36，issue #34 #35）——欢迎语显示账号名 / token 过期不清表单 / 后端不可用不误报登录失败（新增 `utils/http-error.ts` 区分网络异常与 401）；bugfix 不引入新雷点，详见 [`CHANGELOG.md`](../CHANGELOG.md) frontend-v0.8.0。*
 

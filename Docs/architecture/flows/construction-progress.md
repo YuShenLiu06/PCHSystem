@@ -132,12 +132,15 @@ def on_break(ctx):
 | **`official_tracker_enabled` 开关** | Web 管理面板 | 服主决定是否启用 MCDR 默认上报 |
 | **`allow_server_mods` 开关** | Web 管理面板 | 服主决定是否接受第三方服务端 mod |
 | **`allow_client_mods` 总开关** | Web 管理面板（默认 true）+ 玩家 `!!PCH` | 服主开总开关，玩家自主决定是否用客户端 mod |
+| **`enforce_single_construction` 开关**（迭代 4） | Web 管理面板（默认 true） | 服主决定是否强制同账号同时仅 1 个活跃项目（默认 tracker + Web/MCDR join 流程） |
 | **玩家客户端 mod 管理** | `!!PCH construction sources list` / `!!PCH mod-token` / `!!PCH mod-token revoke` | 玩家自主权 |
 | **玩家切源** | `!!PCH construction switch <source>` | 见 §3.1 单源策略 |
 | **休眠源一键切回**（迭代 2） | Web `Me.vue`「上报源」控件 | 见 §6.1 |
 | **进度图表化**（迭代 2） | Web `ConstructionProgress.vue`（折线/柱/饼） | 见 §6.2 |
+| **加入施工**（迭代 4） | Web `Me.vue`「当前施工项目」卡片 + MCDR `!!PCH construction join/switch/leave` | 见 §6.3 |
+| **个人上报事件流水**（迭代 5） | Web `Me.vue`「我的上报历史」（accepted + 所有 skip reason） | 见 §6.3 |
 
-**开关默认值**：`allow_client_mods = true` / `official_tracker_enabled = true` / `allow_server_mods = true`（宽松默认，纯荣誉 + 白名单服，刷分影响可控）。
+**开关默认值**：`allow_client_mods = true` / `official_tracker_enabled = true` / `allow_server_mods = true` / `enforce_single_construction = true`（宽松默认，纯荣誉 + 白名单服，刷分影响可控）。
 
 ### 6.1 休眠源切换流程（迭代 2）
 
@@ -209,24 +212,81 @@ sequenceDiagram
 
 设计契约：默认 slot 内容是「公开 API」——具名 `charts` 的 prop 集合（`timeline`/`completion`/`totals`）跨版本稳定（与 `GET /{sheet_id}/progress` 响应字段对齐），修改需发版说明。
 
+### 6.3 加入施工 + 个人事件流水（迭代 4-5）
+
+**加入施工**是玩家的显式「认领施工任务」动作：每个 Web 账号同时最多活跃加入 1 个施工项目（`enforce_single_construction=True` 默认；DB `uq_participants_active` partial unique index 兜底）。供默认 MCDR 追踪器按玩家路由上报 + Web 端展示「我当前在造哪个项目」。
+
+**加入路径**（[`api/construction.md`](../api/construction.md) §4.2 端点表）：
+
+| 触发场景 | 入口 | `join_source` | 冲突处理 |
+|---|---|---|---|
+| 备货(`collecting`) / 施工(`constructing`)阶段认领 lock 行 / progress 上交 | 后端 [`sheet_repo._maybe_auto_join`](../../../Backend/app/repositories/sheet_repo.py) 自动触发 | `auto` | 已在他项目 → silent skip；失败 swallow 不阻断上交 |
+| 玩家显式「加入此项目」 | Web `Me.vue` / MCDR `!!PCH construction join` → `POST /me/join` | `manual` | `enforce=True` 且已在他项目 → 409 `ParticipantConflict`（含 `current_sheet_id`） |
+| 玩家显式「切换到此项目」 | `POST /me/switch` | `manual` | 自动切换（leave 旧 + join 新同事务；并发冲突 → 409 原子回滚） |
+
+```mermaid
+sequenceDiagram
+    participant User as 玩家
+    participant Web as Me.vue
+    participant API as construction API
+    participant DB as participants 表
+
+    User->>Web: 进入项目页「加入施工」
+    Web->>API: POST /v1/construction/me/join {sheet_id}
+    API->>DB: 校验 sheet 非 archived + join_construction(source='manual')
+    alt 已活跃加入他 sheet 且 enforce=True
+        API-->>Web: 409 ParticipantConflict {current_sheet_id}
+        Web-->>User: 「已加入 X，先退出或切换」
+    else 已活跃加入本 sheet（幂等）
+        API-->>Web: 200 active={sheet_id, ...}
+    else 正常加入
+        API->>DB: INSERT participants 行
+        API-->>Web: 200 active={sheet_id, joined_at, join_source='manual'}
+    end
+
+    User->>Web: 切换/退出
+    Web->>API: POST /me/switch 或 /me/leave
+    API->>DB: UPDATE 旧行 left_at + (INSERT 新行)
+    API-->>Web: 200 当前活跃态（leave 后空态）
+```
+
+**退出路径**（`left_reason`）：
+- `manual_leave`：玩家 `/me/leave` 主动退出
+- `switched`：`/me/switch` 切换（或 enforce=False 时 auto-join 自动切换）的旧行
+- `archived`：归档经 [`close_all_participants`](../../../Backend/app/repositories/construction_repo.py) 批量退出（与 `advance_sheet` 同事务；保留历史行不 DELETE）
+
+> **`POST /report` 不消费 `participants`**：第三方/玩家客户端 mod 源上报时跳过 join 直接落 `placement_records`，可同时多项目上报（§3.3 按材料封顶仍生效）。`participants` 仅约束默认 MCDR 追踪器 + Web/MCDR 显式 join 流程——默认 tracker 启动时调 `POST /active-by-uuids` 按玩家批量解析活跃 sheet_id（无 record → skip 该玩家）。
+
+**个人上报事件流水**（迭代 5，[`api/construction.md`](../api/construction.md) §4.3）：玩家在 `Me.vue`「我的上报历史」看 `GET /me/report-events` 投影——每次 report 的 `PlacementOutcome` 逐条落 `report_events`（仅 bound 玩家：`account_id` 是查询锚），含 `accepted` + **所有 `skipped` reason**（`方块不在项目材料清单内` / `已达材料上限` / `玩家当前由其他源上报` / `客户端模组上报已被服主关闭` / `玩家当前无活跃上报源` / `无法归因` 等）。
+
+设计动机：玩家此前只能看 `placement_snapshots`（`GET /me/reports`，累计净放置折线），看不到「为什么我的上报被拒」。事件流水让被拒原因可见，降低玩家调试成本（如发现自己的客户端 mod 被服主关闭、或本批次满额被部分拒收）。
+
 ---
 
 ## 7. 数据模型（R-1 全 DB）
 
-`construction` schema（规划中，迁移待定）：
+`construction` schema（迁移 0017 基表 + 0018 时序快照 + 0021 加入施工 + 0023 事件流水，0020 加 sheets.constructing_at）：
 
 | 表 | 用途 | 关键约束 |
 |---|---|---|
 | `player_sources` | 每玩家当前活跃上报源 | `(player_uuid)` 唯一（单源）；列 `source_id` / `source_type`（mcdr/server_mod/client_mod）/ `disabled_at` |
 | `player_source_history` | 切换审计 | append-only；`(player_uuid, switched_at)` |
-| `server_mod_sources` | 服务端 mod 白名单 | 服主审批后的 mod 标识 + 授权 token |
+| `server_mod_sources` | 服务端 mod 白名单 | 服主审批后的 mod 标识 + 授权 token；迭代 3 加 `enabled` 逐源启停 |
 | `placement_records` | 上报记录（终算聚合源）| `(sheet_id, account_id, registry_id)` 聚合；列 `net_qty`（placed − broken）|
+| `placement_snapshots`（迭代 2） | 时序快照（折线图源）| 每次 report 后为本轮 accepted account 各写一条；append-only；展示用非权威 |
+| **`participants`**（迭代 4） | **玩家加入施工项目记录** | **同账号同时最多 1 个活跃项目（`uq_participants_active` partial unique index 兜底）**；append-only（仅 UPDATE `left_at`/`left_reason`，从不 DELETE）；列 `web_account_id`/`sheet_id`/`joined_at`/`left_at`/`join_source('auto'\|'manual')`/`left_reason('manual_leave'\|'switched'\|'archived'\|'auto_displaced')` |
+| **`report_events`**（迭代 5） | **玩家可见事件流水（`/me/report-events` 源）** | **append-only（无 UPDATE/DELETE）**；每次 report 的 `PlacementOutcome` 逐条落一行（accepted + 所有 skipped reason）；列 `sheet_id`(nullable) / `account_id`(NOT NULL) / `player_uuid` / `registry_id` / `action` / `reason` / `net_delta` |
+| **`sheets.sheets.constructing_at`**（迭代 4，迁移 0020） | **施工开始时间戳** | nullable；进图表 xAxis 左沿 + 归档 timeline 点亮「进入施工」段 |
 
-`system.settings`（key-value JSONB，运行时开关）：
-- `construction.allow_client_mods` / `official_tracker_enabled` / `allow_server_mods`
+`sheets.sheet_rows`：方块清单 + 需求量（按 `registry_id` 聚合 `need_qty` = 上限，迭代 4 按材料封顶依据）。
+
+`system.settings`（key-value JSONB，运行时开关，6 项）：
+- `construction.allow_client_mods` / `official_tracker_enabled` / `allow_server_mods` / **`enforce_single_construction`（迭代 4 新增第 6 项，默认 true）**
 - `construction.report_interval_seconds`（flush 频率）/ `anti_cheat_threshold`（轻度告警阈值）
 
 config（`.env`）仅留连接串 / 密钥（R-11）/ 启动默认。
+
+> 详细 DDL + 索引 + 不变量见 [`api/construction.md`](../api/construction.md) §11。
 
 > `placement_records` 同时是 [积分层](./scoring-settlement.md) `BuildAScoreCalculator` 的数据源——跨 schema 只读聚合（R-1 不变：都在 PostgreSQL，后端独占）。
 
@@ -276,10 +336,12 @@ config（`.env`）仅留连接串 / 密钥（R-11）/ 启动默认。
 |---|---|
 | **R-7** MCDR 纯客户端 | 默认实现只观测 + 上报，不做积分计算 / 不持久化业务数据 |
 | **R-12** @new_thread | 事件回调若阻塞必放新线程；HTTP 上报含超时+重试+失败回执 |
-| **R-5** account 归属 | placement_records 按 account_id 聚合（player_uuid → account 解析）|
+| **R-5** account 归属 | placement_records 按 account_id 聚合（player_uuid → account 解析）；`participants`/`report_events` 同锚 `web_account_id`/`account_id` |
 | **R-1** 业务库权威 | 所有 placement 落 PostgreSQL；MCDR 内存 batch 是临时缓冲 |
 | **R-11** 密钥 | service-token 约定路径读，不发玩家；玩家 mod 走 JWT |
 | **每玩家单源** | 同时只接受一个活跃上报源（防多源重复计数）|
+| **单账号单活跃项目**（迭代 4） | 同账号同时最多 1 个活跃 `participants` 行（partial unique index 兜底）；仅约束默认 tracker + Web/MCDR join 流程，`POST /report` 零 project 校验不变 |
+| **按材料封顶**（迭代 4） | 跨账号合计 `sum(net_qty)` 不得超过 `sum(need_qty)`，超量由后端 `submit_report` 逐条裁剪（不依赖追踪器侧） |
 
 ---
 
@@ -295,3 +357,5 @@ config（`.env`）仅留连接串 / 密钥（R-11）/ 启动默认。
 *创建：2026-07-25（v0.9 文档重构）。本层 🚧 规划中，本文为设计契约基线；§5 默认实现依赖 S-1 核实，§9 是核实清单。数据流向 [积分层](./scoring-settlement.md)，constructing 状态来自 [sheets API](../api/sheets.md) §5.2。
 
 迭代 2 增量（2026-07-27）：§6.1 休眠源切换流程（local 模式选休眠源 → switch-self 唤醒）+ §6.2 进度图表化（折线时序 + 柱图材料完成度 + 饼图账号占比）+ 具名 slot `name="charts"` 自定义扩展点。*
+
+迭代 4-5 增量（2026-07-28）：§6 UI 分配表加 `enforce_single_construction` 第 6 开关 + 加入施工入口 + 个人事件流水入口 + §6.3 加入施工流程（manual join/switch/leave + auto-join + close_all_participants；`POST /report` 零 project 校验不变）+ 个人上报事件流水设计动机 + §7 数据模型补三张新表/字段（`participants` / `report_events` / `sheets.constructing_at`）+ 第 6 运行时开关 + §10 红线速查补「单账号单活跃项目」「按材料封顶」。详见 [`api/construction.md`](../api/construction.md) §3.3 / §4.2 / §4.3 / §11。*
