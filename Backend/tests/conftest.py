@@ -26,7 +26,11 @@ _TRUNCATE_SQL = text(
     "TRUNCATE users.auth_tokens, users.jwt_revocations, users.players, "
     "users.web_accounts, users.bind_tokens, "
     "sheets.sheet_managers, sheets.sheet_row_contributors, sheets.sheet_rows, "
-    "sheets.sheets, notifications.notifications RESTART IDENTITY CASCADE"
+    "sheets.sheets, notifications.notifications, "
+    "construction.placement_records, construction.placement_snapshots, "
+    "construction.player_sources, "
+    "construction.player_source_history, construction.server_mod_sources, "
+    "system.settings RESTART IDENTITY CASCADE"
 )
 
 

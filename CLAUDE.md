@@ -133,6 +133,7 @@ PCHSystem/
 | sheets API | [`Docs/architecture/api/sheets.md`](./Docs/architecture/api/sheets.md) | sheets HTTP 端点 / 鉴权 / 行状态机（认领·交付·解除·打回·贡献·进度）/ 权限矩阵 / 错误码 / CSV 列 |
 | submit-extension API | [`Docs/architecture/api/submit-extension.md`](./Docs/architecture/api/submit-extension.md) | `POST /sheets/{id}/submit-batch` 程序化批量提交入口 · 双鉴权（服务端组件 service-token+UUID / 客户端 mod JWT）· 4 类典型场景 · reason 枚举 · 回执折叠策略 |
 | parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + `POST /parsing/nbt` Create 蓝图解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
+| construction API | [`Docs/architecture/api/construction.md`](./Docs/architecture/api/construction.md) | `POST /v1/construction/report` 施工方块净放置上报（双通道：service-token 多玩家 / JWT[mod_id]）· 严格单源 · 归因三分支 · 切源两端点 · admin 设置/白名单 · **默认追踪器实现契约 C-1~C-10**（供 MCDR PR） · 归档/结算接入契约（D8） |
 
 ---
 
@@ -196,8 +197,23 @@ PCHSystem/
 - [x] token 双写校验：`.env` `MCDR_SERVICE_TOKEN` 与插件 `config.json` `service_token` 必须同值——install 复用同一密钥双写、update 每次校验仅 warn 不擅改；密钥轮换流程见 [`Scripts/README.md`](./Scripts/README.md) §8
 - [x] 共享函数库 `Scripts/lib/common.sh`（镜像探测 / Docker 安装 / 部署状态读写 / dirty 检查等被两脚本 source）；完整用法与边界见 [`Scripts/README.md`](./Scripts/README.md)
 
+**已完成（2026-07-27，施工进度上报层 + 前端 + 测试脚本）**：
+- [x] **迁移 0017**：`construction` + `system` 两 schema，5 表（`placement_records`/`player_sources`/`player_source_history`/`server_mod_sources` + `system.settings`）；干净库从零建表验证通过
+- [x] **后端 11 端点**（`app/api/construction.py`，前缀 `/v1/construction`）：`POST /report`（双通道：service-token 多玩家 / JWT[mod_id] 强制 active_uuid）+ `GET /active-sheets`（归因）+ `GET /{id}/progress`（进度）+ admin `GET/PATCH /settings`（5 开关）+ `/mod-sources` CRUD（白名单）+ `POST /source/switch-server`（admin）/ `switch-self`（玩家）/ `GET /source/me`；专用 `get_construction_reporter`（不复用 `get_current_player`，H-2 不降级）；严格单源（C-7，不隐式切源）；归因三分支（显式/启发式恰 1/0 或 >1 全 skip）；落库按 (sheet,account,registry) upsert 聚合 net_qty，account_id 锚 WebAccount（R-5）；归档/结算读契约 `aggregate_placement_totals`（D8 hook `# TODO(scoring)` 在 `archive/service.py` post-commit，**未接** settle）；31 集成测试（含全量回归 `--lf` 重试覆盖已知 flakiness）
+- [x] **上报测试脚本** `Scripts/test-construction-report.py`（stdlib only，**兼上报源参考实现**）：bootstrap 玩家+项目 → service-token 多玩家上报 → JWT[mod_id] 上报 → 进度查询
+- [x] **接口文档** [`api/construction.md`](./Docs/architecture/api/construction.md)：含 **C-1~C-10 默认追踪器实现契约**段（供后续 MCDR PR 照实现）+ **归档/结算接入契约**段（D8）；[`flows/construction-progress.md`](./Docs/architecture/flows/construction-progress.md) 状态 🚧→✅（后端+前端落地；MCDR 追踪器待 S-1 单独 PR）；Backend RS-12 红线
+- [x] **前端**：admin 施工管理面板（4 开关 + 白名单 CRUD + 服务端源切换）+ 项目详情「施工进度」tab + Me「上报源」控件 + 路由/守卫/导航
+> **待办（单独 PR）**：MCDR 默认方块追踪器（§5，依赖 S-1 联网核实）+ `!!PCH construction switch` / `!!PCH mod-token`（玩家客户端 mod JWT 出码流，复用 bind 双向短码范式）。
+
+**已完成（2026-07-27，迭代 2：方块清单校验 + 时序快照 + 材料完成度 + 休眠源）**：
+- [x] **后端**：① `POST /report` 加方块清单校验（`registry_id` 不在 `sheet_rows.registry_id` 集合含子物品 → skip `方块不在项目材料清单内`，与 C-6 追踪器侧自过滤叠加双保险）；② 迁移 0018 `construction.placement_snapshots`（sheet_id+account_id+total_net+recorded_at，索引 `sheet_id,recorded_at`），每次 report 落 placement 后对**本轮 accepted 的 account** 各写一条 `INSERT...SELECT` 批量，best-effort（失败仅日志不阻断 report）；③ `GET /{id}/progress` 加 `material_completion`（材料完成度，`completion_pct` 视觉封顶 100%，`need_qty=0→null`，含子物品 `need=ceil(qty_per_unit×父need)`）+ `timeline`（时序快照 limit 200 升序）；④ `GET /source/me` 加 `dormant_sources: [{source_id, last_active_at}]`（曾活跃、当前 disabled_at 非空的 client_mod 源，按 source_id 去重取最近 activated_at；**严格单源不变**，仅作快速切回历史 mod_id 展示）；详见 [`api/construction.md`](./Docs/architecture/api/construction.md) §3.2 / §4 / §4.1 / §6
+- [x] **前端**：① `ConstructionProgress.vue` 图表化（折线时序趋势 + 柱图材料完成度 + 饼图账号占比，ECharts；timeline 缺数据降级单点）+ 具名 slot `name="charts"` 自定义扩展点（slot prop `timeline`/`completion`/`totals` 跨版本稳定）；② `Me.vue` 休眠源列表（前 5 按 `last_active_at` 倒序 + 一键「切回」走显式 `switch-self` mode=local）；③ `SheetEditor.vue` el-tabs 拆「材料清单」/「施工进度」两 tab；详见 [`flows/construction-progress.md`](./Docs/architecture/flows/construction-progress.md) §6.1 / §6.2
+- [x] **测试脚本** `Scripts/test-construction-report.py` 加场景「上报清单外方块」（空清单 sheet → skip `方块不在项目材料清单内` + progress 验证含 `material_completion`/`timeline`）
+
 **待处理**：
 - [ ] **既有 bug（v0.3.0 起）**：`!!PCH sheet add/set/addhand ... progress` 的 `Literal` 字面量未写入 `ctx`（MCDR 仅 ArgumentNode 入 context，见 mcdr-api-cheatsheet §4），`ctx.get("mode")` 恒 None → 实际建 lock 行；addhand 镜像继承。待统一修（建议字面量节点回调显式传 mode，或改读 command path）
+- [ ] **施工 switch-self local 的 mod_id 归属校验**（CR M-1，2026-07-27）：`POST /v1/construction/source/switch-self` mode=local 当前接受玩家声明的 `source_id`（mod_id）不校验归属（本 PR documented 妥协，docstring + [`api/construction.md`](./Docs/architecture/api/construction.md) §6 已标注）。**mod-token PR 必须兑现**：签发带 `mod_id` 的 JWT 时绑定 account，switch-self local 校验 `mod_id ∈ 该 account 已签发集`，防玩家冒充他人 mod。
+- [ ] **测试 flakiness 根治**（CR M-2，2026-07-27）：`Backend/tests/conftest.py::_truncate_db` 同步 TRUNCATE 与 async session 偶发死锁，致施工 report 类重 DB 写入测试全量批跑偶发失败（`pytest --lf` 重试全绿，CI 同策略缓解，**非本特性引入**）。根治方案：改异步 fixture 或 `SET lock_timeout`，属基础设施改造。
 - [ ] 后端拆分为 `user_service/` 等子目录后，用 `service-claude-md` 生成各子服务 CLAUDE.md
 - [ ] wiki.js 纳入部署 + wiki 内容 git 仓 host 选型（GitHub/Gitea/GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）
 - [ ] 拍板待确认参数（积分 `k / α / β / r`、赛季周期等，见 arch §9）
@@ -238,4 +254,6 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-07-25（新增 PR CI 流水线 `ci.yml`：4 job 三端测试 + `label-pr` 互斥标签 `ci:pass`/`ci:fail`；backend `pytest --lf` 重试缓解已知 flakiness；env 复用 release.yml；不引第三方 annotate action；同步 CONTRIBUTING/PR 模板）*
+*最后更新：2026-07-27（迭代 2 增量：后端方块清单校验 + 迁移 0018 `placement_snapshots` 时序快照表 + `material_completion` 材料完成度 + `dormant_sources` 休眠源查询；前端 `ConstructionProgress.vue` 图表化 + 具名 slot `name="charts"` + `Me.vue` 休眠源列表 + `SheetEditor.vue` el-tabs 拆分；详见 [`api/construction.md`](./Docs/architecture/api/construction.md) §3.2/§4/§4.1/§6、[`flows/construction-progress.md`](./Docs/architecture/flows/construction-progress.md) §6.1/§6.2）*
+
+*迭代 1（2026-07-27）：施工进度上报层：迁移 0017 `construction`+`system` schema 5 表 + 后端 11 端点 `app/api/construction.py` + `get_construction_reporter` 双通道专用鉴权 + 严格单源 + 归档/结算读契约 `aggregate_placement_totals`（D8 hook 未接 settle）+ 31 集成测试 + `Scripts/test-construction-report.py` 参考实现 + [`api/construction.md`](./Docs/architecture/api/construction.md)（C-1~C-10 默认追踪器实现契约）+ 前端 admin 面板/进度 tab/上报源控件；MCDR 默认追踪器待 S-1 单独 PR*

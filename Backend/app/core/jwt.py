@@ -36,14 +36,19 @@ def create_access_token(
     account_id: int,
     role: str,
     active_uuid: Optional[uuid.UUID] = None,
+    *,
+    extra_claims: Optional[dict] = None,
 ) -> str:
     """签发 access token。
 
     sub = account_id（主锚）；active_uuid 记录当前会话来源 UUID。
+    ``extra_claims`` 注入自定义 claim（如施工客户端 mod 令牌的 ``mod_id``，C-10）。
     """
     extra = {}
     if active_uuid is not None:
         extra["active_uuid"] = str(active_uuid)
+    if extra_claims:
+        extra.update(extra_claims)
     token, _ = _create(
         str(account_id), role, _settings.jwt_access_ttl_seconds, "access", extra
     )

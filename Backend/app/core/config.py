@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     wiki_git_author_name: str = "PCHSystem"
     wiki_git_author_email: str = "pchsystem@local"
 
+    # 施工进度上报层（construction-progress.md）：system.settings ``construction.*``
+    # 键的 **DB 无值回退默认**。运行时由 Web 管理面板经
+    # ``PATCH /v1/construction/settings`` 改（即时生效，不改代码）；DB 有值时以 DB 为准。
+    construction_allow_client_mods: bool = True
+    construction_official_tracker_enabled: bool = True
+    construction_allow_server_mods: bool = True
+    construction_report_interval_seconds: int = 30  # 追踪器 flush 频率（C-5）
+    construction_anti_cheat_threshold: int | None = None  # None = 不限（轻度告警阈值，占位）
+
     @field_validator("mcdr_service_token")
     @classmethod
     def _mcdr_service_token_non_empty(cls, v: str) -> str:

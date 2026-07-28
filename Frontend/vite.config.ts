@@ -29,7 +29,7 @@ export default defineConfig({
     allowedHosts: ['dev-git.u3071783.nyat.app'],
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
@@ -39,7 +39,7 @@ export default defineConfig({
     // `vite preview` 不继承 server.proxy；为本地验证 prod 构建复刻同一代理。
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },

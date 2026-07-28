@@ -1,6 +1,7 @@
 import logging
 import secrets
 import uuid
+from dataclasses import dataclass
 
 import jwt as pyjwt
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.db import get_session
 from app.core.jwt import decode_token
+from app.models.construction import ServerModSource
 from app.models.user import Player, WebAccount
 from app.repositories import player_repo, web_account_repo
 
@@ -252,3 +254,113 @@ def require_role(role: str):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
         return player
     return _check
+
+
+# ---------------------------------------------------------------------------
+# 施工上报鉴权（construction 层专用，不复用 get_current_player）
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReporterIdentity:
+    """施工上报方身份（:func:`get_construction_reporter` 解析结果）。
+
+    与 ``get_current_player`` 的区别：service-token 通道接受**多玩家** batch
+    （actor 由 payload 每条 entry 决定，非单一 X-Player-UUID）；JWT 通道要求
+    **mod_id** claim（客户端 mod 令牌，非普通玩家 access token）。
+
+    - ``channel="jwt"``：客户端 mod 通道，``active_uuid`` 强制覆盖批内 player_uuid。
+    - ``channel="service_token"``：MCDR / 服务端 mod 多玩家代报。
+    - source 标识：``{mcdr, official}``（默认官方追踪器，C-1）/ ``{server_mod, <白名单名>}``
+      / ``{client_mod, <mod_id>}``（C-10）。
+    """
+
+    channel: str  # "jwt" | "service_token"
+    source_type: str  # "client_mod" | "mcdr" | "server_mod"
+    source_id: str
+    active_uuid: uuid.UUID | None = None  # 仅 jwt 通道
+
+
+async def get_construction_reporter(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_service_token: str | None = Header(default=None),
+    x_source_id: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> ReporterIdentity:
+    """施工上报双通道鉴权（D1 / construction-progress.md §3）。
+
+    H-2：``Authorization`` 头存在（即便非 Bearer/非法）只走 JWT 通道报 401，
+    **绝不静默降级**到 service-token（同 RS-8）。
+
+    - JWT 通道：解 token 取 ``mod_id`` claim（缺 → 401「not a mod token」）+
+      ``active_uuid``；source = ``{client_mod, mod_id}``（C-10）。
+    - service-token 通道：``secrets.compare_digest`` 校验；无 ``X-Source-Id`` →
+      ``{mcdr, official}``（C-1）；有 ``X-Source-Id`` → ``{server_mod, <name>}``，
+      须在白名单（防伪造，否则 403）。
+    """
+    if authorization is not None:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer")
+        token = authorization.removeprefix("Bearer ").strip()
+        try:
+            payload = decode_token(token)
+        except pyjwt.PyJWTError:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+        if payload.get("type") != "access":
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong token type")
+        mod_id = payload.get("mod_id")
+        if not isinstance(mod_id, str) or not mod_id.strip():
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "not a mod token (missing mod_id claim)",
+            )
+        active_uuid_str = payload.get("active_uuid")
+        if not isinstance(active_uuid_str, str):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing active_uuid")
+        try:
+            active_uuid = uuid.UUID(active_uuid_str)
+        except ValueError:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid active_uuid")
+        logger.info(
+            "construction_reporter channel=jwt mod_id=%s path=%s",
+            mod_id, request.url.path,
+        )
+        return ReporterIdentity(
+            channel="jwt",
+            source_type="client_mod",
+            source_id=mod_id,
+            active_uuid=active_uuid,
+        )
+
+    if not x_service_token or not secrets.compare_digest(
+        x_service_token, _settings.mcdr_service_token
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid service token")
+    if x_source_id:
+        found = (
+            await session.execute(
+                select(ServerModSource.name).where(
+                    ServerModSource.name == x_source_id,
+                    ServerModSource.enabled.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"server mod source '{x_source_id}' not whitelisted or disabled",
+            )
+        logger.info(
+            "construction_reporter channel=service_token server_mod=%s path=%s",
+            x_source_id, request.url.path,
+        )
+        return ReporterIdentity(
+            channel="service_token", source_type="server_mod", source_id=x_source_id
+        )
+    logger.info(
+        "construction_reporter channel=service_token mcdr=official path=%s",
+        request.url.path,
+    )
+    return ReporterIdentity(
+        channel="service_token", source_type="mcdr", source_id="official"
+    )

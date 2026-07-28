@@ -52,6 +52,18 @@ async function onLogin(): Promise<void> {
 
 <template>
   <el-card header="登录" style="max-width: 480px; margin: 40px auto;">
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px;"
+    >
+      <template #title>必须在游戏内连接后才能登录</template>
+      <div style="font-size: 12px; line-height: 1.6;">
+        网页登录仅限已设置用户名/密码的账号。首次使用请先在游戏内执行
+        <strong>!!PCH login</strong>，经回链建立账号；网页不支持单独注册。
+      </div>
+    </el-alert>
     <el-form label-width="80px">
       <el-form-item label="用户名">
         <el-input
@@ -73,7 +85,7 @@ async function onLogin(): Promise<void> {
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :loading="loading" @click="onLogin">登录</el-button>
-        <el-button text @click="router.push('/register')">没有账号？去注册</el-button>
+        <el-button text @click="router.push('/auth')">首次使用？游戏内 !!PCH login</el-button>
       </el-form-item>
     </el-form>
   </el-card>

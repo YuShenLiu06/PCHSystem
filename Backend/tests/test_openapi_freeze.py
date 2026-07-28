@@ -30,5 +30,15 @@ def test_paths_present():
         "/sheets/{sheet_id}/advance",
         "/sheets/{sheet_id}/archive",
         "/sheets/{sheet_id}/archive/assets/{filename}",
+        # 施工进度上报层（迁移 0017）
+        "/v1/construction/report",
+        "/v1/construction/active-sheets",
+        "/v1/construction/settings",
+        "/v1/construction/mod-sources",
+        "/v1/construction/mod-sources/{name}",
+        "/v1/construction/source/switch-server",
+        "/v1/construction/source/switch-self",
+        "/v1/construction/source/me",
+        "/v1/construction/{sheet_id}/progress",
     ]:
         assert p in paths, f"missing {p}"
