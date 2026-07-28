@@ -25,7 +25,7 @@
 - R-12 / C-8：HTTP 含超时+重试（复用 ``construction_client``，已含）。
 - C-7：严格单源，追踪器不切源；玩家切到别的源时后端 skip，追踪器不绕过
   （skip 即推进 baseline）。
-- RS-11：失败 / 哨兵记日志（``_log.warning``）+ 经 ``_record`` 透出 outcome/error，
+- RS-11：失败 / 哨兵记日志（``_LOGGER.warning``）+ 经 ``_record`` 透出 outcome/error，
   不静默吞。
 
 不 import mcdreforged（本模块纯标准库 + 项目内模块）。
@@ -42,6 +42,10 @@ from . import stats_reader
 from .config import PchSystemConfig
 
 _log = logging.getLogger("pch_system.construction_tracker")
+# run() 启动时替换为 server.logger（MCDR PluginLogger → 落 MCDR.log + 控制台）。
+# 不走 _log（裸 Python logger 无 handler → INFO/DEBUG 静默丢弃，MCDR.log 看不到）。
+# 测试态（直接驱动 _flush_once 不经 run())保持 _log 回落，行为无害。
+_LOGGER = _log
 
 # === 模块级状态（flush 线程写、status 命令线程读 → 加锁）===
 _lock = threading.Lock()
@@ -78,8 +82,14 @@ def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
     复刻 ``notifier.run`` 的 ``stop_event.wait(interval)`` 骨架；单轮失败记 warning
     不中断。R-12：本模块不装饰 @new_thread，由调用方包。
     """
+    global _LOGGER
     _reset()
+    _LOGGER = server.logger  # _flush_once 读此全局 → INFO/DEBUG 经 MCDR PluginLogger 落 MCDR.log
     interval = max(5.0, float(cfg.construction_flush_interval_seconds))
+    server.logger.info(
+        "construction_tracker 启动：interval=%.0fs stats_dir=%s track_breaking=%s",
+        interval, cfg.world_stats_dir, cfg.construction_track_breaking,
+    )
     # 启动时校验 stats 目录（运行中每轮由 _flush_once 再判，这里仅 best-effort 提示）
     if not os.path.isdir(cfg.world_stats_dir):
         server.logger.warning(
@@ -93,7 +103,7 @@ def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
         try:
             _flush_once(cfg)
         except Exception as e:  # noqa: BLE001 - 单轮失败不中断整个循环
-            _log.warning("construction_tracker flush failed: %s", e)
+            _LOGGER.warning("construction_tracker flush failed: %s", e)
 
 
 def _flush_once(cfg: PchSystemConfig) -> dict:
@@ -115,6 +125,7 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
         )
 
     if not online:
+        _LOGGER.info("flush: 无在线玩家，跳过（追踪器心跳）")
         return _record(cfg, outcome="no_online", online=0, stats_dir_ok=True)
 
     # 取在线玩家做双头代调 active-sheets（全局信息，代谁结果一致）
@@ -122,7 +133,7 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
     active = construction_client.get_active_sheets(cfg, proxy_uuid)
     if not isinstance(active, dict):
         # None / HttpError / 哨兵 → 拉取失败，不推进 baseline（下轮重试）
-        _log.warning(
+        _LOGGER.warning(
             "construction_tracker get_active_sheets failed: %s", _describe(active)
         )
         return _record(
@@ -136,6 +147,10 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
     sheets = active.get("sheets") or []
     heuristic_eligible = bool(active.get("heuristic_eligible"))
     active_count = len(sheets) if isinstance(sheets, list) else 0
+    _LOGGER.info(
+        "flush: 在线=%d 施工中=%d heuristic_eligible=%s",
+        len(online), active_count, heuristic_eligible,
+    )
 
     # 计算 placements + 首见建基（在 _lock 内）
     placements: list = []
@@ -151,6 +166,7 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
             base = _baselines.get(uuid_)
             if base is None:
                 # 首见：建基 = 当前，本轮不报（避免历史放置当增量）
+                _LOGGER.debug("首见建基 %s（%d 项），本轮不报", uuid_, len(current))
                 _baselines[uuid_] = dict(current)
                 continue
             delta = stats_reader.diff_counts(current, base)
@@ -179,6 +195,14 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
     if not heuristic_eligible:
         # 0 或 >1 个 constructing → 无法归因 → 跳过上报，但推进 baseline
         # （丢弃这段增量，不堆积；C-7：归因责任在后端，追踪器不绕过）
+        proj = [
+            f"{s.get('id')}:{s.get('title', '')}" for s in sheets
+        ] if isinstance(sheets, list) else []
+        _LOGGER.info(
+            "跳过上报：%d 个施工中项目 %s —— 无自动定位无法归因（本期限制），"
+            "已推进 baseline 丢弃本轮 %d 条增量",
+            active_count, proj, len(placements),
+        )
         with _lock:
             for uuid_, snap in advanced.items():
                 _baselines[uuid_] = snap
@@ -193,6 +217,7 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
 
     # 启发式归因：sheet_id=None，分块上报
     accepted = skipped = 0
+    reason_counts: dict = {}  # skip 原因分布（可见性：让“为什么不计”可观测）
     outcome, error = "ok", None
     for chunk in _chunks(placements, max(1, int(cfg.construction_max_batch))):
         result = construction_client.report_placements(cfg, chunk, sheet_id=None)
@@ -200,6 +225,9 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
             t = result.get("totals") or {}
             accepted += int(t.get("accepted") or 0)
             skipped += int(t.get("skipped") or 0)
+            for o in (result.get("outcomes") or []):
+                r = o.get("reason") or o.get("action") or "?"
+                reason_counts[r] = reason_counts.get(r, 0) + 1
             chunk_players = {p["player_uuid"] for p in chunk}
             with _lock:  # 2xx = 整批确认 → 推进本块玩家的 baseline
                 for uuid_ in chunk_players:
@@ -207,12 +235,17 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
                         _baselines[uuid_] = advanced[uuid_]
         else:  # 非 2xx → 不推进，后续块也不发（下轮 delta 自然重试）
             outcome, error = _classify(result)
-            _log.warning(
+            _LOGGER.warning(
                 "construction_tracker report failed (outcome=%s): %s",
                 outcome,
                 _describe(result),
             )
             break
+    _LOGGER.info(
+        "上报结果：placements=%d accepted=%d skipped=%d outcome=%s%s",
+        len(placements), accepted, skipped, outcome,
+        f" skip原因分布={reason_counts}" if reason_counts else "",
+    )
 
     return _record(
         cfg,

@@ -40,8 +40,10 @@ onMounted(load)
 watch(() => props.sheetId, refresh)
 
 // 是否有施工记录：account_totals 非空才算「有」
+// 边界防御（CLAUDE.md 约定）：后端历史曾漏字段（iter-1 无 timeline/material_completion），
+// 字段缺失时退化为「无数据」空态，绝不读 undefined.length 让整页 SheetEditor 渲染崩溃。
 const hasData = computed(
-  () => !!progress.value && progress.value.account_totals.length > 0,
+  () => !!progress.value && (progress.value.account_totals?.length ?? 0) > 0,
 )
 
 // {account_id → display_name} 映射，供 TrendLineChart 显示线条名称
@@ -53,7 +55,7 @@ const accountNames = computed<Record<number, string>>(() => {
   for (const t of p.account_totals) {
     map[t.account_id] = t.display_name
   }
-  for (const b of p.breakdown) {
+  for (const b of p.breakdown ?? []) {
     if (!(b.account_id in map)) {
       map[b.account_id] = b.display_name
     }
@@ -123,7 +125,7 @@ const totalNeed = computed(() =>
       >
         <h4 style="margin: 0 0 8px;">时序（按账号累计净放置）</h4>
         <TrendLineChart
-          v-if="progress && progress.timeline.length > 0"
+          v-if="progress && (progress.timeline?.length ?? 0) > 0"
           :points="progress.timeline"
           :account-names="accountNames"
         />
@@ -131,7 +133,7 @@ const totalNeed = computed(() =>
 
         <h4 style="margin: 16px 0 8px;">材料完成度</h4>
         <MaterialCompletionChart
-          v-if="progress && progress.material_completion.length > 0"
+          v-if="progress && (progress.material_completion?.length ?? 0) > 0"
           :items="progress.material_completion"
           :my-net-by-registry="myNetByRegistry"
         />
