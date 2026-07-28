@@ -101,9 +101,10 @@ export type ConstructionSettingsUpdate = Partial<
   anti_cheat_threshold?: number | null
 }
 
-/** 服务端 mod 白名单 */
+/** 服务端 mod 白名单（迭代 3：逐源 enabled 启停） */
 export interface ServerModSourceEntry {
   name: string
+  enabled: boolean
   approved_by_uuid: string | null
   approved_at: string
   notes: string | null
@@ -179,6 +180,18 @@ export async function createServerModSource(
 /** DELETE /v1/construction/mod-sources/{name} —— admin 删白名单 */
 export async function deleteServerModSource(name: string): Promise<void> {
   await http.delete(`/v1/construction/mod-sources/${encodeURIComponent(name)}`)
+}
+
+/** PATCH /v1/construction/mod-sources/{name} —— admin 逐源启停（迭代 3 卡片开关） */
+export async function setServerModSourceEnabled(
+  name: string,
+  enabled: boolean,
+): Promise<ServerModSourceEntry> {
+  const { data } = await http.patch<ServerModSourceEntry>(
+    `/v1/construction/mod-sources/${encodeURIComponent(name)}`,
+    { enabled },
+  )
+  return data
 }
 
 /** POST /v1/construction/source/switch-server —— admin 切某玩家服务端源 */

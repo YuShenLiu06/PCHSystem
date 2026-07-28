@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -136,6 +136,9 @@ class ServerModSource(Base):
     __table_args__ = {"schema": "construction"}
 
     name: Mapped[str] = mapped_column(Text, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), nullable=False, default=True
+    )
     approved_by_uuid: Mapped[Optional[UUID]] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.players.uuid", ondelete="SET NULL"),

@@ -12,6 +12,11 @@ vi.mock('../../../composables/usePolling', () => ({
   usePolling: vi.fn((fn: () => Promise<void>) => ({ refresh: fn, stop: () => {} })),
 }))
 
+// mock auth store：ConstructionProgress 取 viewer account id 算「我的贡献」；测试无账号即可
+vi.mock('../../../stores/auth', () => ({
+  useAuthStore: () => ({ account: null }),
+}))
+
 import { getConstructionProgress } from '../../../api/construction'
 import ConstructionProgress from '../ConstructionProgress.vue'
 

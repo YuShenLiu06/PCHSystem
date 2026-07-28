@@ -21,9 +21,12 @@
 - **后端施工上报层（迭代 2）**：① **方块清单校验**——`POST /v1/construction/report` 加一道后端防线，`registry_id` 不在该 sheet 收集清单内（`sheet_rows.registry_id` 集合含子物品）的方块全 skip（reason `方块不在项目材料清单内`），与 C-6 追踪器侧自过滤叠加双保险。② **时序快照表**（迁移 0018 `placement_snapshots`）——每次 report 成功落 placement 后，对**本轮 accepted 的 account** 各写一条 `total_net = sum(net_qty)`（`INSERT...SELECT` 批量），best-effort 语义（失败仅日志不阻断 report，展示用非权威）。③ **进度端点字段扩展**——`GET /{id}/progress` 加 `material_completion`（材料完成度，`completion_pct` 视觉封顶 100%，`need_qty=0→null`）+ `timeline`（时序快照，limit 200 升序）。④ **休眠源查询**——`GET /source/me` 加 `dormant_sources: [{source_id, last_active_at}]`（曾活跃、当前 disabled_at 非空的 client_mod 源，按 source_id 去重取最近 activated_at；严格单源不变，仅作「快速切回历史 mod_id」展示）。详见 [`Docs/architecture/api/construction.md`](Docs/architecture/api/construction.md) §3.2 / §4 / §4.1 / §6。
 - **前端施工管理（迭代 2）**：① **`ConstructionProgress.vue` 图表化**——`GET /{id}/progress` 三字段配套三张图（折线时序趋势 / 柱图材料完成度 / 饼图账号占比，ECharts），timeline 缺数据降级为单点；**具名 slot `name="charts"` 自定义扩展点**——二次开发者可在 `SheetEditor.vue` 注入自定义图表组件（默认 slot prop 集合 `timeline`/`completion`/`totals` 跨版本稳定）。② **`Me.vue` 休眠源列表**——「上报源」控件列休眠源（前 5 条按 `last_active_at` 倒序）+ 一键「切回」按钮（走显式 `switch-self` mode=local 唤醒）。③ **`SheetEditor.vue` el-tabs 拆分**——项目详情拆「材料清单」/「施工进度」两 tab（owner + manager 视角，避免清单与施工混在一页）。
 
+- **后端施工上报层（迭代 3）**：① `server_mod_sources` 加 `enabled` 字段（迁移 0019，逐源启停，存量 true）+ 新端点 `PATCH /mod-sources/{name}`（admin，body `{enabled}`）。② 真正生效——`get_construction_reporter`（service-token + `X-Source-Id` 通道）与 `switch-server` 校验 `enabled=true`，停用源 report 403 / switch 422（原 `allow_server_mods` 全局开关从未强制，schema 字段保留默认 true 不删，避免破坏 settings 契约）。③ `get_placement_timeline` 改取**最近** 200 点（原取最早，活跃项目会截掉近期活动）。
+- **前端施工管理（迭代 3）**：① 时序折线**前向填充**（`utils/timelineFill.ts`）——沿统一时间轴补齐、inactive 时段水平保持上一值、晚加入者从首点起，线不再断；纯函数单测覆盖。② 材料完成度柱图**分页 + 排序**（`utils/materialSort.ts`）——「我贡献且未完成 > 未完成 > 已完成（即使我贡献）」、组内按需求总数降序；每页 15 条 + `el-pagination`；「我的贡献」从 `progress.breakdown` 按账号聚合（R-5，同账号多游戏身份自动合并）。③ 数量显示统一用公共 `formatQty`（个/组/盒）。④ 注册守卫——`/register` 改需登录，未登录直访由守卫重定向 `/auth`（避免空 Authorization 头触发后端 401 `missing authorization`）；`/login`、`/register` 加「必须在游戏内连接」提示。
+
 ### Changed
 
-- _暂无_
+- **管理员面板重构（迭代 3）**：原「允许第三方服务端 mod」单全局开关 + 白名单表格 → **「服务器上报源（插件）」卡片网格**——官方 MCDR 追踪器降为默认插件卡（开关走 `official_tracker_enabled`，不可移除）+ 第三方服务端 mod 逐卡启停（`el-switch` + 停用置灰 + 状态标签）；「切换某玩家的服务器上报源」移入默认折叠的「暂未上线」区（功能保留、暂不显眼）。前端不再渲染 `allow_server_mods` 单开关。dev 代理 `localhost:8000` → `127.0.0.1:8000`（IPv6 歧义修复）。
 
 ### Fixed
 

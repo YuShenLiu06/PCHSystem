@@ -43,6 +43,7 @@ from app.schemas.construction import (
     PlacementReportResult,
     ServerModSourceCreate,
     ServerModSourceEntry,
+    ServerModSourceToggle,
     SourceMeResult,
     SourceState,
     SourceSwitchSelfRequest,
@@ -131,6 +132,7 @@ async def list_mod_sources(
     return [
         ServerModSourceEntry(
             name=r.name,
+            enabled=r.enabled,
             approved_by_uuid=r.approved_by_uuid,
             approved_at=r.approved_at,
             notes=r.notes,
@@ -153,6 +155,30 @@ async def create_mod_source(
     await session.commit()
     return ServerModSourceEntry(
         name=row.name,
+        enabled=row.enabled,
+        approved_by_uuid=row.approved_by_uuid,
+        approved_at=row.approved_at,
+        notes=row.notes,
+    )
+
+
+@router.patch("/mod-sources/{name}", response_model=ServerModSourceEntry)
+async def toggle_mod_source(
+    name: str,
+    body: ServerModSourceToggle,
+    _admin: Player = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> ServerModSourceEntry:
+    """逐源启停（迭代 3 卡片开关）。不存在 → 404。"""
+    row = await construction_repo.set_server_mod_source_enabled(
+        session, name=name, enabled=body.enabled
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "source not found")
+    await session.commit()
+    return ServerModSourceEntry(
+        name=row.name,
+        enabled=row.enabled,
         approved_by_uuid=row.approved_by_uuid,
         approved_at=row.approved_at,
         notes=row.notes,
@@ -188,10 +214,10 @@ async def switch_server_source(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "server_mod 须提供 source_id",
             )
-        if not await construction_repo.is_whitelisted_mod(session, body.source_id):
+        if not await construction_repo.is_server_mod_usable(session, body.source_id):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"server mod '{body.source_id}' 不在白名单",
+                f"server mod '{body.source_id}' 不在白名单或已停用",
             )
     player = await player_repo.get_by_uuid(session, body.player_uuid)
     if player is None:

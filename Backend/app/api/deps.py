@@ -339,13 +339,16 @@ async def get_construction_reporter(
     if x_source_id:
         found = (
             await session.execute(
-                select(ServerModSource.name).where(ServerModSource.name == x_source_id)
+                select(ServerModSource.name).where(
+                    ServerModSource.name == x_source_id,
+                    ServerModSource.enabled.is_(True),
+                )
             )
         ).scalar_one_or_none()
         if found is None:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                f"server mod source '{x_source_id}' not whitelisted",
+                f"server mod source '{x_source_id}' not whitelisted or disabled",
             )
         logger.info(
             "construction_reporter channel=service_token server_mod=%s path=%s",

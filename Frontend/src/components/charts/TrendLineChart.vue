@@ -17,6 +17,7 @@ import type {
   LegendComponentOption,
 } from 'echarts/components'
 import type { ProgressTimelinePoint } from '../../api/construction'
+import { forwardFillTimeline } from '../../utils/timelineFill'
 
 // 按需注册（模块级，只跑一次）：renderer + line + grid/tooltip/legend
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
@@ -35,19 +36,9 @@ const props = defineProps<{
   accountNames: Record<number, string>
 }>()
 
-// 按 account_id 分组，组内按时间升序，避免折线左右乱跳
-const grouped = computed(() => {
-  const groups = new Map<number, LineSeriesOption['data']>()
-  for (const p of props.points) {
-    const arr = groups.get(p.account_id) ?? []
-    arr.push([p.recorded_at, p.total_net])
-    groups.set(p.account_id, arr)
-  }
-  for (const arr of groups.values()) {
-    ;(arr as Array<[string, number]>).sort((a, b) => (a[0] < b[0] ? -1 : 1))
-  }
-  return groups
-})
+// 按 account_id 分组 + 前向填充（逻辑见 utils/timelineFill，纯函数可单测）：
+// inactive 时段水平保持上一值，线全程不断；晚加入玩家从其首点起。
+const grouped = computed(() => forwardFillTimeline(props.points))
 
 const option = computed<Option>(() => {
   const series: LineSeriesOption[] = []
@@ -55,7 +46,7 @@ const option = computed<Option>(() => {
     series.push({
       name: props.accountNames[accountId] ?? `账号 ${accountId}`,
       type: 'line',
-      data,
+      data: data as LineSeriesOption['data'],
       smooth: true,
       connectNulls: true,
       // 单点时显圆点，避免折线在缺数据时一片空白（timeline 刚起步常见）

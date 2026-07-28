@@ -9,6 +9,7 @@ import type { ComposeOption } from 'echarts/core'
 import type { PieSeriesOption } from 'echarts/charts'
 import type { TooltipComponentOption, LegendComponentOption } from 'echarts/components'
 import type { ProgressAccountTotal } from '../../api/construction'
+import { formatQty } from '../../utils/qty'
 
 // 按需注册（模块级，只跑一次）
 use([CanvasRenderer, PieChart, TooltipComponent, LegendComponent])
@@ -57,7 +58,7 @@ const option = computed<Option>(() => ({
         percent?: number
       }
       const pct = (p.percent ?? 0).toFixed(1)
-      return `${p.name ?? ''}: ${p.value ?? 0}（${pct}%）`
+      return `${p.name ?? ''}: ${formatQty(p.value ?? 0)}（${pct}%）`
     },
   },
   legend: { type: 'scroll', orient: 'vertical', left: 'left', top: 'middle' },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { register } from '../../api/identity'
@@ -11,6 +11,15 @@ const auth = useAuthStore()
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
+
+// 永久账号无注册入口：直接跳 /me（RS-6 一致；后端 register 也会 400 "account already permanent"）。
+// /register 已改为需登录路由，能进来的要么是临时账号（正常注册），要么是误入的永久账号（此处导走）。
+onMounted(() => {
+  if (auth.isAuthenticated && !auth.isTemporaryAccount) {
+    ElMessage.info('当前账号已是永久账号')
+    router.replace('/me')
+  }
+})
 
 // 校验规则：与后端一致（用户名 3-32 位 [A-Za-z0-9_-]+，密码 8-128）
 const USERNAME_REGEX = /^[A-Za-z0-9_-]{3,32}$/
@@ -56,6 +65,18 @@ function goToClaim(): void {
 
 <template>
   <el-card header="注册永久账号" style="max-width: 480px; margin: 40px auto;">
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px;"
+    >
+      <template #title>注册需先在游戏内建立账号</template>
+      <div style="font-size: 12px; line-height: 1.6;">
+        网页不支持单独注册。请先在游戏内执行 <strong>!!PCH login</strong>，
+        经回链拿到临时会话后，再在此设置用户名/密码转为永久账号。
+      </div>
+    </el-alert>
     <el-form label-width="80px">
       <el-form-item label="用户名">
         <el-input

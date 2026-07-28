@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useAuthStore } from '../../stores/auth'
 import { usePolling } from '../../composables/usePolling'
 import { extractApiError } from '../../utils/error'
 import {
@@ -55,6 +56,22 @@ const accountNames = computed<Record<number, string>>(() => {
   for (const b of p.breakdown) {
     if (!(b.account_id in map)) {
       map[b.account_id] = b.display_name
+    }
+  }
+  return map
+})
+
+// 当前查看者的「我的贡献」（registry_id → 净量）：从 breakdown 按当前 Web 账号 id 聚合
+// （placement_records 锚 account_id，R-5）。材料完成度排序「我贡献优先」消费此映射；
+// 未登录 / 未绑账号 → 空 Map（my_net_qty 全 0，无 tier1）。
+const auth = useAuthStore()
+const myNetByRegistry = computed<Record<string, number>>(() => {
+  const aid = auth.account?.id
+  if (aid === undefined) return {}
+  const map: Record<string, number> = {}
+  for (const b of progress.value?.breakdown ?? []) {
+    if (b.account_id === aid) {
+      map[b.registry_id] = (map[b.registry_id] ?? 0) + b.net_qty
     }
   }
   return map
@@ -116,6 +133,7 @@ const totalNeed = computed(() =>
         <MaterialCompletionChart
           v-if="progress && progress.material_completion.length > 0"
           :items="progress.material_completion"
+          :my-net-by-registry="myNetByRegistry"
         />
         <el-empty v-else description="暂无材料数据（项目无 lock/progress 行或未上报）" />
 

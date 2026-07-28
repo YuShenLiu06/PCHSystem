@@ -270,9 +270,11 @@ async def get_material_completion(
 async def get_placement_timeline(
     session: AsyncSession, sheet_id: int, limit: int = 200
 ) -> list[ProgressTimelinePoint]:
-    """时序快照（折线图数据源）：按时间升序取最早 ``limit`` 点。
+    """时序快照（折线图数据源）：取**最近** ``limit`` 点后转升序返回。
 
-    前端按 account_id 拆线。MVP 不做采样，超量后续优化。
+    取最近而非最早——活跃项目快照持续增长，取最早会把近期活动截掉；
+    配合前端前向填充（inactive 时段水平保持）显示最新活动窗口。前端按
+    account_id 拆线 + 前向填充。MVP 不做采样，超量后续优化。
     """
     rows = (
         await session.execute(
@@ -282,10 +284,11 @@ async def get_placement_timeline(
                 PlacementSnapshot.recorded_at,
             )
             .where(PlacementSnapshot.sheet_id == sheet_id)
-            .order_by(PlacementSnapshot.recorded_at.asc())
+            .order_by(PlacementSnapshot.recorded_at.desc())
             .limit(limit)
         )
     ).all()
+    rows = list(reversed(rows))
     return [
         ProgressTimelinePoint(
             account_id=r.account_id, total_net=r.total_net, recorded_at=r.recorded_at,
@@ -596,14 +599,37 @@ async def list_server_mod_sources(session: AsyncSession) -> list[ServerModSource
     return list(rows)
 
 
-async def is_whitelisted_mod(session: AsyncSession, name: str) -> bool:
-    """服务端 mod 是否在白名单（``get_construction_reporter`` 校验 X-Source-Id 用）。"""
+async def is_server_mod_usable(session: AsyncSession, name: str) -> bool:
+    """服务端 mod 是否可用：在白名单 **且** ``enabled=true``（迭代 3 逐源启停）。
+
+    ``get_construction_reporter``（service-token + X-Source-Id 通道）与
+    ``switch-server``（admin 分配 server_mod）消费——未启用视为不可用（403/422）。
+    """
     found = (
         await session.execute(
-            select(ServerModSource.name).where(ServerModSource.name == name)
+            select(ServerModSource.name).where(
+                ServerModSource.name == name,
+                ServerModSource.enabled.is_(True),
+            )
         )
     ).scalar_one_or_none()
     return found is not None
+
+
+async def set_server_mod_source_enabled(
+    session: AsyncSession, name: str, enabled: bool
+) -> ServerModSource | None:
+    """逐源启停（PATCH /mod-sources/{name}）；不存在返 None（api 层 404）。"""
+    row = (
+        await session.execute(
+            select(ServerModSource).where(ServerModSource.name == name)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    row.enabled = enabled
+    await session.flush()
+    return row
 
 
 async def create_server_mod_source(

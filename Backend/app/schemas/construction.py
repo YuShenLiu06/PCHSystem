@@ -179,8 +179,15 @@ class ServerModSourceCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
 
 
+class ServerModSourceToggle(BaseModel):
+    """``PATCH /mod-sources/{name}`` body：逐源启停（迭代 3 卡片开关）。"""
+
+    enabled: bool
+
+
 class ServerModSourceEntry(BaseModel):
     name: str
+    enabled: bool
     approved_by_uuid: UUID | None
     approved_at: datetime
     notes: str | None

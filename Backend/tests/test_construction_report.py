@@ -538,6 +538,115 @@ async def test_mod_sources_non_admin_403(client):
     assert r.status_code == 403
 
 
+# --- 迭代 3：逐源 enabled 启停（卡片开关）---
+
+async def test_mod_source_create_defaults_enabled(client):
+    _, _, admin_bearer, _ = await _seed_player("admin", role="admin")
+    r = await client.post(
+        "/v1/construction/mod-sources",
+        json={"name": "mod-default", "notes": None},
+        headers={"Authorization": admin_bearer},
+    )
+    assert r.status_code == 201
+    assert r.json()["enabled"] is True
+
+
+async def test_mod_source_toggle_patch(client):
+    _, _, admin_bearer, _ = await _seed_player("admin", role="admin")
+    await client.post(
+        "/v1/construction/mod-sources",
+        json={"name": "mod-t"},
+        headers={"Authorization": admin_bearer},
+    )
+    # 停用
+    r = await client.patch(
+        "/v1/construction/mod-sources/mod-t",
+        json={"enabled": False},
+        headers={"Authorization": admin_bearer},
+    )
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False
+    # GET 反映
+    r = await client.get("/v1/construction/mod-sources", headers={"Authorization": admin_bearer})
+    entry = next(m for m in r.json() if m["name"] == "mod-t")
+    assert entry["enabled"] is False
+    # 再启用
+    r = await client.patch(
+        "/v1/construction/mod-sources/mod-t",
+        json={"enabled": True},
+        headers={"Authorization": admin_bearer},
+    )
+    assert r.json()["enabled"] is True
+
+
+async def test_mod_source_toggle_not_found_404(client):
+    _, _, admin_bearer, _ = await _seed_player("admin", role="admin")
+    r = await client.patch(
+        "/v1/construction/mod-sources/ghost",
+        json={"enabled": False},
+        headers={"Authorization": admin_bearer},
+    )
+    assert r.status_code == 404
+
+
+async def test_mod_source_toggle_non_admin_403(client):
+    _, _, p1_bearer, _ = await _seed_player("p1")
+    r = await client.patch(
+        "/v1/construction/mod-sources/any",
+        json={"enabled": False},
+        headers={"Authorization": p1_bearer},
+    )
+    assert r.status_code == 403
+
+
+async def test_report_server_mod_disabled_403(client):
+    """在白名单但 enabled=false → report（service-token + X-Source-Id）403。"""
+    _, _, admin_bearer, _ = await _seed_player("admin", role="admin")
+    owner_uuid, _, _, _ = await _seed_player("owner")
+    p1, _, _, _ = await _seed_player("p1")
+    sid = await _seed_sheet(owner_uuid)
+    await client.post(
+        "/v1/construction/mod-sources",
+        json={"name": "mod-off"},
+        headers={"Authorization": admin_bearer},
+    )
+    await client.patch(
+        "/v1/construction/mod-sources/mod-off",
+        json={"enabled": False},
+        headers={"Authorization": admin_bearer},
+    )
+    r = await client.post(
+        "/v1/construction/report",
+        json={"sheet_id": sid, "placements": [
+            {"player_uuid": str(p1), "registry_id": "minecraft:stone", "placed_qty": 1, "broken_qty": 0},
+        ]},
+        headers=_svc(source_id="mod-off"),
+    )
+    assert r.status_code == 403
+
+
+async def test_switch_server_disabled_mod_422(client):
+    """switch-server 到 enabled=false 的 server_mod → 422。"""
+    _, _, admin_bearer, _ = await _seed_player("admin", role="admin")
+    p1, _, _, _ = await _seed_player("p1")
+    await client.post(
+        "/v1/construction/mod-sources",
+        json={"name": "mod-off2"},
+        headers={"Authorization": admin_bearer},
+    )
+    await client.patch(
+        "/v1/construction/mod-sources/mod-off2",
+        json={"enabled": False},
+        headers={"Authorization": admin_bearer},
+    )
+    r = await client.post(
+        "/v1/construction/source/switch-server",
+        json={"player_uuid": str(p1), "source_type": "server_mod", "source_id": "mod-off2"},
+        headers={"Authorization": admin_bearer},
+    )
+    assert r.status_code == 422
+
+
 # ===========================================================================
 # active-sheets + progress + D8 aggregate
 # ===========================================================================

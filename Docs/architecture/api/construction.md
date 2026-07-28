@@ -44,6 +44,7 @@
 | PATCH | `/settings` | admin | 改运行时开关 |
 | GET | `/mod-sources` | admin | 服务端 mod 白名单 |
 | POST | `/mod-sources` | admin | 加白名单（幂等） |
+| PATCH | `/mod-sources/{name}` | admin | 逐源启停 `{enabled}`（迭代 3） |
 | DELETE | `/mod-sources/{name}` | admin | 删白名单 |
 | POST | `/source/switch-server` | admin | 切某玩家**服务端**源 |
 | POST | `/source/switch-self` | 玩家 JWT | 玩家切自己上报模式 |
@@ -299,3 +300,5 @@ requests.post(f"{API}/v1/construction/report",
 MCDR 默认追踪器实现见 §5（待 S-1 单独 PR）。
 
 迭代 2 增量（2026-07-27）：§3.2 方块清单校验（清单外 skip）+ §4 `material_completion` 材料完成度 / `timeline` 时序快照字段 + §4.1 时序快照表（迁移 0018）+ §6 `dormant_sources` 休眠源查询。*
+
+迭代 3 增量（2026-07-28）：`server_mod_sources` 加 `enabled` 字段（迁移 0019）+ §2 `PATCH /mod-sources/{name}` 逐源启停端点；`get_construction_reporter`（service-token+X-Source-Id）与 `switch-server` 校验 `enabled=true`（停用 → 403/422）；原 `allow_server_mods` 全局开关从未强制，schema 字段保留默认 true 不删；§4.1 `timeline` 改取**最近** 200 点（原取最早）。前端：折线前向填充（`utils/timelineFill.ts`，不再断线）+ 材料完成度分页排序（`utils/materialSort.ts`，「我贡献优先」按账号聚合 R-5）+ 数量用 `formatQty`（个/组/盒）+ `/register` 需登录守卫（避免 401 missing authorization）。管理员面板重构为「服务器上报源（插件）」卡片网格（官方追踪器降为默认插件 + 第三方 mod 逐卡启停）。*

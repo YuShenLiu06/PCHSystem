@@ -12,8 +12,10 @@ export const router = createRouter({
     // 公开路由（无需登录即可访问）
     { path: '/auth', component: () => import('../views/AuthExchange.vue'), meta: { public: true } },
     { path: '/login', component: () => import('../views/identity/Login.vue'), meta: { public: true } },
-    { path: '/register', component: () => import('../views/identity/Register.vue'), meta: { public: true } },
-    // 以下身份相关路由均需登录（除登录/注册类外无 meta.public）
+    // /register 需登录（注册=临时账号转永久，须先有临时会话 JWT；未登录直访由守卫重定向 /auth，
+    // 避免空 Authorization 头触发后端 401 "missing authorization"）
+    { path: '/register', component: () => import('../views/identity/Register.vue') },
+    // 以下身份相关路由均需登录（除 /auth /login 外无 meta.public）
     // /bind/confirm 需永久账号 JWT（输入游戏内 !!PCH bind 给的短码）；/bind/claim 需临时会话 JWT
     { path: '/bind/confirm', component: () => import('../views/identity/BindConfirm.vue') },
     { path: '/bind/claim', component: () => import('../views/identity/ClaimBind.vue') },
