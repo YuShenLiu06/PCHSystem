@@ -62,6 +62,24 @@
 
 ---
 
+## [pch_system-v0.9.0] - 2026-07-28
+
+新增服务端官方默认施工进度追踪器（后端 `construction` 上报层的 C-1 默认源落地）。
+
+### Added
+
+- **施工进度追踪器（默认源）**：新增服务端官方默认施工进度追踪器，读取 `<世界>/stats/<uuid>.json` 的 `minecraft:used` 差值，按 flush 间隔（默认 30 秒）经 service-token 单头上报 `POST /v1/construction/report`（识别为 `{mcdr, official}` 默认源，C-1）。baseline 差值幂等——2xx 推进基线、失败不推进、首见建基、多项目跳过推进。
+- **`!!PCH construction status` 命令**：新增查看追踪器运行状态——启用状态、stats 目录、在线玩家、当前施工项目（含启发式归因可行性提示）、flush 间隔、baseline 玩家数、上次结果（含 outcome 中文映射 + 计数 + 错误明细），运维与玩家均可执行。
+- **配置项**：`construction_enabled`（默认 `true`）/ `construction_flush_interval_seconds`（默认 `30.0`）/ `world_stats_dir`（默认 `world/stats`）/ `construction_max_batch`（默认 `1900`）/ `construction_track_breaking`（默认 `false`，预留）。
+
+### Notes
+
+- 本期不做自动定位/挖掘（`construction_track_breaking` 预留为 `false`），仅追踪 `minecraft:used` 维度的方块放置差值。
+- 多项目并发时本追踪器无法归因（启发式要求当前恰 1 个活跃施工项目），需到 Web 端切换客户端模组精确上报。
+- 后端 `POST /v1/construction/report` 等 11 端点由后端 v0.8.x 引入（迁移 0017/0018/0019），本版本仅落地游戏端默认追踪器与查询命令。
+
+---
+
 ## [pch_system-v0.8.2] - 2026-07-25
 
 **重要更新（部署脚本热修）**：修复 `.env` 已含全部所需键时 `Scripts/update.sh` 拉取新代码后静默退出、跳过后续部署步骤的问题。**此前已运行过更新脚本但疑似未跑完的实例，请按下方「升级指引」重跑一次。**

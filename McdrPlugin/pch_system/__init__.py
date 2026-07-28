@@ -3,8 +3,9 @@ import threading
 from mcdreforged.api.all import PluginServerInterface
 from mcdreforged.api.command import Literal, Text, Integer, Float, QuotableText, GreedyText
 
-from . import health, notifier
+from . import health, notifier, construction_tracker
 from .commands import configure, _pch_root, _not_impl, _login, _status, _bind, _bind_consume
+from .construction_commands import _construction_status
 from .config import PchSystemConfig
 from .sheet_commands import (
     configure as sheet_configure,
@@ -48,13 +49,18 @@ CONFIG: PchSystemConfig = PchSystemConfig()
 # 期间与新循环双循环重复投递（on_unload set 老实例，on_load 用全新实例启动）。
 _notifier_stop: threading.Event = threading.Event()
 
+# construction_tracker 后台线程停止位（镜像 _notifier_stop，RS-6）：每次 on_load 重置，
+# 避免 reload 时老循环未退出期间与新循环双写 stats 差值 / 重复上报。
+_construction_stop: threading.Event = threading.Event()
+
 
 def on_load(serv: PluginServerInterface, prev):
-    global CONFIG, _notifier_stop
+    global CONFIG, _notifier_stop, _construction_stop
     CONFIG = serv.load_config_simple("config.json", target_class=PchSystemConfig)
     configure(CONFIG)
     sheet_configure(CONFIG)
     notifier.configure(CONFIG)
+    construction_tracker.configure(CONFIG)
     _register_commands(serv)
 
     # 事件监听（S-1：https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/event.html）
@@ -70,7 +76,11 @@ def on_load(serv: PluginServerInterface, prev):
     _start_notifier(serv)
     # 前后端可达性自检（RS-6：@new_thread 后台线程，best-effort 不阻塞 on_load）。
     _start_health_check(serv)
-    serv.logger.info("PCH System loaded (commands under !!PCH, sheets + notifier)")
+    # 施工进度默认追踪器（RS-6：@new_thread 后台循环，读 stats 差值 + HTTP 上报）。
+    # 每次用全新 Event，避免 reload 时老循环未退出与新循环双写 baseline。
+    _construction_stop = threading.Event()
+    _start_construction_tracker(serv)
+    serv.logger.info("PCH System loaded (commands under !!PCH, sheets + notifier + construction)")
     # 打印实际生效的轮询参数，便于部署后从日志确认（防 example/默认值漂移被静默吞掉）
     serv.logger.info(
         "notifier poll interval = %ss (max_per_poll = %s)",
@@ -80,8 +90,9 @@ def on_load(serv: PluginServerInterface, prev):
 
 
 def on_unload(serv: PluginServerInterface):
-    # 停止 notifier 线程
+    # 停止 notifier / construction_tracker 后台线程
     _notifier_stop.set()
+    _construction_stop.set()
 
 
 def _start_notifier(serv: PluginServerInterface):
@@ -104,6 +115,19 @@ def _start_health_check(serv: PluginServerInterface):
         health.run_console_check(serv, CONFIG)
 
     _check()
+
+
+def _start_construction_tracker(serv: PluginServerInterface):
+    # 施工进度默认追踪器后台循环（RS-6：@new_thread 卸载阻塞 HTTP + stats I/O）。
+    # 镜像 _start_notifier；construction_tracker.run 内部含 while not stop_event.is_set()
+    # 循环，按 flush_interval 节流，异常吞并继续下一轮（reload 不炸）。
+    from mcdreforged.api.decorator import new_thread
+
+    @new_thread('pch_construction')
+    def _loop():
+        construction_tracker.run(serv, CONFIG, _construction_stop)
+
+    _loop()
 
 
 def _register_commands(server: PluginServerInterface):
@@ -350,6 +374,12 @@ def _register_commands(server: PluginServerInterface):
                     )
                 )
             )
+        )
+        # === construction 子命令树（施工进度追踪器）===
+        # Literal 不进 ctx，但 status 是叶子字面量，回调不需 ctx 值（S-1：command.html §Literal）
+        .then(
+            Literal("construction")
+            .then(Literal("status").runs(_construction_status))
         )
     )
     server.register_command(root)
