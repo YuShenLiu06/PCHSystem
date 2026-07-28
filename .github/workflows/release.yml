@@ -69,10 +69,23 @@ jobs:
           python-version: '3.11'
 
       # 2a. backend 检测：集成测试（活 PG）；先 alembic 建表供 conftest TRUNCATE
-      - name: backend 检测
-        run: |
-          pip install -e "./Backend[dev]"
-          (cd Backend && alembic upgrade head && pytest -q)
+      # 已知 flakiness（_truncate_db 同步 TRUNCATE teardown 偶发与 async session 死锁，
+      # CLAUDE.md §7 CR M-2）：首跑全量偶发失败，用 pytest --lf 只重跑失败子集（与
+      # ci.yml backend job 同策略）；真失败会在重试中再次失败。
+      - name: backend 检测 · 安装依赖
+        run: pip install -e "./Backend[dev]"
+      - name: backend 检测 · alembic 建表
+        working-directory: Backend
+        run: alembic upgrade head
+      - name: backend 检测 · pytest（首次）
+        id: py1
+        working-directory: Backend
+        run: pytest -q
+        continue-on-error: true # 让重试 step 接管最终 conclusion
+      - name: backend 检测 · 重试（仅失败项 --lf）
+        if: steps.py1.outcome == 'failure'
+        working-directory: Backend
+        run: pytest -q --lf
 
       - uses: actions/setup-node@v4
         with:
