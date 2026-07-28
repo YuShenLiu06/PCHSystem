@@ -66,31 +66,28 @@
 
 ---
 
-## [pch_system-v0.9.0-rc.1] - 2026-07-28
+## [pch_system-v0.9.0] - 2026-07-29
 
-⚠️ **预发布（Release Candidate）**：服务端官方默认施工进度追踪器 + 按玩家路由 + 加入/退出/查看施工命令。非正式版，不建议生产服自动更新。
+服务端默认施工进度追踪器 + 加入/退出施工命令。
 
 ### Added
 
-- **施工进度追踪器（默认源）**：读取 `<世界>/stats/<uuid>.json` 的 `minecraft:used` 差值，按 flush 间隔（默认 30 秒）经 service-token 单头上报 `POST /v1/construction/report`（识别为 `{mcdr, official}` 默认源，C-1）。baseline 差值幂等——2xx 推进基线、失败不推进、首见建基、多项目跳过推进。
-- **追踪器按玩家路由**：默认追踪器按在线玩家逐个路由上报（显式加入的项目优先，启发式回退），替代整轮 heuristic 门控，配合后端 `participants` 表经 `active-by-uuids` 单头查询。
-- **加入施工命令**：`!!PCH construction join [编号]` / `leave` / `current`（游戏内加入、退出、查看当前项目）+ `!!PCH construction status` 查运行状态；`!!PCH` 帮助页补 `construction` 条目。
-- **配置项**：`construction_enabled` / `construction_flush_interval_seconds`（默认 `30.0`）/ `world_stats_dir` / `construction_max_batch`（默认 `1900`）/ `construction_track_breaking`（默认 `false`，预留）。
+- **施工进度追踪器**：默认开启，自动读取在线玩家 stats 差值上报施工放置贡献（约 30 秒一次），无需客户端模组。
+- **施工命令**：`!!PCH construction join [编号]` / `leave` / `current` / `status`——加入、退出、查看当前项目与追踪器状态。
+- **配置项**：`construction_enabled`（总开关，默认开）、`construction_flush_interval_seconds`、`world_stats_dir`、`construction_max_batch`、`construction_track_breaking`（挖掘，预留关）。
 
 ### Changed
 
-- **`!!submit` 改调后端批量端点（P3 薄壳化）**：扫背包后一次性 `POST /sheets/{id}/submit-batch`，由后端单事务逐行裁决，删除客户端复刻的分流决策逻辑（回执观感不变；空背包改为直接提示「背包为空」）。
+- **`!!submit` 改走后端批量端点**：逐行裁决由后端统一处理，回执观感不变。
 
 ### Fixed
 
-- **回执显式处理未知动作**：未知 action 逐行展示带动作名，不再隐式折叠。
-- **锁前后端 reason 字面量契约**：新增契约测试，任一端 reason 字面量漂移即红。
+- `!!submit` 回执对未知动作逐行展示，不再隐式折叠。
 
 ### Notes
 
-- 本期不做自动定位/挖掘（`construction_track_breaking` 预留为 `false`），仅追踪 `minecraft:used` 维度的方块放置差值。
-- 多项目并发走启发式回退（恰 1 个 constructing 自动归因；0 或 >1 需玩家显式 join 或 Web 端切客户端模组）。
-- 后端 `POST /v1/construction/report` 等 11 端点由后端 v0.9.0 引入，本版本落地游戏端默认追踪器、按玩家路由与加入施工命令。
+- 仅统计方块放置，不含挖掘。
+- 多项目同时施工需 `join` 指定项目，或 Web 端切客户端模组精确上报。
 
 ---
 
