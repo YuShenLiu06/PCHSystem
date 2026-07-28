@@ -87,6 +87,15 @@ export interface ConstructionProgress {
   timeline: ProgressTimelinePoint[]
 }
 
+/** 个人上报历史单条（GET /v1/construction/me/reports，placement_snapshots 投影） */
+export interface MyReportHistoryItem {
+  recorded_at: string
+  sheet_id: number
+  sheet_title: string
+  total_net: number
+  delta: number | null
+}
+
 /** admin 设置 */
 export interface ConstructionSettings {
   allow_client_mods: boolean
@@ -142,6 +151,14 @@ export interface SourceMeResult {
 /** GET /v1/construction/{sheet_id}/progress —— 项目施工进度展示 */
 export async function getConstructionProgress(sheetId: number): Promise<ConstructionProgress> {
   const { data } = await http.get<ConstructionProgress>(`/v1/construction/${sheetId}/progress`)
+  return data
+}
+
+/** GET /v1/construction/me/reports —— 当前玩家个人上报历史（每次 report 成功一条，最近 limit 条） */
+export async function getMyReportHistory(limit = 50): Promise<MyReportHistoryItem[]> {
+  const { data } = await http.get<MyReportHistoryItem[]>('/v1/construction/me/reports', {
+    params: { limit },
+  })
   return data
 }
 

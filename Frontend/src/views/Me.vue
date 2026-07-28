@@ -5,8 +5,10 @@ import { ElMessage } from 'element-plus'
 import { fetchMe, confirmBind, updateMyDisplayName, type MeResponse } from '../api/identity'
 import {
   getMyConstructionSource,
+  getMyReportHistory,
   switchSelfSource,
   type DormantSource,
+  type MyReportHistoryItem,
   type SourceMeResult,
 } from '../api/construction'
 import { extractApiError } from '../utils/error'
@@ -104,6 +106,21 @@ const sourceMode = ref<'server' | 'local'>('server')
 const sourceIdInput = ref('')
 const switchingSource = ref(false)
 
+// 个人上报历史（placement_snapshots：每次 report 成功落一条；最近 50 条）
+const reportHistory = ref<MyReportHistoryItem[]>([])
+const reportHistoryLoading = ref(false)
+
+async function loadReportHistory(): Promise<void> {
+  reportHistoryLoading.value = true
+  try {
+    reportHistory.value = await getMyReportHistory(50)
+  } catch {
+    // 辅助展示，失败静默
+  } finally {
+    reportHistoryLoading.value = false
+  }
+}
+
 // local 模式选项：存选中的 source_id，或哨兵 '__new__' 表示手填新 mod_id
 const LOCAL_CHOICE_NEW = '__new__'
 const localChoice = ref<string>(LOCAL_CHOICE_NEW)
@@ -175,6 +192,7 @@ async function onSwitchSource(): Promise<void> {
 onMounted(() => {
   load()
   loadConstructionSource()
+  loadReportHistory()
 })
 </script>
 
@@ -307,6 +325,31 @@ onMounted(() => {
           </el-collapse-item>
         </el-collapse>
       </div>
+    </el-card>
+
+    <!-- 个人上报历史（每次 report 成功落一条 placement_snapshot；最近 50 条） -->
+    <el-card v-if="me" style="margin-top: 16px;">
+      <template #header>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span>我的上报历史</span>
+          <el-button size="small" link :loading="reportHistoryLoading" @click="loadReportHistory">刷新</el-button>
+        </div>
+      </template>
+      <div v-if="reportHistory.length === 0" style="color: #999;">
+        暂无上报记录（官方追踪器 / 客户端 mod 上报成功后，每次会在此出现一条）。
+      </div>
+      <el-timeline v-else>
+        <el-timeline-item
+          v-for="(r, idx) in reportHistory"
+          :key="idx"
+          :timestamp="formatTime(r.recorded_at)"
+          placement="top"
+        >
+          <strong>{{ r.sheet_title || ('项目 #' + r.sheet_id) }}</strong>
+          <span v-if="r.delta !== null" style="margin-left: 8px; color: #67c23a;">本次 +{{ r.delta }}</span>
+          <span style="margin-left: 8px; color: #999;">累计净放置 {{ r.total_net }}</span>
+        </el-timeline-item>
+      </el-timeline>
     </el-card>
 
     <!-- 绑定新身份对话框（game_init：游戏 !!PCH bind 出码 → Web 输码） -->

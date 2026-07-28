@@ -51,6 +51,7 @@ from app.schemas.construction import (
     ProgressBreakdownItem,
     ProgressMaterialItem,
     ProgressTimelinePoint,
+    MyReportHistoryItem,
     SourceHistoryEntry,
     SourceMeResult,
     SourceState,
@@ -295,6 +296,50 @@ async def get_placement_timeline(
         )
         for r in rows
     ]
+
+
+async def get_my_report_history(
+    session: AsyncSession, account_id: int, limit: int = 50
+) -> list[MyReportHistoryItem]:
+    """玩家个人的上报事件历史（``placement_snapshots``：每次 report 成功落一条）。
+
+    取最近 ``limit`` 条（跨所有项目），按时间倒序。``delta`` = 本次相对同项目上一条
+    快照的净增量（列表已倒序，下一项更旧；同 sheet 才算；最旧/首条 None）。展示用，
+    非权威源（snapshot 写入 best-effort）。
+    """
+    limit = max(1, min(int(limit), 200))
+    rows = (
+        await session.execute(
+            select(
+                PlacementSnapshot.recorded_at,
+                PlacementSnapshot.sheet_id,
+                PlacementSnapshot.total_net,
+                Sheet.title.label("sheet_title"),
+            )
+            .join(Sheet, Sheet.id == PlacementSnapshot.sheet_id)
+            .where(PlacementSnapshot.account_id == account_id)
+            .order_by(PlacementSnapshot.recorded_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    items: list[MyReportHistoryItem] = []
+    for i, r in enumerate(rows):
+        older = rows[i + 1] if i + 1 < len(rows) else None
+        delta = (
+            r.total_net - older.total_net
+            if older is not None and older.sheet_id == r.sheet_id
+            else None
+        )
+        items.append(
+            MyReportHistoryItem(
+                recorded_at=r.recorded_at,
+                sheet_id=r.sheet_id,
+                sheet_title=r.sheet_title or "",
+                total_net=r.total_net,
+                delta=delta,
+            )
+        )
+    return items
 
 
 async def get_progress(session: AsyncSession, sheet_id: int) -> ConstructionProgress:

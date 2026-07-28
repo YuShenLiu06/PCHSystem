@@ -124,6 +124,20 @@ class ProgressTimelinePoint(BaseModel):
     recorded_at: datetime
 
 
+class MyReportHistoryItem(BaseModel):
+    """个人上报历史单条（``GET /v1/construction/me/reports``，``placement_snapshots`` 投影）。
+
+    每次 report 成功落 placement 后为涉及 account 写一条 snapshot —— 此即「一次上报
+    事件」。``delta`` = 本次上报相对同项目上一条快照的净增量（最旧/首条为 None）。
+    """
+
+    recorded_at: datetime
+    sheet_id: int
+    sheet_title: str
+    total_net: int
+    delta: int | None = None
+
+
 class ConstructionProgress(BaseModel):
     """进度端点响应（字段只增不减，向后兼容）。"""
 

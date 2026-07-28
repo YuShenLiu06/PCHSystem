@@ -20,7 +20,7 @@ report 走专用 ``get_construction_reporter``；其余任意登录玩家可读�
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,7 @@ from app.schemas.construction import (
     ConstructionProgress,
     ConstructionSettings,
     ConstructionSettingsUpdate,
+    MyReportHistoryItem,
     PlacementReport,
     PlacementReportResult,
     ServerModSourceCreate,
@@ -269,6 +270,24 @@ async def get_source_me(
     session: AsyncSession = Depends(get_session),
 ) -> SourceMeResult:
     return await construction_repo.get_source_me(session, player_uuid)
+
+
+@router.get("/me/reports", response_model=list[MyReportHistoryItem])
+async def get_my_reports(
+    limit: int = Query(default=50, ge=1, le=200, description="最近 N 条上报事件"),
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> list[MyReportHistoryItem]:
+    """玩家个人的上报历史（每次 report 成功 = 一条 ``placement_snapshot``）。
+
+    归因锚 account（R-5）：未绑 Web 账号的玩家 403。展示用，非权威源。字面路由
+    ``/me/reports`` 置于 ``/{sheet_id}/progress`` 之前注册，避免被路径参数吞掉。
+    """
+    if player.web_account_id is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "player not bound to web account")
+    return await construction_repo.get_my_report_history(
+        session, player.web_account_id, limit
+    )
 
 
 # ===========================================================================
