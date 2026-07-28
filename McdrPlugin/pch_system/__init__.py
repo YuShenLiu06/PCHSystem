@@ -5,7 +5,13 @@ from mcdreforged.api.command import Literal, Text, Integer, Float, QuotableText,
 
 from . import health, notifier, construction_tracker
 from .commands import configure, _pch_root, _not_impl, _login, _status, _bind, _bind_consume
-from .construction_commands import _construction_status
+from .construction_commands import (
+    _construction_status,
+    _construction_join,
+    _construction_leave,
+    _construction_current,
+)
+from . import construction_commands as _construction_commands_module
 from .config import PchSystemConfig
 from .sheet_commands import (
     configure as sheet_configure,
@@ -61,6 +67,7 @@ def on_load(serv: PluginServerInterface, prev):
     sheet_configure(CONFIG)
     notifier.configure(CONFIG)
     construction_tracker.configure(CONFIG)
+    _construction_commands_module.configure(CONFIG)
     _register_commands(serv)
 
     # 事件监听（S-1：https://docs.mcdreforged.com/zh-cn/latest/plugin_dev/event.html）
@@ -375,11 +382,19 @@ def _register_commands(server: PluginServerInterface):
                 )
             )
         )
-        # === construction 子命令树（施工进度追踪器）===
-        # Literal 不进 ctx，但 status 是叶子字面量，回调不需 ctx 值（S-1：command.html §Literal）
+        # === construction 子命令树（施工进度追踪器 + join/leave/current）===
+        # Literal 不进 ctx，但 status/current/leave 是叶子字面量，回调不需 ctx 值
+        # （S-1：command.html §Literal）；join 可带 Integer sheet_id（节点入 ctx）。
         .then(
             Literal("construction")
             .then(Literal("status").runs(_construction_status))
+            .then(
+                Literal("join")
+                .runs(_construction_join)  # !!PCH construction join（无参：回显/引导）
+                .then(Integer("sheet_id").runs(_construction_join))  # 显式 join
+            )
+            .then(Literal("leave").runs(_construction_leave))
+            .then(Literal("current").runs(_construction_current))
         )
     )
     server.register_command(root)

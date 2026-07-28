@@ -135,3 +135,77 @@ def get_active_sheets(cfg: PchSystemConfig, player_uuid: str) -> ConstructionOut
     constructing）。失败返回 None / HttpError / 哨兵。
     """
     return _request(cfg, "GET", "/v1/construction/active-sheets", player_uuid=player_uuid)
+
+
+# === 加入施工（/v1/construction/me/*，双头代玩家）===
+# 后端 ``get_current_player`` 双通道：MCDR 走 ``X-Service-Token`` + ``X-Player-UUID``
+# （无 Authorization 头），与 sheets 写通道等价（RS-13）。_request(player_uuid=...) 即双头。
+
+
+def lookup_active_by_uuids(
+    cfg: PchSystemConfig, player_uuids
+) -> ConstructionOutcome:
+    """``POST /v1/construction/active-by-uuids``（单头 service-token，批量 UUID→sheet_id）。
+
+    tracker 按玩家路由用；非敏感数据（仅 sheet_id，无 account 信息）。body
+    ``{player_uuids: [str,...]}``（≤500）；响应 ``{mappings: {"<uuid>": <sheet_id>|None}}``。
+
+    返回值约定（与 _request 一致，**额外一步**：成功 dict 时解包 ``mappings`` 为
+    ``dict[str, int | None]`` 返回；非 2xx / 哨兵 / None 原样透传给调用方按错误处理）。
+    """
+    body = {"player_uuids": [str(p) for p in player_uuids]}
+    raw = _request(
+        cfg, "POST", "/v1/construction/active-by-uuids", player_uuid=None, json_body=body
+    )
+    if isinstance(raw, dict):
+        mappings = raw.get("mappings")
+        if isinstance(mappings, dict):
+            # 后端 pydantic ``dict[UUID, int|None]`` → JSON object 键 = UUID 字符串
+            normalized = {}
+            for k, v in mappings.items():
+                try:
+                    normalized[str(k)] = int(v) if v is not None else None
+                except (TypeError, ValueError):
+                    normalized[str(k)] = None
+            return normalized
+        return raw  # mappings 字段缺失 / 类型异常 → 兜底返回原 dict（调用方按降级处理）
+    return raw
+
+
+def join_construction(
+    cfg: PchSystemConfig, player_uuid: str, sheet_id: int
+) -> ConstructionOutcome:
+    """``POST /v1/construction/me/join``（双头代玩家）。
+
+    body ``{sheet_id}``；返回 ``MyConstructionResult`` 形态：
+    ``{active: {sheet_id, sheet_title, joined_at, join_source}}``（后端保证 active 非 None，
+    字段全 None 表示未加入）。冲突 409 / 未绑账号 403 / sheet 404 / archived 409 → HttpError。
+    """
+    return _request(
+        cfg,
+        "POST",
+        "/v1/construction/me/join",
+        player_uuid=player_uuid,
+        json_body={"sheet_id": int(sheet_id)},
+    )
+
+
+def leave_construction(cfg: PchSystemConfig, player_uuid: str) -> ConstructionOutcome:
+    """``POST /v1/construction/me/leave``（双头代玩家，无 body）。
+
+    返回 ``MyConstructionResult``（active 字段全 None = 已退出 / 本就未加入，幂等）。
+    """
+    return _request(
+        cfg, "POST", "/v1/construction/me/leave", player_uuid=player_uuid
+    )
+
+
+def get_my_construction(cfg: PchSystemConfig, player_uuid: str) -> ConstructionOutcome:
+    """``GET /v1/construction/me/construction``（双头代玩家）。
+
+    返回 ``MyConstructionResult``：``active = {sheet_id, sheet_title, joined_at,
+    join_source}``；字段全 None 表示未加入任何项目（后端 active 恒非 None）。
+    """
+    return _request(
+        cfg, "GET", "/v1/construction/me/construction", player_uuid=player_uuid
+    )

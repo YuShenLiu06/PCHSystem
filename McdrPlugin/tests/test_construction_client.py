@@ -169,5 +169,161 @@ class ConstructionClientTest(unittest.TestCase):
         self.assertEqual(captured["url"], "http://backend:8000/v1/construction/active-sheets")
 
 
+class ConstructionClientV2Test(unittest.TestCase):
+    """v0.10.0 加入施工机制：lookup_active_by_uuids / join / leave / my_construction。
+
+    鉴权分裂（与既有 ``report`` 单头 / ``active-sheets`` 双头 并列）：
+    - ``lookup_active_by_uuids`` → **单头** service-token（无 X-Player-UUID；批量查询）；
+    - ``/me/join|leave|construction`` → **双头** service-token + X-Player-UUID（代玩家）。
+    """
+
+    UUID_A = "11111111-2222-3333-4444-555555555555"
+    UUID_B = "22222222-3333-4444-5555-666666666666"
+
+    def _capture_headers(self):
+        captured = {}
+
+        def _cap(method, url, params=None, json=None, headers=None, timeout=None):
+            captured["headers"] = headers
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = json
+            return _resp(200, {})
+        return captured, _cap
+
+    # --- lookup_active_by_uuids ---
+
+    def test_lookup_单头_无player_uuid(self):
+        """active-by-uuids 是 service-token 单头（require_service_token）。"""
+        captured, _cap = self._capture_headers()
+        with mock.patch.object(cc.requests, "request", side_effect=_cap):
+            cc.lookup_active_by_uuids(_cfg(), [self.UUID_A, self.UUID_B])
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["url"], "http://backend:8000/v1/construction/active-by-uuids")
+        self.assertEqual(captured["headers"]["X-Service-Token"], "tok")
+        self.assertNotIn("X-Player-UUID", captured["headers"])
+        self.assertNotIn("X-Source-Id", captured["headers"])
+        # body 形态：uuid 转字符串
+        self.assertEqual(
+            captured["json"],
+            {"player_uuids": [self.UUID_A, self.UUID_B]},
+        )
+
+    def test_lookup_解包mappings_字段(self):
+        """成功 dict 时解包 mappings → dict[str, int|None] 返回。"""
+        resp = _resp(200, {
+            "mappings": {
+                self.UUID_A: 7,
+                self.UUID_B: None,
+            }
+        })
+        with mock.patch.object(cc.requests, "request", return_value=resp):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A, self.UUID_B])
+        self.assertEqual(out, {self.UUID_A: 7, self.UUID_B: None})
+
+    def test_lookup_mappings缺失_兜底返原dict(self):
+        """mappings 字段缺失 / 类型异常 → 兜底返回原 dict（调用方按降级处理）。"""
+        resp = _resp(200, {"unexpected": "shape"})
+        with mock.patch.object(cc.requests, "request", return_value=resp):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A])
+        # 返回原 dict（非 dict[str,int|None]），调用方按 isinstance(_, dict) 判定后 .get() 仍容错
+        self.assertIsInstance(out, dict)
+        self.assertNotIn(self.UUID_A, out)
+
+    def test_lookup_无效sheet_id值归None(self):
+        """mappings 值非 int（如字符串/嵌套） → 归 None（防御后端契约偏差）。"""
+        resp = _resp(200, {"mappings": {self.UUID_A: "not-an-int"}})
+        with mock.patch.object(cc.requests, "request", return_value=resp):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A])
+        self.assertEqual(out, {self.UUID_A: None})
+
+    def test_lookup_网络失败返回None(self):
+        """网络失败 → None（调用方按降级处理）。"""
+        import requests as real_requests
+
+        with mock.patch.object(cc.requests, "request",
+                               side_effect=real_requests.ConnectionError("down")):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A])
+        self.assertIsNone(out)
+
+    def test_lookup_403返回REMOVED哨兵(self):
+        """403 → REMOVED 哨兵（_request 统一处理，lookup 不二次解析）。"""
+        with mock.patch.object(cc.requests, "request", return_value=_resp(403)):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A])
+        self.assertEqual(out, cc.REMOVED)
+
+    def test_lookup_429返回RATE_LIMITED哨兵(self):
+        with mock.patch.object(cc.requests, "request", return_value=_resp(429)):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A])
+        self.assertEqual(out, cc.RATE_LIMITED)
+
+    def test_lookup_500返回HttpError(self):
+        with mock.patch.object(cc.requests, "request", return_value=_resp(500)):
+            out = cc.lookup_active_by_uuids(_cfg(), [self.UUID_A])
+        self.assertIsInstance(out, cc.HttpError)
+        self.assertEqual(out.status, 500)
+
+    # --- join / leave / get_my_construction（/me/* 双头代玩家）---
+
+    def test_join_双头带player_uuid_and_sheet_id_body(self):
+        captured, _cap = self._capture_headers()
+        with mock.patch.object(cc.requests, "request", side_effect=_cap):
+            cc.join_construction(_cfg(), self.UUID_A, 42)
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["url"], "http://backend:8000/v1/construction/me/join")
+        self.assertEqual(captured["headers"]["X-Service-Token"], "tok")
+        self.assertEqual(captured["headers"]["X-Player-UUID"], self.UUID_A)
+        self.assertNotIn("X-Source-Id", captured["headers"])
+        self.assertEqual(captured["json"], {"sheet_id": 42})
+
+    def test_leave_双头_无body(self):
+        captured, _cap = self._capture_headers()
+        with mock.patch.object(cc.requests, "request", side_effect=_cap):
+            cc.leave_construction(_cfg(), self.UUID_A)
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["url"], "http://backend:8000/v1/construction/me/leave")
+        self.assertEqual(captured["headers"]["X-Player-UUID"], self.UUID_A)
+        # json_body=None → requests 不发 body
+        self.assertIsNone(captured["json"])
+
+    def test_get_my_construction_双头_GET(self):
+        captured, _cap = self._capture_headers()
+        with mock.patch.object(cc.requests, "request", side_effect=_cap):
+            cc.get_my_construction(_cfg(), self.UUID_A)
+        self.assertEqual(captured["method"], "GET")
+        self.assertEqual(captured["url"], "http://backend:8000/v1/construction/me/construction")
+        self.assertEqual(captured["headers"]["X-Player-UUID"], self.UUID_A)
+
+    def test_join_409返HttpError携带detail(self):
+        """冲突 409 → HttpError，detail 含「先退出或切换」提示（命令端按 detail 渲染）。"""
+        with mock.patch.object(cc.requests, "request",
+                               return_value=_resp(409, {"detail": "已活跃加入项目 id=7，先退出或切换"})):
+            out = cc.join_construction(_cfg(), self.UUID_A, 42)
+        self.assertIsInstance(out, cc.HttpError)
+        self.assertEqual(out.status, 409)
+        self.assertIn("先退出或切换", out.detail)
+
+    def test_leave_网络失败返None(self):
+        import requests as real_requests
+
+        with mock.patch.object(cc.requests, "request",
+                               side_effect=real_requests.ConnectionError("down")):
+            out = cc.leave_construction(_cfg(), self.UUID_A)
+        self.assertIsNone(out)
+
+    def test_get_my_construction_返回active字典(self):
+        """成功 dict 透传（含 active 字段；命令端 _active_state_dict 提取）。"""
+        resp = _resp(200, {
+            "active": {
+                "sheet_id": 7, "sheet_title": "主城",
+                "joined_at": "2026-07-28T00:00:00+00:00", "join_source": "manual",
+            }
+        })
+        with mock.patch.object(cc.requests, "request", return_value=resp):
+            out = cc.get_my_construction(_cfg(), self.UUID_A)
+        self.assertEqual(out["active"]["sheet_id"], 7)
+        self.assertEqual(out["active"]["sheet_title"], "主城")
+
+
 if __name__ == "__main__":
     unittest.main()

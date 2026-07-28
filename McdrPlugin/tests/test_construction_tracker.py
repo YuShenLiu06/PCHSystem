@@ -353,6 +353,8 @@ class FlushOnceTest(unittest.TestCase):
                                 side_effect=[_doc({"minecraft:stone": 5})]), \
              mock.patch.object(ct.construction_client, "get_active_sheets",
                                 return_value=_active_ok()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={}), \
              mock.patch.object(ct.construction_client, "report_placements"):
             ct._flush_once(self.cfg)
 
@@ -374,6 +376,267 @@ class FlushOnceTest(unittest.TestCase):
         self.assertEqual(status["flush_interval"], 30.0)  # PchSystemConfig 默认
         self.assertEqual(status["last_outcome"], "no_placements")
         self.assertEqual(status["baselined_players"], 1)
+
+
+class FlushOnceRoutingTest(unittest.TestCase):
+    """v0.10.0 按玩家路由三态测试：
+    1. 已加入显式 sheet_id（lookup_active_by_uuids 命中）→ 桶到该 sheet_id；
+    2. 未加入 + 恰 1 个 constructing（heuristic_eligible=True）→ fallback 桶到该 sheet；
+    3. 未加入 + 0/>1 个 constructing（heuristic_eligible=False）→ skip 推进 baseline；
+    4. lookup 网络失败 → mappings={} 降级（fallback/skip-all 仍按 heuristic 决定）。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.cfg = PchSystemConfig()
+        self.cfg.world_stats_dir = self._tmp.name
+        self.cfg.http_retries = 0
+        ct._reset()
+        ct.configure(self.cfg)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _prime_baseline(self, online, doc_a, active=None, mappings=None):
+        """首轮首见建基。active/mappings 默认空（首见不报，参数无关紧要）。"""
+        if active is None:
+            active = _active_ok()
+        if mappings is None:
+            mappings = {}
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file", side_effect=[doc_a]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets", return_value=active), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids", return_value=mappings), \
+             mock.patch.object(ct.construction_client, "report_placements"):
+            ct._flush_once(self.cfg)
+
+    # --- 1. 显式 sheet_id 路由 ---
+
+    def test_显式sheet_id路由_桶到指定sheet(self):
+        """玩家已 join sheet 7（lookup 命中）→ placements 桶到 sheet_id=7，不走 fallback。"""
+        online = {"Alice": UUID_A}
+        # 首见建基
+        self._prime_baseline(online, _doc({"minecraft:stone": 5}))
+
+        captured = []  # 每次调 report_placements 的 (sheet_id, placements)
+
+        def _cap(_cfg, p, sheet_id=None):
+            captured.append((sheet_id, list(p)))
+            return {"totals": {"accepted": 1, "skipped": 0}, "outcomes": []}
+
+        # 第二轮：lookup 命中 UUID_A → sheet_id=7
+        # active 设为「2 个 constructing」证明不走 heuristic fallback
+        active_two = {"sheets": [{"id": 7}, {"id": 9}], "heuristic_eligible": False}
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[_doc({"minecraft:stone": 8})]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=active_two), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={UUID_A: 7}), \
+             mock.patch.object(ct.construction_client, "report_placements",
+                                side_effect=_cap):
+            result = ct._flush_once(self.cfg)
+
+        self.assertEqual(result["last_outcome"], "ok")
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0][0], 7)  # sheet_id=7（显式）
+        # placements 形态
+        self.assertEqual(captured[0][1], [
+            {"player_uuid": UUID_A, "registry_id": "minecraft:stone",
+             "placed_qty": 3, "broken_qty": 0},
+        ])
+        # baseline 推进到 8
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 8})
+
+    def test_多玩家不同sheet_id_各桶分块(self):
+        """Alice→sheet 7、Bob→sheet 9 → 两次 report_placements 各带一个 sheet_id。"""
+        # 分两步首见建基（每次仅一玩家在线，避免 side_effect 长度匹配问题）
+        self._prime_baseline({"Alice": UUID_A}, _doc({"minecraft:stone": 5}))
+        self._prime_baseline({"Bob": UUID_B}, _doc({"minecraft:dirt": 2}))
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 5})
+        self.assertEqual(ct._baselines[UUID_B], {"minecraft:dirt": 2})
+
+        # 第二轮：双在线 + Alice→7，Bob→9，多 constructing（验显式覆盖 fallback）
+        online = {"Alice": UUID_A, "Bob": UUID_B}
+        captured = []
+
+        def _cap(_cfg, p, sheet_id=None):
+            captured.append((sheet_id, list(p)))
+            return {"totals": {"accepted": len(p), "skipped": 0}, "outcomes": []}
+
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[
+                                    _doc({"minecraft:stone": 8}),    # Alice +3
+                                    _doc({"minecraft:dirt": 6}),     # Bob +4
+                                ]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_multi()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={UUID_A: 7, UUID_B: 9}), \
+             mock.patch.object(ct.construction_client, "report_placements",
+                                side_effect=_cap):
+            ct._flush_once(self.cfg)
+
+        # 按 sheet_id 排序后分别桶到 7 / 9
+        self.assertEqual(sorted(c[0] for c in captured), [7, 9])
+        # 每个 chunk 一条 placement
+        sid_to_count = {sid: len(p) for sid, p in captured}
+        self.assertEqual(sid_to_count, {7: 1, 9: 1})
+        # 两玩家 baseline 都推进
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 8})
+        self.assertEqual(ct._baselines[UUID_B], {"minecraft:dirt": 6})
+
+    # --- 2. 启发式 fallback：未 join + 恰 1 个 constructing ---
+
+    def test_启发式fallback_未join单constructing_桶到唯一sheet(self):
+        """lookup 未命中 + 恰 1 个 constructing → 桶到该唯一 sheet（过渡期兼容）。"""
+        online = {"Alice": UUID_A}
+        self._prime_baseline(online, _doc({"minecraft:stone": 5}))
+
+        captured = []
+
+        def _cap(_cfg, p, sheet_id=None):
+            captured.append((sheet_id, list(p)))
+            return {"totals": {"accepted": 1, "skipped": 0}, "outcomes": []}
+
+        # lookup 返回空 mappings（玩家未 join）；active-sheet 单 constructing
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[_doc({"minecraft:stone": 9})]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_ok()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={}), \
+             mock.patch.object(ct.construction_client, "report_placements",
+                                side_effect=_cap):
+            result = ct._flush_once(self.cfg)
+
+        self.assertEqual(result["last_outcome"], "ok")
+        self.assertEqual(captured, [(1, [  # sheets[0].id=1，沿用 _active_ok() 的 id
+            {"player_uuid": UUID_A, "registry_id": "minecraft:stone",
+             "placed_qty": 4, "broken_qty": 0},
+        ])])
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 9})
+
+    # --- 3. 无显式 + heuristic_ineligible → skip 但推进 baseline ---
+
+    def test_无显式多constructing_skip推进baseline(self):
+        """未 join + 多 constructing → skip 上报，但推进 baseline（C-7 不堆积）。"""
+        online = {"Alice": UUID_A}
+        self._prime_baseline(online, _doc({"minecraft:stone": 5}))
+
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[_doc({"minecraft:stone": 12})]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_multi()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={}), \
+             mock.patch.object(ct.construction_client, "report_placements") as rp:
+            result = ct._flush_once(self.cfg)
+
+        self.assertEqual(result["last_outcome"], "skipped_no_attribution")
+        self.assertEqual(result["last_reported"], 1)  # 1 条增量被丢弃
+        rp.assert_not_called()
+        # baseline 推进到 12（不堆积）
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 12})
+
+    def test_混合_有显式和无显式_分桶skip共存(self):
+        """Alice 已 join sheet 7（多 constructing 仍能上报）；Bob 未 join → skip 推进。
+
+        验证路由按玩家独立判定，不因整轮 heuristic_ineligible 全 skip。
+        """
+        online = {"Alice": UUID_A, "Bob": UUID_B}
+        # 首见建基
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[
+                                    _doc({"minecraft:stone": 5}),    # Alice 首见
+                                    _doc({"minecraft:dirt": 2}),     # Bob 首见
+                                ]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_multi()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={}), \
+             mock.patch.object(ct.construction_client, "report_placements"):
+            ct._flush_once(self.cfg)
+
+        captured = []
+
+        def _cap(_cfg, p, sheet_id=None):
+            captured.append((sheet_id, list(p)))
+            return {"totals": {"accepted": len(p), "skipped": 0}, "outcomes": []}
+
+        # 第二轮：Alice join 7（显式），Bob 未 join（多 constructing skip）
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[
+                                    _doc({"minecraft:stone": 8}),    # Alice +3
+                                    _doc({"minecraft:dirt": 9}),     # Bob +7
+                                ]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_multi()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value={UUID_A: 7}), \
+             mock.patch.object(ct.construction_client, "report_placements",
+                                side_effect=_cap):
+            result = ct._flush_once(self.cfg)
+
+        self.assertEqual(result["last_outcome"], "ok")  # Alice 上报成功
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0][0], 7)
+        # 两玩家 baseline 都推进（Alice 2xx 推进，Bob skip 推进）
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 8})
+        self.assertEqual(ct._baselines[UUID_B], {"minecraft:dirt": 9})
+
+    # --- 4. lookup 网络失败降级 ---
+
+    def test_lookup失败降级_mappings空但heuristic仍可用(self):
+        """lookup 返 None（网络）→ mappings={}；单 constructing → fallback 路径仍上报。"""
+        online = {"Alice": UUID_A}
+        self._prime_baseline(online, _doc({"minecraft:stone": 5}))
+
+        captured = []
+
+        def _cap(_cfg, p, sheet_id=None):
+            captured.append((sheet_id, list(p)))
+            return {"totals": {"accepted": 1, "skipped": 0}, "outcomes": []}
+
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[_doc({"minecraft:stone": 8})]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_ok()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value=None), \
+             mock.patch.object(ct.construction_client, "report_placements",
+                                side_effect=_cap):
+            result = ct._flush_once(self.cfg)
+
+        self.assertEqual(result["last_outcome"], "ok")
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0][0], 1)  # fallback 到 sheets[0].id=1
+
+    def test_lookup失败降级_多constructing_全skip推进(self):
+        """lookup 失败 + 多 constructing → 全 skip 但推进 baseline。"""
+        online = {"Alice": UUID_A}
+        self._prime_baseline(online, _doc({"minecraft:stone": 5}))
+
+        with mock.patch.object(ct.notifier, "_snapshot_online", return_value=online), \
+             mock.patch.object(ct.stats_reader, "read_stats_file",
+                                side_effect=[_doc({"minecraft:stone": 11})]), \
+             mock.patch.object(ct.construction_client, "get_active_sheets",
+                                return_value=_active_multi()), \
+             mock.patch.object(ct.construction_client, "lookup_active_by_uuids",
+                                return_value=ct.construction_client.RATE_LIMITED), \
+             mock.patch.object(ct.construction_client, "report_placements") as rp:
+            result = ct._flush_once(self.cfg)
+
+        self.assertEqual(result["last_outcome"], "skipped_no_attribution")
+        rp.assert_not_called()
+        self.assertEqual(ct._baselines[UUID_A], {"minecraft:stone": 11})
 
 
 class RunLoopTest(unittest.TestCase):

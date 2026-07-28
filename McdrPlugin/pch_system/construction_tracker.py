@@ -3,18 +3,26 @@
 职责：
 - 后台线程每 ``construction_flush_interval_seconds`` 秒一轮，对每个在线玩家读
   ``world/stats/<uuid>.json`` 取 ``minecraft:used`` 累积量，与本模块内存 baseline
-  差值得到本轮增量，组装 placements 调 ``construction_client.report_placements``
-  （sheet_id=None，启发式归因）批量上报。
+  差值得到本轮增量；**按玩家显式 sheet_id 路由**（v0.10.0）调
+  ``construction_client.report_placements`` 分桶批量上报。
 
-幂等策略（核心）：
+按玩家路由三态（取代 v0.9 整轮 heuristic gate）：
+- **显式归因（已 join）**：``lookup_active_by_uuids`` 返回 ``{uuid: sheet_id}``，
+  按 sheet_id 分桶 ``report_placements(sheet_id=桶id)``。
+- **启发式 fallback（未 join 但恰 1 个 constructing）**：桶到该唯一 sheet
+  （过渡期兼容，未升级 tracker / 未 join 玩家不丢数据）。
+- **无显式 + 无 fallback（0 或 >1 个 constructing）**：skip 该玩家但**推进 baseline**
+  （C-7 不绕过；归因责任在后端 active-sheets 视图）。
+
+幂等策略（核心，不变）：
 - **首见建基**：首次见到某玩家的 stats → baseline = current，本轮不报
   （避免历史放置量当增量）。下轮才开始 diff。
 - **2xx 推进 baseline**：后端 ``submit_report`` 单事务，2xx = 整批确认
   （accepted + skipped 都算确认）。本块 2xx 才推进本块涉及的玩家的 baseline。
 - **失败 / 哨兵不推进**：网络失败 None / HttpError / RATE_LIMITED / REMOVED → 不
   推进 baseline，下一轮 ``diff_counts`` 自然重新算（不会丢失或翻倍）。
-- **多项目（heuristic_eligible=False）**：跳过上报，但**推进 baseline**（丢弃
-  这段增量，避免堆积；归因责任在后端 active-sheets 视图，追踪器不绕过 C-7）。
+- **skip 玩家推进 baseline**：heuristic_ineligible 的玩家丢弃增量但推进 baseline，
+  避免堆积（C-7：归因责任在后端，追踪器不绕过）。
 
 循环骨架复刻自 ``notifier.run`` 的 ``stop_event.wait(interval)``；本模块自身**不
 装饰 @new_thread**，由 ``__init__.py`` 调用方包（R-12 / RS-6）。
@@ -109,8 +117,18 @@ def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
 def _flush_once(cfg: PchSystemConfig) -> dict:
     """单轮 flush 逻辑（测试直接驱动它，不需 server）。
 
-    返回本轮 ``_record`` 组装的状态 dict（也写入 ``_last_result``）。严格按 plan
-    幂等算法实现：失败/哨兵不推进 baseline，2xx 整批推进，多项目跳过但推进。
+    返回本轮 ``_record`` 组装的状态 dict（也写入 ``_last_result``）。**按玩家路由**
+    （v0.10.0 取代整轮 heuristic gate）：
+    1. 取在线玩家 + 单头代理 ``get_active_sheets``（heuristic fallback 输入）。
+    2. ``lookup_active_by_uuids(online_uuids)`` → ``{uuid: sheet_id | None}``；
+       网络失败 → ``mappings={}`` + 降级 warning（heuristic fallback 仍可用）。
+    3. 按玩家路由：
+       - 有显式 sheet_id（已 join）→ 桶到该 sheet_id；
+       - 无显式 + ``heuristic_eligible=True``（恰 1 个 constructing）→ fallback 桶到该 sheet
+         （过渡期兼容，未升级 tracker / 未 join 玩家不丢数据）；
+       - 无显式 + ``heuristic_eligible=False`` → skip 但推进 baseline（C-7 不绕过）。
+
+    幂等策略（不变）：首见建基 / 2xx 整批推进 / 失败·哨兵不推进 / skip 推进。
     """
     if not cfg.construction_enabled:
         return _record(cfg, outcome="disabled")
@@ -128,11 +146,10 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
         _LOGGER.info("flush: 无在线玩家，跳过（追踪器心跳）")
         return _record(cfg, outcome="no_online", online=0, stats_dir_ok=True)
 
-    # 取在线玩家做双头代调 active-sheets（全局信息，代谁结果一致）
+    # active-sheets 仍是 heuristic fallback 的唯一输入；代谁结果一致（全局视图）
     proxy_uuid = next(iter(online.values()))
     active = construction_client.get_active_sheets(cfg, proxy_uuid)
     if not isinstance(active, dict):
-        # None / HttpError / 哨兵 → 拉取失败，不推进 baseline（下轮重试）
         _LOGGER.warning(
             "construction_tracker get_active_sheets failed: %s", _describe(active)
         )
@@ -147,43 +164,62 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
     sheets = active.get("sheets") or []
     heuristic_eligible = bool(active.get("heuristic_eligible"))
     active_count = len(sheets) if isinstance(sheets, list) else 0
+    fallback_sheet_id = None
+    if heuristic_eligible and active_count == 1 and isinstance(sheets, list):
+        fallback_sheet_id = int(sheets[0].get("id"))
+
+    # 批量 lookup 按玩家显式归因（C-9 升级路径）；失败降级 mappings={}
+    online_uuids = list(online.values())
+    lookup = construction_client.lookup_active_by_uuids(cfg, online_uuids)
+    if isinstance(lookup, dict):
+        mappings = lookup
+    else:
+        # 网络/HTTP/哨兵 → 降级；heuristic fallback 仍可能可用（fallback_sheet_id 非 None）
+        _LOGGER.warning(
+            "lookup_active_by_uuids 降级 (fallback=%s): %s",
+            "heuristic" if fallback_sheet_id is not None else "skip-all",
+            _describe(lookup),
+        )
+        mappings = {}
+
     _LOGGER.info(
-        "flush: 在线=%d 施工中=%d heuristic_eligible=%s",
-        len(online), active_count, heuristic_eligible,
+        "flush: 在线=%d 施工中=%d heuristic_eligible=%s explicit_routed=%d",
+        len(online), active_count, heuristic_eligible, len(mappings),
     )
 
-    # 计算 placements + 首见建基（在 _lock 内）
-    placements: list = []
-    advanced: dict = {}  # uuid → 该玩家本轮 current 快照（成功才提交为 baseline）
+    # 计算 placements + 首见建基（在 _lock 内）；按玩家分桶
+    advanced: dict = {}  # uuid → 本轮 current 快照（成功才提交为 baseline）
+    player_placements: dict = {}  # uuid → list[placement]（仅本轮有 delta 的玩家）
     with _lock:
         for name, uuid_ in online.items():
             doc = stats_reader.read_stats_file(
                 stats_reader.stats_path_for(cfg.world_stats_dir, uuid_)
             )
             if doc is None:
-                continue  # stats 文件缺失 / 不可读 → 跳过（下轮若出现则首见）
+                continue  # stats 缺失 / 不可读 → 跳过
             current = stats_reader.used_counts(doc)
             base = _baselines.get(uuid_)
             if base is None:
-                # 首见：建基 = 当前，本轮不报（避免历史放置当增量）
+                # 首见：建基 = 当前，本轮不报
                 _LOGGER.debug("首见建基 %s（%d 项），本轮不报", uuid_, len(current))
                 _baselines[uuid_] = dict(current)
                 continue
             delta = stats_reader.diff_counts(current, base)
             if not delta:
                 continue
-            for rid, qty in delta.items():
-                placements.append(
-                    {
-                        "player_uuid": uuid_,
-                        "registry_id": rid,
-                        "placed_qty": int(qty),
-                        "broken_qty": 0,  # track_breaking 本期不实现，恒 0
-                    }
-                )
+            plist = [
+                {
+                    "player_uuid": uuid_,
+                    "registry_id": rid,
+                    "placed_qty": int(qty),
+                    "broken_qty": 0,  # track_breaking 本期不实现，恒 0
+                }
+                for rid, qty in delta.items()
+            ]
+            player_placements[uuid_] = plist
             advanced[uuid_] = dict(current)
 
-    if not placements:
+    if not player_placements:
         return _record(
             cfg,
             outcome="no_placements",
@@ -192,58 +228,83 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
             heuristic_eligible=heuristic_eligible,
         )
 
-    if not heuristic_eligible:
-        # 0 或 >1 个 constructing → 无法归因 → 跳过上报，但推进 baseline
-        # （丢弃这段增量，不堆积；C-7：归因责任在后端，追踪器不绕过）
-        proj = [
-            f"{s.get('id')}:{s.get('title', '')}" for s in sheets
-        ] if isinstance(sheets, list) else []
-        _LOGGER.info(
-            "跳过上报：%d 个施工中项目 %s —— 无自动定位无法归因（本期限制），"
-            "已推进 baseline 丢弃本轮 %d 条增量",
-            active_count, proj, len(placements),
-        )
+    # 按玩家路由：显式 sheet_id > heuristic fallback > skip 推进 baseline
+    sheet_buckets: dict = {}  # sheet_id → list[placement]
+    skipped_uuids: list = []  # 因 heuristic_ineligible skip 的玩家（推进 baseline）
+    for uuid_, plist in player_placements.items():
+        explicit_sid = mappings.get(uuid_)
+        if explicit_sid is not None:
+            sheet_buckets.setdefault(int(explicit_sid), []).extend(plist)
+        elif fallback_sheet_id is not None:
+            sheet_buckets.setdefault(fallback_sheet_id, []).extend(plist)
+        else:
+            # 无显式 + 无 heuristic fallback → skip 但推进 baseline
+            skipped_uuids.append(uuid_)
+            _LOGGER.info(
+                "skip 玩家 %s：%d 条增量归因失败（baseline 推进丢弃）",
+                uuid_, len(plist),
+            )
+
+    # skip 玩家立即推进 baseline（不堆积，C-7）
+    if skipped_uuids:
         with _lock:
-            for uuid_, snap in advanced.items():
-                _baselines[uuid_] = snap
+            for uuid_ in skipped_uuids:
+                if uuid_ in advanced:
+                    _baselines[uuid_] = advanced[uuid_]
+
+    # 整轮全部 skip → 沿用既有 outcome（命令端 _OUTCOME_MAP 已映射）
+    if not sheet_buckets:
+        total_skip = sum(
+            len(player_placements[u]) for u in skipped_uuids
+        )
+        _LOGGER.info(
+            "整轮跳过上报：%d 玩家 %d 条增量（无显式归因 + heuristic 不适用）",
+            len(skipped_uuids), total_skip,
+        )
         return _record(
             cfg,
             outcome="skipped_no_attribution",
             online=len(online),
             active_sheets=active_count,
             heuristic_eligible=False,
-            reported=len(placements),
+            reported=total_skip,
         )
 
-    # 启发式归因：sheet_id=None，分块上报
+    # 分桶上报：每桶分块，2xx 推进；任一桶失败 → 后续桶不发（下轮重试）
     accepted = skipped = 0
-    reason_counts: dict = {}  # skip 原因分布（可见性：让“为什么不计”可观测）
+    reported_total = 0
+    reason_counts: dict = {}
     outcome, error = "ok", None
-    for chunk in _chunks(placements, max(1, int(cfg.construction_max_batch))):
-        result = construction_client.report_placements(cfg, chunk, sheet_id=None)
-        if isinstance(result, dict):
-            t = result.get("totals") or {}
-            accepted += int(t.get("accepted") or 0)
-            skipped += int(t.get("skipped") or 0)
-            for o in (result.get("outcomes") or []):
-                r = o.get("reason") or o.get("action") or "?"
-                reason_counts[r] = reason_counts.get(r, 0) + 1
-            chunk_players = {p["player_uuid"] for p in chunk}
-            with _lock:  # 2xx = 整批确认 → 推进本块玩家的 baseline
-                for uuid_ in chunk_players:
-                    if uuid_ in advanced:
-                        _baselines[uuid_] = advanced[uuid_]
-        else:  # 非 2xx → 不推进，后续块也不发（下轮 delta 自然重试）
-            outcome, error = _classify(result)
-            _LOGGER.warning(
-                "construction_tracker report failed (outcome=%s): %s",
-                outcome,
-                _describe(result),
-            )
+    for sheet_id in sorted(sheet_buckets.keys()):
+        plist = sheet_buckets[sheet_id]
+        reported_total += len(plist)
+        for chunk in _chunks(plist, max(1, int(cfg.construction_max_batch))):
+            result = construction_client.report_placements(cfg, chunk, sheet_id=sheet_id)
+            if isinstance(result, dict):
+                t = result.get("totals") or {}
+                accepted += int(t.get("accepted") or 0)
+                skipped += int(t.get("skipped") or 0)
+                for o in (result.get("outcomes") or []):
+                    r = o.get("reason") or o.get("action") or "?"
+                    reason_counts[r] = reason_counts.get(r, 0) + 1
+                chunk_players = {p["player_uuid"] for p in chunk}
+                with _lock:  # 2xx = 整批确认 → 推进本块玩家的 baseline
+                    for uuid_ in chunk_players:
+                        if uuid_ in advanced:
+                            _baselines[uuid_] = advanced[uuid_]
+            else:  # 非 2xx → 不推进，后续块/桶也不发（下轮 delta 自然重试）
+                outcome, error = _classify(result)
+                _LOGGER.warning(
+                    "construction_tracker report failed (outcome=%s): %s",
+                    outcome,
+                    _describe(result),
+                )
+                break
+        if outcome != "ok":
             break
     _LOGGER.info(
-        "上报结果：placements=%d accepted=%d skipped=%d outcome=%s%s",
-        len(placements), accepted, skipped, outcome,
+        "上报结果：buckets=%d reported=%d accepted=%d skipped=%d outcome=%s%s",
+        len(sheet_buckets), reported_total, accepted, skipped, outcome,
         f" skip原因分布={reason_counts}" if reason_counts else "",
     )
 
@@ -252,8 +313,8 @@ def _flush_once(cfg: PchSystemConfig) -> dict:
         outcome=outcome,
         online=len(online),
         active_sheets=active_count,
-        heuristic_eligible=True,
-        reported=len(placements),
+        heuristic_eligible=heuristic_eligible,
+        reported=reported_total,
         accepted=accepted,
         skipped=skipped,
         error=error,

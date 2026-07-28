@@ -1,20 +1,36 @@
 """``!!PCH construction`` 命令回调集合。
 
-当前仅 ``status`` 子命令——展示 ``construction_tracker`` 后台循环的运行状态。
+v0.10.0 起含四条子命令：
+- ``status`` —— 展示 ``construction_tracker`` 后台循环的运行状态（v0.9，运维/玩家均可）；
+- ``join [sheet_id]`` —— 加入指定 sheet 的施工（无参时回显当前 / 引导到 Web 端）；
+- ``leave`` —— 退出当前活跃加入；
+- ``current`` —— 回显当前活跃加入的项目（并入 status 的轻量查询版）。
 
-镜像 ``commands.py::_status`` 模板（红线 RS-6）：
-- 命令回调外套 ``@new_thread('pch_system construction')`` 后台线程，
-  避免 ``construction_tracker.get_status()`` 与后台循环的潜在锁竞争阻塞主线程；
-- 异常回执红字（``§c...§r``），成功回执 ``_render_status`` 多行 RTextList；
-- ``src.reply`` 线程安全（``ConsoleSource`` / ``PlayerSource`` 通用，S-1 MCDR CommandSource.reply）。
+镜像 ``commands.py::_status`` / ``sheet_commands`` 模板（红线 RS-6 / RS-8 / RS-11）：
+- 命令回调外套 ``@new_thread('pch_system construction')`` 后台线程；
+- 玩家身份用 ``uuid_api_remake.get_uuid(player)``（RS-8），异常回执红字；
+- 调 ``construction_client``，按 ``Union[dict, str 哨兵, HttpError, None]`` 分支回执；
+- ``src.reply`` / ``server.tell`` 线程安全（S-1 MCDR CommandSource）。
 
 色板遵循 ``McdrPlugin/CLAUDE.md`` §6：标题 gold+bold、键 aqua、值 gray、
 成功 green / 错误 red / 警告 yellow。
 """
+import uuid_api_remake  # RS-8：get_uuid(name)->str
+
 from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RStyle
 
-from . import construction_tracker
+from . import construction_client, construction_tracker
+from .config import PchSystemConfig
+
+# 由 __init__.py 在 on_load 中注入（与 sheet_commands.CONFIG 同范式）
+CONFIG: PchSystemConfig = PchSystemConfig()
+
+
+def configure(cfg: PchSystemConfig) -> None:
+    """注入当前配置（由 ``__init__.py`` 调用）。"""
+    global CONFIG
+    CONFIG = cfg
 
 
 def _construction_status(src, ctx):
@@ -32,6 +48,252 @@ def _construction_status(src, ctx):
             src.reply(_render_status(state))
         except Exception as e:
             src.reply(RText(f"§c施工追踪器状态查询失败: {e}§r"))
+
+    _do()
+
+
+# === join / leave / current（v0.10.0 加入施工机制）===
+
+
+def _require_player(src):
+    """非玩家执行返回提示并 None。镜像 ``sheet_commands._require_player``。"""
+    if not src.is_player:
+        src.reply(RText("!!PCH construction join/leave/current 只能玩家在游戏内执行", color=RColor.red))
+        return None
+    return src.player
+
+
+def _resolve_uuid_or_tell(server, player_name):
+    """推导 UUID，失败回执红字。成功返回 UUID 字符串，失败返回 None。"""
+    try:
+        return uuid_api_remake.get_uuid(player_name)
+    except Exception as e:  # noqa: BLE001
+        server.tell(
+            player_name,
+            RText(f"UUID 推导失败: {e}", color=RColor.red),
+        )
+        return None
+
+
+def _resolve_outcome(server, player_name, outcome, *, on_success):
+    """分支解析 ``construction_client`` 返回（镜像 ``sheet_commands._resolve`` 简化版）。
+
+    成功 dict → 调 ``on_success(value)`` 自行回执；哨兵 / HttpError / None → 统一
+    回执并返回 None。错误码翻译与 ``api/construction.md`` §6 对齐：
+    401 → 服务暂不可用（token 错）/ 403 → 未绑定 Web 账号 / 404 → 项目不存在 /
+    409（含「归档」/「archiv」）→ 项目已归档 / 409 其他 → 已加入其他项目 / 422 → 参数有误。
+    """
+    if outcome is None:
+        server.tell(player_name, RText("服务暂不可用，请稍后再试", color=RColor.red))
+        return None
+    if outcome == construction_client.RATE_LIMITED:
+        server.tell(player_name, RText("操作太频繁，请稍后再试", color=RColor.yellow))
+        return None
+    if outcome == construction_client.REMOVED:
+        server.tell(player_name, RText("访问被拒（权限不足）", color=RColor.red))
+        return None
+    if isinstance(outcome, construction_client.HttpError):
+        status, detail = outcome.status, outcome.detail or ""
+        if status == 401:
+            server.tell(player_name, RText("服务暂不可用（鉴权失败）", color=RColor.red))
+        elif status == 403:
+            server.tell(
+                player_name,
+                RText("未绑定 Web 账号，请先 !!PCH bind 绑定", color=RColor.red),
+            )
+        elif status == 404:
+            server.tell(player_name, RText("项目不存在", color=RColor.red))
+        elif status == 409:
+            d_lower = detail.lower()
+            if "归档" in detail or "archiv" in d_lower:
+                server.tell(player_name, RText("项目已归档，只读", color=RColor.red))
+            else:
+                # 既有活跃加入他项目 / 状态非法 —— detail 已含「先退出或切换」提示
+                server.tell(player_name, RText(f"已加入其他项目：{detail}", color=RColor.yellow))
+        elif status == 422:
+            server.tell(player_name, RText(f"参数有误：{detail}", color=RColor.red))
+        else:
+            server.tell(player_name, RText("服务暂不可用，请稍后再试", color=RColor.red))
+        return None
+    # 成功 dict
+    on_success(outcome)
+    return outcome
+
+
+def _active_state_dict(payload):
+    """从 ``MyConstructionResult`` 形态取 ``active`` dict（容错：缺失/类型异常 → {}）。"""
+    if not isinstance(payload, dict):
+        return {}
+    active = payload.get("active")
+    return active if isinstance(active, dict) else {}
+
+
+def _render_active_card(active, *, title="当前施工项目"):
+    """渲染「当前施工项目」卡片：未加入 → gray 空态；已加入 → gold 标题 + aqua/gray 字段。"""
+    sheet_id = active.get("sheet_id")
+    if sheet_id is None:
+        return RTextList(
+            RText(f"{title}：", color=RColor.aqua),
+            RText("未加入任何项目", color=RColor.gray),
+            RText("\n"),
+        )
+    parts = [
+        RText(f"{title}：\n", color=RColor.gold).set_styles(RStyle.bold),
+        _kv_line("项目 ID", RText(str(sheet_id), color=RColor.gray)),
+        _kv_line("项目标题", RText(str(active.get("sheet_title") or ""), color=RColor.gray)),
+        _kv_line("加入时间", RText(str(active.get("joined_at") or ""), color=RColor.gray)),
+        _kv_line(
+            "加入来源",
+            RText(
+                "自动（备货触发）" if active.get("join_source") == "auto"
+                else "手动" if active.get("join_source") == "manual"
+                else "未知",
+                color=RColor.gray,
+            ),
+        ),
+    ]
+    return RTextList(*parts)
+
+
+def _construction_join(src, ctx):
+    """``!!PCH construction join [sheet_id]`` —— 加入指定 sheet 的施工。
+
+    - 有参：调 ``join_construction`` 显式加入，回执成功/失败。
+    - 无参：先 ``get_my_construction``；已加入 → 回显当前并提示「如需切换请先 leave」；
+      未加入 → 提示「在 Web 端项目页加入或指定 sheet_id」（**不猜** sheet）。
+
+    RS-6 @new_thread；RS-8 UUID；RS-11 失败回执。控制台拒绝（玩家身份必需）。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+    # Integer 节点入 ctx；无参时 ctx 不含该键
+    sheet_id = ctx.get("sheet_id")
+
+    @new_thread('pch_system construction')
+    def _do():
+        player_uuid = _resolve_uuid_or_tell(server, player_name)
+        if player_uuid is None:
+            return
+
+        if sheet_id is None:
+            # 无参：回显当前 / 引导
+            outcome = construction_client.get_my_construction(CONFIG, player_uuid)
+
+            def _on_current(value):
+                active = _active_state_dict(value)
+                if active.get("sheet_id") is None:
+                    server.tell(
+                        player_name,
+                        RTextList(
+                            RText("未加入任何施工项目。", color=RColor.gray),
+                            RText("请在 Web 端项目页加入，或使用 ", color=RColor.gray),
+                            RText("!!PCH construction join <sheet_id>", color=RColor.aqua),
+                            RText(" 显式加入。", color=RColor.gray),
+                        ),
+                    )
+                else:
+                    server.tell(
+                        player_name,
+                        RTextList(
+                            _render_active_card(active),
+                            RText(
+                                "如需切换项目，请先 !!PCH construction leave 后再加入。",
+                                color=RColor.gray,
+                            ),
+                        ),
+                    )
+
+            _resolve_outcome(server, player_name, outcome, on_success=_on_current)
+            return
+
+        # 有参：显式 join
+        outcome = construction_client.join_construction(CONFIG, player_uuid, int(sheet_id))
+
+        def _on_joined(value):
+            active = _active_state_dict(value)
+            if active.get("sheet_id") is None:
+                # 后端返回空态（理论上 join 不会发生）—— 兜底提示
+                server.tell(
+                    player_name,
+                    RText("加入未生效，请稍后重试或联系管理员", color=RColor.yellow),
+                )
+                return
+            server.tell(
+                player_name,
+                RTextList(
+                    RText("已加入施工：\n", color=RColor.green).set_styles(RStyle.bold),
+                    _render_active_card(active),
+                ),
+            )
+
+        _resolve_outcome(server, player_name, outcome, on_success=_on_joined)
+
+    _do()
+
+
+def _construction_leave(src, ctx):
+    """``!!PCH construction leave`` —— 退出当前活跃加入（幂等：未加入也回执成功）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+
+    @new_thread('pch_system construction')
+    def _do():
+        player_uuid = _resolve_uuid_or_tell(server, player_name)
+        if player_uuid is None:
+            return
+        outcome = construction_client.leave_construction(CONFIG, player_uuid)
+
+        def _on_left(value):
+            active = _active_state_dict(value)
+            if active.get("sheet_id") is None:
+                server.tell(
+                    player_name,
+                    RText("已退出施工项目（或本就未加入）", color=RColor.green),
+                )
+            else:
+                # 后端 active 仍有值（异常）—— 兜底，不应发生
+                server.tell(
+                    player_name,
+                    RTextList(
+                        RText("退出未生效，当前仍加入：", color=RColor.yellow),
+                        _render_active_card(active),
+                    ),
+                )
+
+        _resolve_outcome(server, player_name, outcome, on_success=_on_left)
+
+    _do()
+
+
+def _construction_current(src, ctx):
+    """``!!PCH construction current`` —— 回显当前活跃加入的项目（轻量查询，并入 status）。"""
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+
+    @new_thread('pch_system construction')
+    def _do():
+        player_uuid = _resolve_uuid_or_tell(server, player_name)
+        if player_uuid is None:
+            return
+        outcome = construction_client.get_my_construction(CONFIG, player_uuid)
+
+        def _on_current(value):
+            active = _active_state_dict(value)
+            if active.get("sheet_id") is None:
+                server.tell(
+                    player_name,
+                    RText("未加入任何施工项目", color=RColor.gray),
+                )
+            else:
+                server.tell(player_name, _render_active_card(active))
+
+        _resolve_outcome(server, player_name, outcome, on_success=_on_current)
 
     _do()
 
