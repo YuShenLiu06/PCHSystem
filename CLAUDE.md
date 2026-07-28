@@ -154,7 +154,7 @@ PCHSystem/
 
 **待处理**：
 
-- [ ] **玩家客户端 mod 相关命令** `!!PCH construction switch`（切上报源）/ `!!PCH mod-token`（JWT 出码流，复用 bind 双向短码范式）。**MCDR 默认方块追踪器已落地**（v0.9.0 追踪器 + v0.9.1 按玩家路由 + `!!PCH construction join/leave/current` 命令，[`api/construction.md`](./Docs/architecture/api/construction.md) §5 C-1~C-10 已兑现）；后端 `get_construction_reporter` 双通道 + 加入施工 + 上报事件流水 + 按材料封顶均已就绪。
+- [ ] **玩家客户端 mod 相关命令** `!!PCH construction switch`（切上报源）/ `!!PCH mod-token`（JWT 出码流，复用 bind 双向短码范式）。**MCDR 默认方块追踪器已落地**（v0.9.0-rc.1：追踪器 + 按玩家路由 + `!!PCH construction join/leave/current` 命令，[`api/construction.md`](./Docs/architecture/api/construction.md) §5 C-1~C-10 已兑现）；后端 `get_construction_reporter` 双通道 + 加入施工 + 上报事件流水 + 按材料封顶均已就绪。
 - [ ] **施工 switch-self local 的 mod_id 归属校验**（CR M-1，2026-07-27）：`POST /v1/construction/source/switch-self` mode=local 当前接受玩家声明的 `source_id`（mod_id）不校验归属（docstring + [`api/construction.md`](./Docs/architecture/api/construction.md) §6 已标注妥协）。**mod-token PR 必须兑现**：签发带 `mod_id` 的 JWT 时绑定 account，switch-self local 校验 `mod_id ∈ 该 account 已签发集`，防玩家冒充他人 mod。
 - [ ] **既有 bug（v0.3.0 起）**：`!!PCH sheet add/addhand ... progress` 的 `Literal` 字面量未写入 `ctx`（MCDR 仅 ArgumentNode 入 context，见 [`mcdr-api-cheatsheet`](./Docs/McdrPlugin/mcdr-api-cheatsheet.md) §4），`_sheet_upsert`/`_sheet_addhand` 读 `ctx.get("mode")` 恒 None → 实际建 lock 行。`set` 已规避（`_sheet_set` 不再接 mode 字面量、只改 need/sort）；`addsub`/`setsub` 已用闭包 `lambda s,c: _fn(s,c,mode=...)` 正确烘入 mode，可作修法范本（建议 add/addhand 同样改闭包显式传 mode，或改读 command path）。
 - [ ] **测试 flakiness 根治**（CR M-2，2026-07-27）：`Backend/tests/conftest.py::_truncate_db` 同步 TRUNCATE 与 async session 偶发死锁，致重 DB 写入测试全量批跑偶发失败（`pytest --lf` 重试全绿，CI 同策略缓解，**非本特性引入**）。根治方案：改异步 fixture 或 `SET lock_timeout`。
