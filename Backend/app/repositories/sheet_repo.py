@@ -9,6 +9,7 @@
 """
 import csv
 import io
+import logging
 import math
 import uuid
 from datetime import datetime, timezone
@@ -30,6 +31,8 @@ from app.models.sheet import (
     SheetRowContributor,
 )
 from app.models.user import Player, WebAccount
+
+logger = logging.getLogger(__name__)
 
 # mode（D-3）
 MODE_LOCK, MODE_PROGRESS = 0, 1
@@ -85,6 +88,44 @@ async def _assert_writable(session: AsyncSession, sheet_id: int) -> None:
         raise SheetArchived(f"sheet {sheet_id} is archived (read-only)")
 
 
+async def _maybe_auto_join(
+    session: AsyncSession, sheet_id: int, player_uuid: uuid.UUID
+) -> None:
+    """best-effort 自动加入施工（备货/上交触发，plan BLOCK 1.9）。
+
+    - 解析 uuid→account；未绑账号放行（不抛）。
+    - ``construction_repo.join_construction(source='auto')``：
+      * 已活跃加入本 sheet → 幂等 NOP；
+      * 已活跃加入他 sheet → silent skip（auto 永不抛 ParticipantConflict）；
+      * enforce_single_construction=False → 自动切换到本 sheet。
+    - 失败 swallow（保上交成功；join 故障仅影响该玩家方块被默认 tracker 归因，
+      graceful degradation）——上交主流程的副产物，绝不阻断。
+
+    Lazy import ``construction_repo`` 破循环（仿 ``get_sheet`` 中的
+    ``web_account_repo`` lazy 模式）：``construction_repo`` 引 sheet models 但不引
+    sheet_repo 函数，``sheet_repo → construction_repo`` 单向无环。
+    """
+    from app.repositories import construction_repo  # lazy import 破循环
+
+    try:
+        acc = (
+            await session.execute(
+                select(Player.web_account_id).where(Player.uuid == player_uuid)
+            )
+        ).scalar_one_or_none()
+        if not acc:
+            # 未绑 Web 账号（None）或玩家不存在（None）→ 放行
+            return
+        await construction_repo.join_construction(
+            session, acc, sheet_id, source="auto"
+        )
+    except Exception:
+        logger.warning(
+            "auto_join skipped sheet=%s uuid=%s", sheet_id, player_uuid,
+            exc_info=True,
+        )
+
+
 async def advance_sheet(
     session: AsyncSession,
     sheet_id: int,
@@ -123,6 +164,11 @@ async def advance_sheet(
         )
     if to_status == SHEET_PHASE_CONSTRUCTING and sheet.status == SHEET_PHASE_COLLECTING:
         sheet.status = SHEET_PHASE_CONSTRUCTING
+        # 进入施工时间（迁移 0020）：供进度图表 xAxis 起点 + 归档 timeline 行渲染
+        # + participants 决策。幂等保护：重复推进已被上方 to==sheet.status 早 return 拒绝，
+        # 此处理论上不会重写已存在的 constructing_at，但防御性 ``is None`` 守卫。
+        if sheet.constructing_at is None:
+            sheet.constructing_at = datetime.now(timezone.utc)
     elif to_status == SHEET_PHASE_ARCHIVED and sheet.status in (
         SHEET_PHASE_COLLECTING,
         SHEET_PHASE_CONSTRUCTING,
@@ -742,6 +788,10 @@ async def claim_row(
             child.claimant_uuid = claimant_uuid
             child.delivered_qty = 0
 
+    # plan BLOCK 1.9：lock 认领触发 best-effort auto-join（collecting/constructing 都触发）
+    # 顶层级联子行用同一 claimant_uuid，单次 auto-join 即可（幂等兜底）
+    await _maybe_auto_join(session, sheet_id, claimant_uuid)
+
     await session.flush()
     return row
 
@@ -901,6 +951,8 @@ async def _apply_contribution(
             set_={"contributed_qty": SheetRowContributor.contributed_qty + qty},
         )
     )
+    # plan BLOCK 1.9：progress 上交触发 best-effort auto-join（collecting/constructing 都触发）
+    await _maybe_auto_join(session, row.sheet_id, player_uuid)
 
 
 async def contribute_row(

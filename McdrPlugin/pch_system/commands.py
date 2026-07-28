@@ -40,7 +40,7 @@ def _pch_root(src, ctx):
         return
     # 命令名列宽：ASCII 命令名按列宽补空格 → 描述起列对齐（MC 字体下 ASCII 等宽）。
     # 色板见 McdrPlugin/CLAUDE.md §6：标题 gold+bold、分组/命令名 aqua、描述 gray。
-    name_w = len("!!PCH status")  # 12，按最长命令名对齐（MC 字体下 ASCII 等宽）
+    name_w = len("!!PCH construction")  # 18，按最长命令名对齐（MC 字体下 ASCII 等宽）
 
     def _line(name, desc, suggest, hover):
         return RTextList(
@@ -64,6 +64,10 @@ def _pch_root(src, ctx):
         _line(
             "!!PCH sheet", "在线表格协作", "!!PCH sheet ",
             "查看 list / view / create / claim / deliver 等子命令",
+        ),
+        _line(
+            "!!PCH construction", "施工进度追踪", "!!PCH construction ",
+            "status 看追踪器状态 / join <编号> 加入施工 / leave 退出 / current 查当前项目",
         ),
         _line(
             "!!PCH status", "前后端连接自检", "!!PCH status",

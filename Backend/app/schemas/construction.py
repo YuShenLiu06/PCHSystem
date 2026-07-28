@@ -124,6 +124,40 @@ class ProgressTimelinePoint(BaseModel):
     recorded_at: datetime
 
 
+class MyReportHistoryItem(BaseModel):
+    """个人上报历史单条（``GET /v1/construction/me/reports``，``placement_snapshots`` 投影）。
+
+    每次 report 成功落 placement 后为涉及 account 写一条 snapshot —— 此即「一次上报
+    事件」。``delta`` = 本次上报相对同项目上一条快照的净增量（最旧/首条为 None）。
+    """
+
+    recorded_at: datetime
+    sheet_id: int
+    sheet_title: str
+    total_net: int
+    delta: int | None = None
+
+
+class ReportEventItem(BaseModel):
+    """个人上报事件流水单条（``GET /v1/construction/me/report-events``，``report_events`` 投影）。
+
+    迭代 5：玩家可见的完整事件流水——``accepted`` + **所有 skip 原因**逐条落库。
+    - ``sheet_id`` / ``sheet_title``：归因失败等场景可能为 None（时间线展示时回退显示
+      「未归因」）。
+    - ``registry_id``：理论上必有（outcome 都带），防御性 nullable。
+    - ``action`` ∈ {``accepted``, ``skipped``}；``reason``：accepted=""; skipped 为中文。
+    - ``net_delta``：accepted=本次计入；skipped=被拒/尝试量（部分接受场景的 over 部分）。
+    """
+
+    recorded_at: datetime
+    sheet_id: int | None = None
+    sheet_title: str | None = None
+    registry_id: str | None = None
+    action: Literal["accepted", "skipped"]
+    reason: str
+    net_delta: int | None = None
+
+
 class ConstructionProgress(BaseModel):
     """进度端点响应（字段只增不减，向后兼容）。"""
 
@@ -132,6 +166,10 @@ class ConstructionProgress(BaseModel):
     breakdown: list[ProgressBreakdownItem]
     material_completion: list[ProgressMaterialItem]
     timeline: list[ProgressTimelinePoint]
+    # 进入施工 / 归档时间（迁移 0020）：供前端图表 xAxis 范围使用
+    # （左沿贴施工开始、右沿停在归档时间或当前时间）。直跳归档时 constructing_at=None。
+    construction_started_at: datetime | None = None
+    archived_at: datetime | None = None
 
 
 class PlacementTotal(BaseModel):
@@ -156,6 +194,7 @@ class ConstructionSettings(BaseModel):
     allow_server_mods: bool
     report_interval_seconds: int
     anti_cheat_threshold: int | None  # None = 不限
+    enforce_single_construction: bool
 
 
 class ConstructionSettingsUpdate(BaseModel):
@@ -170,6 +209,7 @@ class ConstructionSettingsUpdate(BaseModel):
     allow_server_mods: bool | None = None
     report_interval_seconds: int | None = Field(default=None, ge=1)
     anti_cheat_threshold: int | None = Field(default=None, ge=1)
+    enforce_single_construction: bool | None = None
 
 
 # --- admin 白名单（GET/POST/DELETE /v1/construction/mod-sources）---
@@ -252,3 +292,57 @@ class SourceMeResult(BaseModel):
     active: SourceState
     history: list[SourceHistoryEntry]
     dormant_sources: list[DormantSource]
+
+
+# --- 加入施工（POST /v1/construction/me/join | switch | leave，GET me/construction）---
+
+class JoinRequest(BaseModel):
+    """``POST /me/join`` body：手动加入指定 sheet 的施工。
+
+    sheet 须存在且非 archived（api 层校验 → 404/409）。
+    """
+
+    sheet_id: int
+
+
+class SwitchRequest(BaseModel):
+    """``POST /me/switch`` body：切换到指定 sheet（leave 旧活跃 + join 新 sheet 同事务）。
+
+    与 ``/me/join`` 的区别：``enforce_single_construction=True`` 且已活跃加入他 sheet 时，
+    ``/me/join`` 抛 409（要求玩家显式选择），``/me/switch`` 自动切换。
+    """
+
+    sheet_id: int
+
+
+class ParticipantState(BaseModel):
+    """当前活跃加入状态的对外契约（``ParticipantState.sheet_id`` 为 None = 未加入）。"""
+
+    sheet_id: int | None = None
+    sheet_title: str | None = None
+    joined_at: datetime | None = None
+    join_source: Literal["auto", "manual"] | None = None
+
+
+class MyConstructionResult(BaseModel):
+    """``GET /me/construction`` 响应：自己当前活跃加入的施工项目。"""
+
+    active: ParticipantState
+
+
+class ActiveByUuidsRequest(BaseModel):
+    """``POST /active-by-uuids`` body：批量 UUID → 当前活跃 sheet_id（tracker 用）。
+
+    service-token 单头鉴权；非敏感数据（仅 sheet_id，无 account 信息）。
+    """
+
+    player_uuids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class ActiveByUuidsResult(BaseModel):
+    """``POST /active-by-uuids`` 响应：``{player_uuid: sheet_id | None}``。
+
+    未绑账号 / 未加入任何项目 → ``None``。
+    """
+
+    mappings: dict[UUID, int | None]

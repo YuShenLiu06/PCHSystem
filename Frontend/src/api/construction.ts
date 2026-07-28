@@ -85,6 +85,37 @@ export interface ConstructionProgress {
   breakdown: ProgressBreakdownItem[]
   material_completion: ProgressMaterialItem[]
   timeline: ProgressTimelinePoint[]
+  /** 进入施工阶段时间（sheets.constructing_at）；早期数据可能为 null */
+  construction_started_at: string | null
+  /** 归档时间（sheets.archived_at）；constructing 期为 null */
+  archived_at: string | null
+}
+
+/** 个人上报历史单条（GET /v1/construction/me/reports，placement_snapshots 投影） */
+export interface MyReportHistoryItem {
+  recorded_at: string
+  sheet_id: number
+  sheet_title: string
+  total_net: number
+  delta: number | null
+}
+
+/**
+ * 个人上报事件流水单条（GET /v1/construction/me/report-events，迭代 5）。
+ *
+ * accepted + 所有 skip 原因都落库；让玩家看到「为什么我的上报被拒」。
+ * - sheet_id / sheet_title：归因失败等场景可能为 null
+ * - action：'accepted' | 'skipped'；reason：accepted="" skipped=中文
+ * - net_delta：accepted=本次计入；skipped=被拒/尝试量（部分接受场景的 over 部分）
+ */
+export interface ReportEventItem {
+  recorded_at: string
+  sheet_id: number | null
+  sheet_title: string | null
+  registry_id: string | null
+  action: 'accepted' | 'skipped'
+  reason: string
+  net_delta: number | null
 }
 
 /** admin 设置 */
@@ -137,11 +168,47 @@ export interface SourceMeResult {
   dormant_sources: DormantSource[]
 }
 
+// --- 加入施工（POST /me/join | switch | leave，GET /me/construction）---
+
+/**
+ * 当前活跃加入状态（与 `Backend/app/schemas/construction.py::ParticipantState` 对齐）。
+ *
+ * 后端约定：未加入时返回**空 ParticipantState 对象**（所有字段为 null），
+ * 不是 `active: null`。调用方按 `sheet_id` 是否 truthy 判断「已加入」。
+ */
+export interface ParticipantState {
+  sheet_id: number | null
+  sheet_title: string | null
+  joined_at: string | null
+  join_source: 'auto' | 'manual' | null
+}
+
+/** `GET /me/construction` 响应：当前玩家活跃加入的施工项目（未加入 = 空 ParticipantState）。 */
+export interface MyConstructionResult {
+  active: ParticipantState
+}
+
 // --- 请求函数 ---
 
 /** GET /v1/construction/{sheet_id}/progress —— 项目施工进度展示 */
 export async function getConstructionProgress(sheetId: number): Promise<ConstructionProgress> {
   const { data } = await http.get<ConstructionProgress>(`/v1/construction/${sheetId}/progress`)
+  return data
+}
+
+/** GET /v1/construction/me/reports —— 当前玩家个人上报历史（每次 report 成功一条，最近 limit 条） */
+export async function getMyReportHistory(limit = 50): Promise<MyReportHistoryItem[]> {
+  const { data } = await http.get<MyReportHistoryItem[]>('/v1/construction/me/reports', {
+    params: { limit },
+  })
+  return data
+}
+
+/** GET /v1/construction/me/report-events —— 当前玩家完整上报事件流水（accepted + skip 原因，迭代 5） */
+export async function getMyReportEvents(limit = 50): Promise<ReportEventItem[]> {
+  const { data } = await http.get<ReportEventItem[]>('/v1/construction/me/report-events', {
+    params: { limit },
+  })
   return data
 }
 
@@ -218,5 +285,42 @@ export async function switchSelfSource(body: {
 /** GET /v1/construction/source/me —— 玩家查活跃源 + 历史 + 休眠源 */
 export async function getMyConstructionSource(): Promise<SourceMeResult> {
   const { data } = await http.get<SourceMeResult>('/v1/construction/source/me')
+  return data
+}
+
+// --- 加入施工 ---
+
+/** GET /v1/construction/me/construction —— 查当前玩家活跃加入的施工项目（Me.vue「当前施工项目」卡片） */
+export async function getMyConstruction(): Promise<MyConstructionResult> {
+  const { data } = await http.get<MyConstructionResult>('/v1/construction/me/construction')
+  return data
+}
+
+/**
+ * POST /v1/construction/me/join —— 手动加入指定 sheet 的施工。
+ *
+ * - 后端对「已活跃加入本 sheet」幂等返回当前状态。
+ * - 冲突（enforce_single_construction=True 且已活跃加入他 sheet）→ 后端 409，**函数内 rethrow**，
+ *   由调用方处理（SheetEditor 用 switch 替代）。
+ * - 未绑 Web 账号 → 后端 403（由 axios 拦截器 / 调用方各自处理）。
+ */
+export async function joinConstruction(sheetId: number): Promise<MyConstructionResult> {
+  const { data } = await http.post<MyConstructionResult>('/v1/construction/me/join', {
+    sheet_id: sheetId,
+  })
+  return data
+}
+
+/** POST /v1/construction/me/switch —— 切换到指定 sheet（leave 旧活跃 + join 新 sheet 同事务）。 */
+export async function switchConstruction(sheetId: number): Promise<MyConstructionResult> {
+  const { data } = await http.post<MyConstructionResult>('/v1/construction/me/switch', {
+    sheet_id: sheetId,
+  })
+  return data
+}
+
+/** POST /v1/construction/me/leave —— 退出当前活跃加入（未活跃加入 → 后端幂等返回空态）。 */
+export async function leaveConstruction(): Promise<MyConstructionResult> {
+  const { data } = await http.post<MyConstructionResult>('/v1/construction/me/leave')
   return data
 }

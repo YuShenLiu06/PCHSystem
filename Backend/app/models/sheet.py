@@ -60,6 +60,12 @@ class Sheet(Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 进入施工时间（迁移 0020）：collecting→constructing 切换时写入。
+    # 供进度图表 xAxis 起点 + 归档 timeline「进入施工」行渲染 + participants 决策。
+    # 已 archived 且未经过 constructing（直跳归档）时为 None。
+    constructing_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

@@ -28,8 +28,10 @@ _TRUNCATE_SQL = text(
     "sheets.sheet_managers, sheets.sheet_row_contributors, sheets.sheet_rows, "
     "sheets.sheets, notifications.notifications, "
     "construction.placement_records, construction.placement_snapshots, "
+    "construction.report_events, "
     "construction.player_sources, "
     "construction.player_source_history, construction.server_mod_sources, "
+    "construction.participants, "
     "system.settings RESTART IDENTITY CASCADE"
 )
 

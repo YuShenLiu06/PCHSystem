@@ -21,4 +21,4 @@ advanced_console: false   # 容器内重定向 stdin/stdout 需关掉
 write_server_output_to_log_file: true
 debug:
   all: false
-  plugin: true
+  plugin: false   # true 会把每个插件 dispatch/info 按 DEBUG 记一行 → MCDR.log 刷屏撑爆；平时关，排查时临时开

@@ -40,8 +40,10 @@ onMounted(load)
 watch(() => props.sheetId, refresh)
 
 // 是否有施工记录：account_totals 非空才算「有」
+// 边界防御（CLAUDE.md 约定）：后端历史曾漏字段（iter-1 无 timeline/material_completion），
+// 字段缺失时退化为「无数据」空态，绝不读 undefined.length 让整页 SheetEditor 渲染崩溃。
 const hasData = computed(
-  () => !!progress.value && progress.value.account_totals.length > 0,
+  () => !!progress.value && (progress.value.account_totals?.length ?? 0) > 0,
 )
 
 // {account_id → display_name} 映射，供 TrendLineChart 显示线条名称
@@ -53,7 +55,7 @@ const accountNames = computed<Record<number, string>>(() => {
   for (const t of p.account_totals) {
     map[t.account_id] = t.display_name
   }
-  for (const b of p.breakdown) {
+  for (const b of p.breakdown ?? []) {
     if (!(b.account_id in map)) {
       map[b.account_id] = b.display_name
     }
@@ -81,6 +83,18 @@ const myNetByRegistry = computed<Record<string, number>>(() => {
 const slotTimeline = computed(() => progress.value?.timeline ?? [])
 const slotCompletion = computed(() => progress.value?.material_completion ?? [])
 const slotTotals = computed(() => progress.value?.account_totals ?? [])
+
+// xAxis 左沿 = 施工开始时间（construction_started_at）；早期数据无此字段 → null（ECharts 自动）
+const chartStartTime = computed<string | null | undefined>(
+  () => progress.value?.construction_started_at ?? null,
+)
+// xAxis 右沿：archived 时停在归档时间；constructing 时取当前时间，使右沿随当前时间推进。
+// computed 依赖 progress.value（usePolling 每 5s 刷新重赋值），刷新时重新计算 endTime。
+const chartEndTime = computed<string | null | undefined>(() => {
+  const p = progress.value
+  if (!p) return null
+  return p.archived_at ?? new Date().toISOString()
+})
 
 // 项目总需求量（sum of material need_qty）—— 供 ContributionPieChart 算「未完成」扇区
 const totalNeed = computed(() =>
@@ -123,15 +137,17 @@ const totalNeed = computed(() =>
       >
         <h4 style="margin: 0 0 8px;">时序（按账号累计净放置）</h4>
         <TrendLineChart
-          v-if="progress && progress.timeline.length > 0"
+          v-if="progress && (progress.timeline?.length ?? 0) > 0"
           :points="progress.timeline"
           :account-names="accountNames"
+          :start-time="chartStartTime"
+          :end-time="chartEndTime"
         />
         <el-empty v-else description="暂无时序数据（需上报后生成）" />
 
         <h4 style="margin: 16px 0 8px;">材料完成度</h4>
         <MaterialCompletionChart
-          v-if="progress && progress.material_completion.length > 0"
+          v-if="progress && (progress.material_completion?.length ?? 0) > 0"
           :items="progress.material_completion"
           :my-net-by-registry="myNetByRegistry"
         />

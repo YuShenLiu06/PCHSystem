@@ -15,28 +15,82 @@
 
 ### Added
 
-- **后端批量提交端点**：新增 `POST /sheets/{id}/submit-batch`——第三方集成方（服务端 mod / 服主脚本 / 跨服桥接 / 玩家客户端 mod）传一份 `{registry_id, qty}` 材料清单，后端按行 mode 自动分发 `delivery` / `contribute` 并返回逐行回执。双鉴权（service-token+UUID 代玩家写 / JWT 只写自己，镜像 construction-progress §3）；决策逻辑从 `McdrPlugin/pch_system/scanner.py` 移植为后端单一权威实现（reason 字面量逐字对齐，MCDR P3 薄壳化零适配）。详见 [`Docs/architecture/api/submit-extension.md`](Docs/architecture/api/submit-extension.md)。
-- **后端施工进度上报层**：新增 `POST /v1/construction/report` 等 11 端点（迁移 0017 `construction` + `system` 两 schema，5 表）——施工方（MCDR / 服务端 mod / 玩家客户端 mod）上报 constructing 期内各玩家方块净放置（placed − broken），按 (项目 × 账号 × 方块) 聚合，归档时喂给积分层 `BuildAScoreCalculator`。双鉴权（专用 `get_construction_reporter`：service-token 多玩家 batch / JWT[mod_id] 强制 active_uuid，H-2 不降级）；**严格单源**（每玩家同时仅一活跃上报源，report 不隐式切源）；归因三分支（显式 sheet_id / 启发式恰 1 个 / 0 或 >1 全 skip）；切源两端点（admin switch-server / 玩家 switch-self）+ admin 设置（5 运行时开关）+ 服务端 mod 白名单 CRUD。归档/结算读契约 `aggregate_placement_totals` 已固化（hook 在归档 post-commit，**本轮未接** settle）。配套上报测试脚本 [`Scripts/test-construction-report.py`](Scripts/test-construction-report.py)（零依赖，兼参考实现）+ 接口文档 [`api/construction.md`](Docs/architecture/api/construction.md)（含 **C-1~C-10 默认追踪器实现契约**，供 MCDR 默认方块追踪器单独 PR 照实现）。**MCDR 默认追踪器本身不在本 PR**（依赖 S-1 联网核实）。详见 [`Docs/architecture/api/construction.md`](Docs/architecture/api/construction.md)。
-- **前端施工管理**：首个 admin 模块——admin 施工管理面板（4 开关 + 白名单 CRUD + 服务端源切换）+ 项目详情「施工进度」tab（按账号聚合 + 明细）+ Me「施工上报源」控件（server/local 切换 + 活跃源 + 历史）+ 路由 admin 守卫 + 导航入口。
-- **后端施工上报层（迭代 2）**：① **方块清单校验**——`POST /v1/construction/report` 加一道后端防线，`registry_id` 不在该 sheet 收集清单内（`sheet_rows.registry_id` 集合含子物品）的方块全 skip（reason `方块不在项目材料清单内`），与 C-6 追踪器侧自过滤叠加双保险。② **时序快照表**（迁移 0018 `placement_snapshots`）——每次 report 成功落 placement 后，对**本轮 accepted 的 account** 各写一条 `total_net = sum(net_qty)`（`INSERT...SELECT` 批量），best-effort 语义（失败仅日志不阻断 report，展示用非权威）。③ **进度端点字段扩展**——`GET /{id}/progress` 加 `material_completion`（材料完成度，`completion_pct` 视觉封顶 100%，`need_qty=0→null`）+ `timeline`（时序快照，limit 200 升序）。④ **休眠源查询**——`GET /source/me` 加 `dormant_sources: [{source_id, last_active_at}]`（曾活跃、当前 disabled_at 非空的 client_mod 源，按 source_id 去重取最近 activated_at；严格单源不变，仅作「快速切回历史 mod_id」展示）。详见 [`Docs/architecture/api/construction.md`](Docs/architecture/api/construction.md) §3.2 / §4 / §4.1 / §6。
-- **前端施工管理（迭代 2）**：① **`ConstructionProgress.vue` 图表化**——`GET /{id}/progress` 三字段配套三张图（折线时序趋势 / 柱图材料完成度 / 饼图账号占比，ECharts），timeline 缺数据降级为单点；**具名 slot `name="charts"` 自定义扩展点**——二次开发者可在 `SheetEditor.vue` 注入自定义图表组件（默认 slot prop 集合 `timeline`/`completion`/`totals` 跨版本稳定）。② **`Me.vue` 休眠源列表**——「上报源」控件列休眠源（前 5 条按 `last_active_at` 倒序）+ 一键「切回」按钮（走显式 `switch-self` mode=local 唤醒）。③ **`SheetEditor.vue` el-tabs 拆分**——项目详情拆「材料清单」/「施工进度」两 tab（owner + manager 视角，避免清单与施工混在一页）。
-
-- **后端施工上报层（迭代 3）**：① `server_mod_sources` 加 `enabled` 字段（迁移 0019，逐源启停，存量 true）+ 新端点 `PATCH /mod-sources/{name}`（admin，body `{enabled}`）。② 真正生效——`get_construction_reporter`（service-token + `X-Source-Id` 通道）与 `switch-server` 校验 `enabled=true`，停用源 report 403 / switch 422（原 `allow_server_mods` 全局开关从未强制，schema 字段保留默认 true 不删，避免破坏 settings 契约）。③ `get_placement_timeline` 改取**最近** 200 点（原取最早，活跃项目会截掉近期活动）。
-- **前端施工管理（迭代 3）**：① 时序折线**前向填充**（`utils/timelineFill.ts`）——沿统一时间轴补齐、inactive 时段水平保持上一值、晚加入者从首点起，线不再断；纯函数单测覆盖。② 材料完成度柱图**分页 + 排序**（`utils/materialSort.ts`）——「我贡献且未完成 > 未完成 > 已完成（即使我贡献）」、组内按需求总数降序；每页 15 条 + `el-pagination`；「我的贡献」从 `progress.breakdown` 按账号聚合（R-5，同账号多游戏身份自动合并）。③ 数量显示统一用公共 `formatQty`（个/组/盒）。④ 注册守卫——`/register` 改需登录，未登录直访由守卫重定向 `/auth`（避免空 Authorization 头触发后端 401 `missing authorization`）；`/login`、`/register` 加「必须在游戏内连接」提示。
+- _暂无_
 
 ### Changed
 
-- **管理员面板重构（迭代 3）**：原「允许第三方服务端 mod」单全局开关 + 白名单表格 → **「服务器上报源（插件）」卡片网格**——官方 MCDR 追踪器降为默认插件卡（开关走 `official_tracker_enabled`，不可移除）+ 第三方服务端 mod 逐卡启停（`el-switch` + 停用置灰 + 状态标签）；「切换某玩家的服务器上报源」移入默认折叠的「暂未上线」区（功能保留、暂不显眼）。前端不再渲染 `allow_server_mods` 单开关。dev 代理 `localhost:8000` → `127.0.0.1:8000`（IPv6 歧义修复）。
-- **游戏端 `!!submit` 改调后端批量端点（P3 薄壳化）**：`!!submit` / `!!submit <id>` / `!!PCH sheet submit <id>` 三个入口不再在客户端用 `scanner.match_rows` 复刻「按行 mode 分流 deliver/contribute」的决策逻辑，改为扫背包后一次性 `POST /sheets/{id}/submit-batch`，由后端 `batch_submit` 单事务逐行裁决。回执观感不变（done / 累计 / 已备齐折叠 / 与本人无关折叠四桶一致）；删除 `scanner.match_rows` / `MatchAction` 等客户端决策代码，消除前后端双份逻辑漂移。owner 通知改由后端 `_notify_batch_outcome` 接管。**行为变化（仅 1 处，用户可见）**：空背包时旧版会展示折叠的跳过计数，新版直接回「背包为空，无可提交的材料」——更直观，且避开后端 `items` 非空校验的 422。
+- _暂无_
 
 ### Fixed
 
-- **回执显式处理未知动作**：`_build_submit_receipt` 原把任何非 `delivered`/`contributed` 的 action 隐式当 `skipped` 走折叠，后端未来若扩展 action（如 `rolled_back`/`partial`）会静默错折叠或显示空原因行——违「禁静默吞」。改为显式 `elif skipped` + 兜底 `else`：未知 action 逐行展示带动作名（「未知动作 'xxx'」），让未来扩展可见可反馈。
-- **锁前后端 reason 字面量契约**：`scanner.REASON_*` 与后端 `sheet_repo.BATCH_REASON_*` 此前仅靠注释互指对齐，单端改字面量会让回执折叠静默退化（已备齐行不再折叠、刷屏）。新增契约测试 `test_reason_常量与后端_batch_reason_逐字对齐`：文本正则抓后端字面量断言相等，任一端漂移即红。
+- _暂无_
 
 ### Security
 
 - _暂无_
+
+---
+
+## [backend-v0.9.0] - 2026-07-28
+
+施工进度上报层补齐「加入施工」机制、玩家可见上报事件流水、按材料封顶，并修复一批上报健壮性问题。
+
+### Added
+
+- **加入施工机制**：玩家可显式加入某项目的施工（Web `Me` 页 + 游戏内 `!!PCH construction join`）；备货/施工阶段认领与上交时自动加入该项目；同一 Web 账号同时最多活跃加入 1 个项目（admin 开关 `enforce_single_construction`，DB 部分唯一索引兜底；仅约束默认追踪器与 join 流程，`/report` API 仍允许多项目并发上报）。新增端点 `GET /me/construction`、`POST /me/join`、`POST /me/switch`、`POST /me/leave`、`POST /active-by-uuids`（迁移 0020 `sheets.constructing_at` + 0021 `participants`）。
+- **上报事件流水**：新增 `GET /me/report-events`——玩家查看本人完整上报事件（accepted + 全部 skip 原因：无活跃源 / 其他源上报 / 不在清单 / 已达上限 / 未归因 等），让「为何我的上报被拒」可见（迁移 0023 `report_events`）。
+- **按材料封顶**：每种材料跨账号合计净放置不得超过需求总量，满额后整条或超额部分 skip 并回执，避免超量计入（迁移 0022 回填历史超额）。
+- **批量提交端点**：`POST /sheets/{id}/submit-batch`——第三方集成方传材料清单，后端按行 mode 自动分发 `delivery`/`contribute` 并逐行回执（双鉴权，决策逻辑为后端单一权威实现）。
+- **施工进度上报层（迭代 1-3）**：`POST /v1/construction/report` 等 11 端点——施工方上报 constructing 期各方块净放置，按 (项目×账号×方块) 聚合，归档喂给积分层；严格单源、归因三分支、切源两端点、admin 5+1 开关、服务端 mod 白名单、时序快照、方块清单校验、材料完成度与休眠源查询。
+
+### Fixed
+
+- **上报写入健壮性（CR）**：事件/时序快照写入包 SAVEPOINT，失败不再污染主事务致整次上报回滚；`join_construction` 并发兜底改有界重试（防无限递归）；`Participant.updated_at` 退出/切换时显式刷新；`/me/switch` 并发冲突返回 409 而非 500。
+
+---
+
+## [frontend-v0.9.0] - 2026-07-28
+
+施工进度图表时间轴与起点修复，新增「加入施工」入口与「我的上报历史」面板。
+
+### Added
+
+- **图表时间轴修复**：折线图 x 轴范围改为「施工开始 → 当前时间/归档时间」；折线从 y=0 升起（在施工开始处补 0 锚点），不再悬空于首个上报点。
+- **加入施工入口**：`Me` 页「当前施工项目」卡片（展示加入的项目 + 退出）；项目详情页「加入施工 / 切换到此项目」按钮。
+- **我的上报历史**：`Me` 页面板展示本人上报事件流水（accepted 绿、被拒红并标原因）。
+- **施工管理模块（迭代 1-3）**：admin 施工管理面板 + 项目详情「施工进度」tab（折线/柱/饼图，ECharts，具名 slot 自定义扩展点）+ Me「施工上报源」控件（server/local 切换 + 活跃源 + 历史 + 休眠源一键切回）+ 时序折线前向填充 + 材料完成度分页排序 + 数量单位统一显示。
+
+### Changed
+
+- **管理员面板重构（迭代 3）**：服务端 mod 由单全局开关改为逐源卡片启停；dev 代理 `localhost:8000` → `127.0.0.1:8000`（IPv6 歧义修复）。
+
+---
+
+## [pch_system-v0.9.0-rc.1] - 2026-07-28
+
+⚠️ **预发布（Release Candidate）**：服务端官方默认施工进度追踪器 + 按玩家路由 + 加入/退出/查看施工命令。非正式版，不建议生产服自动更新。
+
+### Added
+
+- **施工进度追踪器（默认源）**：读取 `<世界>/stats/<uuid>.json` 的 `minecraft:used` 差值，按 flush 间隔（默认 30 秒）经 service-token 单头上报 `POST /v1/construction/report`（识别为 `{mcdr, official}` 默认源，C-1）。baseline 差值幂等——2xx 推进基线、失败不推进、首见建基、多项目跳过推进。
+- **追踪器按玩家路由**：默认追踪器按在线玩家逐个路由上报（显式加入的项目优先，启发式回退），替代整轮 heuristic 门控，配合后端 `participants` 表经 `active-by-uuids` 单头查询。
+- **加入施工命令**：`!!PCH construction join [编号]` / `leave` / `current`（游戏内加入、退出、查看当前项目）+ `!!PCH construction status` 查运行状态；`!!PCH` 帮助页补 `construction` 条目。
+- **配置项**：`construction_enabled` / `construction_flush_interval_seconds`（默认 `30.0`）/ `world_stats_dir` / `construction_max_batch`（默认 `1900`）/ `construction_track_breaking`（默认 `false`，预留）。
+
+### Changed
+
+- **`!!submit` 改调后端批量端点（P3 薄壳化）**：扫背包后一次性 `POST /sheets/{id}/submit-batch`，由后端单事务逐行裁决，删除客户端复刻的分流决策逻辑（回执观感不变；空背包改为直接提示「背包为空」）。
+
+### Fixed
+
+- **回执显式处理未知动作**：未知 action 逐行展示带动作名，不再隐式折叠。
+- **锁前后端 reason 字面量契约**：新增契约测试，任一端 reason 字面量漂移即红。
+
+### Notes
+
+- 本期不做自动定位/挖掘（`construction_track_breaking` 预留为 `false`），仅追踪 `minecraft:used` 维度的方块放置差值。
+- 多项目并发走启发式回退（恰 1 个 constructing 自动归因；0 或 >1 需玩家显式 join 或 Web 端切客户端模组）。
+- 后端 `POST /v1/construction/report` 等 11 端点由后端 v0.9.0 引入，本版本落地游戏端默认追踪器、按玩家路由与加入施工命令。
 
 ---
 

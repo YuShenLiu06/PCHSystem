@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteSheet } from '../../api/sheets'
+import {
+  getMyConstruction,
+  joinConstruction,
+  switchConstruction,
+  type MyConstructionResult,
+} from '../../api/construction'
+import { extractApiError } from '../../utils/error'
 import { formatQty } from '../../utils/qty'
 import { useAuthStore } from '../../stores/auth'
 import { useSheetStore } from '../../stores/sheet'
@@ -151,6 +158,78 @@ async function onDeleteSheet(): Promise<void> {
 function back(): void {
   router.push('/sheets')
 }
+
+// 加入施工按钮（RS-2：仅控可见性，后端 RBAC 兜底）。
+// 按钮出现条件：sheet 可写（非 archived）+ sheet 处于 collecting 或 constructing。
+// 按钮三态依赖 getMyConstruction 读后端活跃 participant（同一账号同时最多 1 个，后端约束）。
+const myConstruction = ref<MyConstructionResult | null>(null)
+const joinLoading = ref(false)
+
+const activeSheetId = computed(() => myConstruction.value?.active?.sheet_id ?? null)
+const joinButtonVisible = computed(
+  () =>
+    !!sheet.value &&
+    !isReadOnly.value &&
+    (sheet.value.status === 'collecting' || sheet.value.status === 'constructing'),
+)
+const joinButtonState = computed<'joined-here' | 'joined-elsewhere' | 'not-joined'>(() => {
+  const active = activeSheetId.value
+  if (active === null) return 'not-joined'
+  return active === sheetId.value ? 'joined-here' : 'joined-elsewhere'
+})
+
+async function loadMyConstruction(): Promise<void> {
+  try {
+    myConstruction.value = await getMyConstruction()
+  } catch {
+    // 仅影响按钮文案，失败静默（401 由拦截器统一处理）
+  }
+}
+
+async function onJoinConstruction(): Promise<void> {
+  joinLoading.value = true
+  try {
+    myConstruction.value = await joinConstruction(sheetId.value)
+    ElMessage.success('已加入施工')
+  } catch (e: unknown) {
+    ElMessage.error(extractApiError(e) ?? '加入失败')
+  } finally {
+    joinLoading.value = false
+  }
+}
+
+async function onSwitchConstruction(): Promise<void> {
+  const otherTitle = myConstruction.value?.active?.sheet_title
+  const otherId = activeSheetId.value
+  const otherLabel = otherTitle ?? (otherId !== null ? `#${otherId}` : '其他项目')
+  try {
+    await ElMessageBox.confirm(
+      `切换到本项目会退出当前施工项目「${otherLabel}」，确认切换？`,
+      '切换施工项目',
+      { type: 'warning', confirmButtonText: '切换', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  joinLoading.value = true
+  try {
+    myConstruction.value = await switchConstruction(sheetId.value)
+    ElMessage.success('已切换到本项目')
+  } catch (e: unknown) {
+    ElMessage.error(extractApiError(e) ?? '切换失败')
+  } finally {
+    joinLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadMyConstruction()
+})
+
+// 切换项目时重新加载（同一组件实例路由 param 变化）
+watch(sheetId, () => {
+  loadMyConstruction()
+})
 </script>
 
 <template>
@@ -181,6 +260,30 @@ function back(): void {
           <el-button v-if="canEdit && sheet.status === 'collecting'" size="small" type="warning" plain @click="onAdvance('constructing')">进入施工</el-button>
           <el-button v-if="canManage && sheet.status === 'collecting'" size="small" type="success" plain @click="onAdvance('archived')">直接归档</el-button>
           <el-button v-if="canManage && sheet.status === 'constructing'" size="small" type="success" plain @click="onAdvance('archived')">标记施工完成并归档</el-button>
+        </template>
+        <!-- 加入施工按钮（RS-2：仅控可见性，后端 RBAC 兜底）。
+             三态依赖 getMyConstruction 读后端活跃 participant：
+             - not-joined → 「加入施工」（joinConstruction，后端对本 sheet 幂等）
+             - joined-here → 「已在施工中」（禁用）
+             - joined-elsewhere → 「切换到此项目」（switchConstruction + 二次确认） -->
+        <template v-if="joinButtonVisible">
+          <el-button
+            v-if="joinButtonState === 'not-joined'"
+            size="small"
+            type="primary"
+            plain
+            :loading="joinLoading"
+            @click="onJoinConstruction"
+          >加入施工</el-button>
+          <el-button
+            v-else-if="joinButtonState === 'joined-elsewhere'"
+            size="small"
+            type="warning"
+            plain
+            :loading="joinLoading"
+            @click="onSwitchConstruction"
+          >切换到此项目</el-button>
+          <el-button v-else size="small" type="info" plain disabled>已在施工中</el-button>
         </template>
         <!-- 已归档：查看归档文档 -->
         <el-button v-if="isReadOnly" size="small" @click="archiveVisible = true">查看归档文档</el-button>

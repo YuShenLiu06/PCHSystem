@@ -46,6 +46,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | **RS-12** | **插件包名规范** | Python 包用小写（`pch_system/pch_system/`），插件顶层目录用大驼峰（`McdrPlugin/`）；`mcdreforged.plugin.json` 的 `id` 与包名一致，遵循根 CLAUDE.md §1。 |
 | **RS-13** | **sheets 代玩家写：service-token + `X-Player-UUID` 双头** | MCDR 不持有玩家 JWT。对需以玩家身份写的端点（`sheets` 全套写、未来认领/交付类），HTTP 头同时带 `X-Service-Token`（复用 `MCDR_SERVICE_TOKEN`）+ `X-Player-UUID`（由 `uuid_api_remake.get_uuid(name)` 推导，RS-8）；**无 `Authorization` 头**。后端 `get_current_player` 双通道：Bearer JWT 优先，否则 service-token+UUID 代玩家加载 Player 注入，复用现有 RBAC（与 JWT 写等价）。命令层**不做硬权限拦截**（R-9：真实权限以后端 403/409 为准），仅在 help 文案说明角色。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §2 鉴权表 / §11 命令映射表。 |
 | **RS-14** | **通知轮询全程 `@new_thread`，禁用 `schedule_task` 卸载** | `notifier.py` 后台循环必须用 `@new_thread('pch_sheet_notifier')` 启动（RS-6 的具体化）；`on_player_joined`/`on_player_left`（`mcdr.player_joined`/`mcdr.player_left`）维护在线 name→uuid 字典，插件加载时用 `server.rcon_query('list')` 兜底初始化；轮询每 `notify_poll_interval_seconds`（默认 2.0）拉 `GET /notifications/pending` → 逐条 `server.tell` → `POST /notifications/ack {player_uuid, ids}`；`on_player_joined` 立即拉一次（离线堆积补推）。网络失败**静默继续下次**（不 `tell` 玩家，避免刷屏）。端点契约见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §12、[`notification-service.md`](../Docs/architecture/services/notification-service.md)。 |
+| **RS-15** | **施工进度默认追踪器（v0.9.0）：读 stats 差值 + 单头上报 + baseline 幂等** | `construction_tracker.py` 后台循环（`@new_thread('pch_construction')`，由 `__init__` 启动）每 `construction_flush_interval_seconds`（默认 30.0）读 `world/stats/<uuid>.json` 的 `minecraft:used` 与内存 baseline 差值 → `construction_client.report_placements`（**单头** `X-Service-Token`，**无** `X-Source-Id`/`X-Player-UUID` → 后端识别为 `{mcdr, official}` 默认源，C-1）。**baseline 幂等**：首见建基不报；2xx 整批推进；失败/哨兵（`__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）不推进（下轮重试，不丢不翻倍）；多项目（`heuristic_eligible=false`）跳过上报但推进 baseline。在线玩家复用 `notifier._snapshot_online()`（DRY + RS-8 UUID 一致）。**不切源**（C-7）、不做积分/不持久化业务（R-1/R-7）；`construction_track_breaking` 预留关（`mined` block id≠item id，开启需归一化）。`!!PCH construction status` 查状态。端点契约见 [`api/construction.md`](../Docs/architecture/api/construction.md) §3/§5（C-1~C-10）。**v0.9.0-rc.1 增量**（按玩家路由 + join 命令）：`_flush_once` 重写——先 `construction_client.lookup_active_by_uuids(online_uuids)`（`POST /active-by-uuids` service-token 单头批量查 `{uuid: sheet_id}`）后按玩家分桶上报（**显式 sheet_id 优先** + 启发式 fallback 恰 1 个 constructing + 无显式无 fallback skip 推进 baseline），取代 v0.9 整轮 heuristic gate（已 join 的玩家精确路由到其 sheet，未 join 玩家走过渡期 heuristic）；lookup 网络失败 → 降级 `mappings={}` + heuristic fallback 仍可用（容错）。新增 `!!PCH construction join [sheet_id]`/`leave`/`current`（`construction_commands.py`，双头代玩家写 `/me/{join,leave,construction}`，`@new_thread('pch_system construction')` + 哨兵/HttpError 分支回执，错误码 401/403/404/409 中文翻译含「项目已归档」/「已加入他项目」分流）；`!!PCH` 帮助页加 `construction` 条目（status/join/leave/current 子命令提示）。`construction_client.py` 加 `lookup_active_by_uuids`/`join_construction`/`leave_construction`/`get_my_construction` 四函数（前两个单头，后两个双头）。 |
 
 ---
 
@@ -76,6 +77,10 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | `!!PCH sheet addsub <sheet_id> <parent_row_id> <registry_id> <qty_per_unit> [mode] [sort]` / `delsub <sheet_id> <row_id>` / `setsub <sheet_id> <row_id> <qty_per_unit> [mode] [sort]` | owner | **子物品嵌套行**（issue #19，迁移 0012）：`addsub` 给指定父行添加子物品（必须提供 registry_id 与 qty_per_unit≥1，need 派生）；`delsub` 删子行（复用 `delrow` 端点）；`setsub` 修改子行 qty_per_unit/mode/sort（父 need 变时级联重算）。**单层限制**：父行必须是顶层行，否则 409。`messages.py` 缩进渲染子行（1–2 空格）+ 父行 `+N子件` 徽标；按钮紧凑化（单字 `[认][改][-][+]` + RText hover）。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §11 |
 | `!!PCH sheet manager <sheet_id> [list\|add\|remove] <玩家名>` | owner（add/remove）/ 全员（list） | **项目协管员**（v0.8.0，迁移 0016，account 锚）：`add`/`remove` 先 `uuid_api_remake.get_uuid(玩家名)` 转 UUID，后端解析 account；授予/撤销经 `POST`/`DELETE /sheets/{id}/managers`（service-token + `X-Player-UUID` 双头，RS-13）。**同账号任一 UUID 继承 manager**（`messages._is_manager`：`managers[].member_uuids ∩ viewer_uuids`）；tier B 可见 `[调][改][-][子]` 行级管理 + `[进入施工]`，tier A（owner）独占 `[直接归档][协管][改标题][删表]`。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §5.6 / §7.1 |
 | `!!PCH info` | user | 个人信息：UUID / 绑定状态 / 当前称号 |
+| `!!PCH construction status` | user / 控制台 | **施工进度追踪器状态**（v0.9.0，`construction_commands.py`）：展示后台追踪器运行状态——启用开关 / `world_stats_dir` 存在性 / 在线玩家数 / 当前施工项目数与启发式归因可行性 / flush 间隔 / baseline 玩家数 / 上次上报结果（11 种 outcome 中文映射 + 接受/跳过计数）。只读不写；多项目并发无法归因时提示去 Web 端切客户端模组 |
+| `!!PCH construction join [sheet_id]` | user | **加入指定 sheet 施工**（v0.9.0-rc.1，双头代玩家写 `POST /v1/construction/me/join`，RS-13）。有参 = 显式加入；无参 = 回显当前 / 引导到 Web 端。控制台拒绝（玩家身份必需）；403 未绑 Web 账号 / 404 项目不存在 / 409 已加入他项目（含「先退出或切换」）/ 409 项目已归档 → 对应中文回执 |
+| `!!PCH construction leave` | user | **退出当前活跃加入**（v0.9.0-rc.1，双头代玩家写 `POST /v1/construction/me/leave`，RS-13）。幂等：未活跃加入也回执「已退出（或本就未加入）」 |
+| `!!PCH construction current` | user | **回显当前活跃加入的项目**（v0.9.0-rc.1，双头代玩家读 `GET /v1/construction/me/construction`，RS-13）。轻量查询版（不入 status 的运行状态详情）；未加入 → gray 空态 |
 
 ### 依赖的其他服务（HTTP API）
 
@@ -86,11 +91,12 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 - **alert-service**：被动接收告警（`!!` 系统消息或 scoreboard 推送）
 - **sheets-service**：`GET/POST/PATCH/DELETE /sheets/*`（service-token + `X-Player-UUID` 代玩家写，RS-13）—— `!!PCH sheet …` 全套
 - **notification-service**：`GET /notifications/pending` / `POST /notifications/ack` / `POST /notifications/{id}/read`（service-token）—— 通知轮询投递（RS-14）
+- **construction-service**：`POST /v1/construction/report`（施工方块净放置上报，**单头** service-token → `{mcdr, official}` 默认源，C-1/RS-15）+ `GET /v1/construction/active-sheets`（启发式归因，双头代在线玩家）—— 施工进度默认追踪器（RS-15）
 - **uuid_api_remake**（MCDR 插件依赖）：离线 UUID 推导
 
 ### 关键文件
 
-- 入口：`McdrPlugin/pch_system/pch_system/__init__.py`（`on_load` 注册命令树 + 事件监听 + 启动 notifier 线程，`on_unload` 停止）
+- 入口：`McdrPlugin/pch_system/__init__.py`（`on_load` 注册命令树 + 事件监听 + 启动 notifier 线程，`on_unload` 停止）
 - 命令回调：`pch_system/commands.py`（`_pch_root` / `_login` / `_not_impl`）
 - **sheets 命令回调**：`pch_system/sheet_commands.py`（`@new_thread` + `server.tell` 回执 + 403/404/409 中文文案）
 - **通知轮询**：`pch_system/notifier.py`（在线字典 + rcon 初始化 + 后台循环 + 离线补推）
@@ -101,6 +107,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 - 扫描器：`pch_system/scanner.py`（背包/手持扫描 + 一键提交行匹配，纯函数无 mcdreforged 依赖）
 - 渲染工具：`pch_system/text_layout.py`（tellraw 像素对齐）、`pch_system/view_args.py`（view 分页 + 参数解析）、`pch_system/qty.py`（数量换算 STACK=64/SHULKER=1728，三端字节级对齐）
 - 配置：`pch_system/config.py`（含 `notify_poll_interval_seconds` / `notify_max_per_poll`）+ `config.json`（仓库只提交 `config.json.example`，RS-5）
+- **施工进度追踪器（v0.9.0）**：`pch_system/construction_tracker.py`（后台 flush 循环 + baseline 幂等，复刻 `notifier.run`）、`pch_system/construction_client.py`（`/v1/construction` HTTP：report 单头 / active-sheets 双头，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）、`pch_system/stats_reader.py`（读 `world/stats/<uuid>.json` + `minecraft:used`/`mined` 解析 + diff，纯函数无 mcdreforged 依赖）、`pch_system/construction_commands.py`（`!!PCH construction status` 回执渲染）
 
 ---
 
@@ -112,6 +119,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | **MCDR API 速查** | [`../Docs/McdrPlugin/mcdr-api-cheatsheet.md`](../Docs/McdrPlugin/mcdr-api-cheatsheet.md) | 命令节点树、RText、schedule_task、事件、RCON 速查（Team B 维护） |
 | 数据模型 | [`../Docs/architecture/data-model.md`](../Docs/architecture/data-model.md) | 全局表结构与约束（本服务不直连，仅对照） |
 | **sheets API** | [`../Docs/architecture/api/sheets.md`](../Docs/architecture/api/sheets.md) | §2 鉴权 / §11 `!!PCH sheet` 命令映射 / §12 通知端点（RS-13/RS-14 依据） |
+| **construction API** | [`../Docs/architecture/api/construction.md`](../Docs/architecture/api/construction.md) | §3 双鉴权（report 单头 service-token → `{mcdr,official}` / active-sheets 双头）/ §5 C-1~C-10 默认追踪器实现契约（RS-15 依据） |
 | **notification-service 契约** | [`../Docs/architecture/services/notification-service.md`](../Docs/architecture/services/notification-service.md) | 通知抽象层调用契约 / category 枚举 / pending·ack·read 端点（轮询依据） |
 | 工程总览 | [`../Docs/architecture.md`](../Docs/architecture.md) | 三端架构与跨服务流程 |
 | 根规范 | [`../CLAUDE.md`](../CLAUDE.md) | 统一命名 / 红线 / 索引 |
@@ -213,7 +221,11 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 
 ---
 
-*最后更新：2026-07-21（v0.8.0 文档同步：`!!PCH bind` 双向 + 协管员升 account 锚 + `!!PCH status` 健康自检 + RS-3 清箱废弃对齐根 R-3/R-4；§4 关键文件补 `bind_client`/`health`/`scanner`/`text_layout`/`view_args`/`qty`）*
+*最后更新：2026-07-28（v0.9.0-rc.1：按玩家路由 + join/leave/current 命令，详见 RS-15 v0.9.0-rc.1 增量段）*
+
+*增量（2026-07-28 v0.9.0-rc.1）：RS-15 段补按玩家路由 + join 命令——`construction_tracker._flush_once` 重写（`lookup_active_by_uuids` 批量查 `{uuid: sheet_id}` 后分桶上报：显式 sheet_id 优先 / heuristic fallback 恰 1 constructing / 无显式无 fallback skip 推进 baseline，取代 v0.9 整轮 heuristic gate）；lookup 网络失败降级 `mappings={}` + heuristic fallback 仍可用。新增 `!!PCH construction join [sheet_id]` / `leave` / `current`（双头代玩家写 `/me/{join,leave,construction}`，RS-13；`@new_thread` + 哨兵/HttpError 分支回执，401/403/404/409 中文翻译含「项目已归档」/「已加入他项目」分流）。`construction_client.py` 加 `lookup_active_by_uuids`/`join_construction`/`leave_construction`/`get_my_construction`。`!!PCH` 帮助页加 `construction` 条目。详见 [`api/construction.md`](../Docs/architecture/api/construction.md) §4.2/§5。*
+
+*增量（2026-07-21）：v0.8.0 文档同步：`!!PCH bind` 双向 + 协管员升 account 锚 + `!!PCH status` 健康自检 + RS-3 清箱废弃对齐根 R-3/R-4；§4 关键文件补 `bind_client`/`health`/`scanner`/`text_layout`/`view_args`/`qty`。*
 
 *增量（2026-07-19）：协管员 `!!PCH sheet manager <id> [list\|add\|remove] <玩家名>` 升 account 锚（迁移 0016）——`SheetManagerEntry.member_uuids ∩ viewer_uuids` 判定（`messages._is_manager`）；tier B 可见 `[调][改][-][子]` + `[进入施工]`，tier A 独占 `[直接归档][协管][改标题][删表]`；`format_owner_footer` tier 分流。同时 `!!PCH bind` 双向绑定落地（game_init `bind_client.request_bind_token` 单头出码 / web_init `bind_client.consume_bind_code` 双头消费）；身份主锚升 account 级（R-5，JWT `sub`=web_account_id 破坏性，`viewer_uuids` = 同 account 所有 UUID）。RS-3 清箱废弃对齐根 R-3/R-4*
 
@@ -224,3 +236,5 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 *增量（2026-07-09）：子物品嵌套行 issue #19 + sheets.py 包化重构：新增 `addsub`/`delsub`/`setsub` 命令；`messages.py` 缩进渲染子行 + 父行 `+N子件` 徽标；按钮紧凑化（单字 `[认][改][-][+]` + RText hover）；`scanner.py` 不改（子行同列表自动匹配）；后端包化拆分 `sheets/` 包 + `translation.py` 公共翻译；详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §14 增量日志）*
 
 *增量（2026-07-26，后端 submit-batch 端点）：后端新增 `POST /sheets/{id}/submit-batch`（程序化批量提交入口），二次开发指南见 [`Docs/architecture/api/submit-extension.md`](../Docs/architecture/api/submit-extension.md)——双鉴权与 construction-report §3 共语义（MCDR 走既有 service-token+UUID 双头零改动；玩家客户端 mod 走 JWT 通道只写自己）；reason 字面量与本服务 `scanner.py:202-226` 对齐（P3 薄壳化时零适配）。§5 文档索引表待用 `service-claude-md` skill 重生成（暂不手改），届时补 submit-extension.md 一行。*
+
+*增量（2026-07-28，v0.9.0 施工进度默认追踪器）：服务端官方默认追踪器落地——读 `<世界>/stats/<uuid>.json` 的 `minecraft:used` 差值（`stats_reader.py` 纯函数），`construction_tracker.py` 后台 flush 循环（`@new_thread('pch_construction')`，默认 30s）经 `construction_client.report_placements` **单头**上报 `POST /v1/construction/report`（识别为 `{mcdr, official}` 默认源，C-1）。baseline 差值幂等：首见建基 / 2xx 推进 / 失败·哨兵不推进 / 多项目跳过但推进（C-7 不绕过）。新增 `!!PCH construction status`（`construction_commands.py`）。配置项 `construction_enabled`/`construction_flush_interval_seconds`/`world_stats_dir`/`construction_max_batch`/`construction_track_breaking`（挖掘预留关）。本期不做自动定位；多项目并发无法归因，需 Web 端切客户端模组（已实现）。在线玩家复用 `notifier._snapshot_online()`。新增 RS-15 红线 + §4 命令/文件/依赖 + §5 construction API 文档索引。单测：stats_reader(21)+construction_client(12)+construction_tracker(14)+construction_commands(13)=60 新测试，全量回归绿。*

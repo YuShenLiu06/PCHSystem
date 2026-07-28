@@ -19,6 +19,10 @@ import {
   deleteServerModSource,
   switchSelfSource,
   getMyConstructionSource,
+  getMyConstruction,
+  joinConstruction,
+  switchConstruction,
+  leaveConstruction,
 } from '../../api/construction'
 
 const mocked = http as unknown as {
@@ -128,5 +132,50 @@ describe('construction api', () => {
     expect(r.active.is_default).toBe(true)
     expect(r.history).toEqual([])
     expect(r.dormant_sources[0].source_id).toBe('old-mod')
+  })
+
+  // --- 加入施工 4 函数 ---
+
+  it('getMyConstruction hits GET /me/construction', async () => {
+    const empty = { active: { sheet_id: null, sheet_title: null, joined_at: null, join_source: null } }
+    mocked.get.mockResolvedValueOnce({ data: empty })
+    const r = await getMyConstruction()
+    expect(mocked.get).toHaveBeenCalledWith('/v1/construction/me/construction')
+    expect(r.active.sheet_id).toBeNull()
+  })
+
+  it('joinConstruction posts { sheet_id } to /me/join and rethrows on error', async () => {
+    const joined = {
+      active: { sheet_id: 7, sheet_title: '塔楼', joined_at: '2026-07-28T00:00:00Z', join_source: 'manual' },
+    }
+    mocked.post.mockResolvedValueOnce({ data: joined })
+    const r = await joinConstruction(7)
+    expect(mocked.post).toHaveBeenCalledWith('/v1/construction/me/join', { sheet_id: 7 })
+    expect(r.active.sheet_id).toBe(7)
+  })
+
+  it('joinConstruction rethrows 409 (caller handles)', async () => {
+    const err = { response: { status: 409, data: { detail: '已活跃加入项目 id=2' } } }
+    mocked.post.mockRejectedValueOnce(err)
+    await expect(joinConstruction(7)).rejects.toEqual(err)
+    expect(mocked.post).toHaveBeenCalledWith('/v1/construction/me/join', { sheet_id: 7 })
+  })
+
+  it('switchConstruction posts { sheet_id } to /me/switch', async () => {
+    const switched = {
+      active: { sheet_id: 9, sheet_title: '新路', joined_at: '2026-07-28T01:00:00Z', join_source: 'manual' },
+    }
+    mocked.post.mockResolvedValueOnce({ data: switched })
+    const r = await switchConstruction(9)
+    expect(mocked.post).toHaveBeenCalledWith('/v1/construction/me/switch', { sheet_id: 9 })
+    expect(r.active.sheet_title).toBe('新路')
+  })
+
+  it('leaveConstruction posts to /me/leave with no body', async () => {
+    const empty = { active: { sheet_id: null, sheet_title: null, joined_at: null, join_source: null } }
+    mocked.post.mockResolvedValueOnce({ data: empty })
+    const r = await leaveConstruction()
+    expect(mocked.post).toHaveBeenCalledWith('/v1/construction/me/leave')
+    expect(r.active.sheet_id).toBeNull()
   })
 })

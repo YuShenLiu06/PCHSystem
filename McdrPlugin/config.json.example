@@ -4,5 +4,10 @@
   "http_timeout_seconds": 5.0,
   "http_retries": 2,
   "notify_poll_interval_seconds": 2.0,
-  "notify_max_per_poll": 20
+  "notify_max_per_poll": 20,
+  "construction_enabled": true,
+  "construction_flush_interval_seconds": 30.0,
+  "world_stats_dir": "world/stats",
+  "construction_max_batch": 1900,
+  "construction_track_breaking": false
 }

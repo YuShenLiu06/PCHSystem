@@ -35,7 +35,7 @@ from app.models.sheet import (
     Sheet,
 )
 from app.models.user import Player
-from app.repositories import sheet_repo, web_account_repo
+from app.repositories import construction_repo, sheet_repo, web_account_repo
 from app.repositories.sheet_repo import SheetArchived
 from app.services import notification_service
 from app.services.archive import publisher, writer
@@ -74,8 +74,9 @@ def _build_context(
         "status_label": _ARCHIVED_LABEL,
         "created_at": sheet.created_at,
         "archived_at": datetime.now(timezone.utc),
-        # 进入施工时间当前模型未单独记录（status 列无时间戳），保持 None。
-        "constructing_at": None,
+        # 进入施工时间（迁移 0020）：collecting→constructing 切换时由 advance_sheet 写入。
+        # 直跳归档（未经过 constructing）时为 None，timeline 自动省略「进入施工」行。
+        "constructing_at": sheet.constructing_at,
         # 精确贡献量排行（render_contributor_stats 用）：repo 已排序+汇总。
         "contributor_totals": contributor_totals,
     }
@@ -172,6 +173,18 @@ async def archive_sheet(
         # payload 补 actor_uuid/actor_name：旧版只有 owner 收且无 actor 字段，
         # MCDR format_notification 走灰色 fallback；补字段后可用 _NOTIFY_TEMPLATES 模板渲染。
         participants = await sheet_repo.collect_participant_uuids(session, sheet_id)
+
+        # plan BLOCK 1.10：归档批量退出该 sheet 所有活跃参与者（与 advance_sheet 同事务）。
+        # 不嵌入 advance_sheet（单一职责；归档必经 archive service，RS-10）。保留历史行
+        # （仅 UPDATE left_at）。不额外发「已退出施工」通知（archive 通知已涵盖）。
+        closed = await construction_repo.close_all_participants(
+            session, sheet_id, reason="archived"
+        )
+        if closed:
+            _logger.info(
+                "archive closed %s active participants sheet=%s", closed, sheet_id
+            )
+
         actor_name = await web_account_repo.resolve_display_name(session, player.uuid)
         await notification_service.notify_many(
             session,
