@@ -18,6 +18,7 @@ import type {
 } from 'echarts/components'
 import type { ProgressTimelinePoint } from '../../api/construction'
 import { forwardFillTimeline } from '../../utils/timelineFill'
+import { formatQty } from '../../utils/qty'
 
 // 按需注册（模块级，只跑一次）：renderer + line + grid/tooltip/legend
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
@@ -55,11 +56,36 @@ const option = computed<Option>(() => {
     })
   })
   return {
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      // 每条线的累计净放置用 formatQty 显单位（个/组/盒），复用公共方法
+      formatter: (params: unknown) => {
+        const rows = (Array.isArray(params) ? params : [params]) as Array<{
+          axisValueLabel?: string
+          seriesName?: string
+          value?: unknown
+          marker?: string
+        }>
+        if (rows.length === 0) return ''
+        const header = rows[0].axisValueLabel ?? ''
+        const body = rows
+          .map((p) => {
+            const v = Array.isArray(p.value) ? p.value[1] : p.value
+            return `${p.marker ?? ''}${p.seriesName ?? ''}: ${formatQty(Number(v ?? 0))}`
+          })
+          .join('<br/>')
+        return header ? `${header}<br/>${body}` : body
+      },
+    },
     legend: { type: 'scroll', top: 0 },
     grid: { left: 40, right: 20, top: 40, bottom: 30, containLabel: true },
     xAxis: { type: 'time' },
-    yAxis: { type: 'value', name: '累计净放置' },
+    yAxis: {
+      type: 'value',
+      name: '累计净放置',
+      // 左侧轴刻度同样用 formatQty 显单位
+      axisLabel: { formatter: (v: number) => formatQty(v) },
+    },
     series,
   }
 })
