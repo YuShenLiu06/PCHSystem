@@ -29,19 +29,26 @@ from app.api.deps import (
     get_construction_reporter,
     get_current_player,
     require_role,
+    require_service_token,
 )
 from app.core.db import get_session
 from app.models.sheet import Sheet
 from app.models.user import Player
 from app.repositories import construction_repo, player_repo
 from app.schemas.construction import (
+    ActiveByUuidsRequest,
+    ActiveByUuidsResult,
     ActiveSheetsResult,
     ConstructionProgress,
     ConstructionSettings,
     ConstructionSettingsUpdate,
+    JoinRequest,
+    MyConstructionResult,
     MyReportHistoryItem,
+    ParticipantState,
     PlacementReport,
     PlacementReportResult,
+    ReportEventItem,
     ServerModSourceCreate,
     ServerModSourceEntry,
     ServerModSourceToggle,
@@ -49,6 +56,7 @@ from app.schemas.construction import (
     SourceState,
     SourceSwitchSelfRequest,
     SourceSwitchServerRequest,
+    SwitchRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -288,6 +296,198 @@ async def get_my_reports(
     return await construction_repo.get_my_report_history(
         session, player.web_account_id, limit
     )
+
+
+@router.get("/me/report-events", response_model=list[ReportEventItem])
+async def get_my_report_events(
+    limit: int = Query(default=50, ge=1, le=200, description="最近 N 条上报事件流水"),
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> list[ReportEventItem]:
+    """玩家个人的完整上报事件流水（accepted + 所有 skip 原因，迭代 5）。
+
+    每次 ``POST /report`` 产出的 ``PlacementOutcome`` 逐条落 ``report_events`` ——
+    让玩家看到「为什么我的上报被拒」。归因锚 account（R-5）：未绑 Web 账号 403。
+    字面路由置于 ``/{sheet_id}/progress`` 之前注册，避免被路径参数吞掉。
+    """
+    if player.web_account_id is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "player not bound to web account")
+    return await construction_repo.get_my_report_events(
+        session, player.web_account_id, limit
+    )
+
+
+# ===========================================================================
+# 加入施工（plan BLOCK 1，迁移 0021）
+# 所有 ``/me/...`` 字面路由 + ``/active-by-uuids`` 必须在 ``/{sheet_id}/progress``
+# （下方）之前注册，避免被 ``{sheet_id}`` 路径参数吞没（仿 ``/me/reports`` 前置）。
+# ===========================================================================
+
+@router.get("/me/construction", response_model=MyConstructionResult)
+async def get_my_construction(
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> MyConstructionResult:
+    """查自己当前活跃加入的施工项目（Me.vue「当前施工项目」卡片）。
+
+    字面路由前置（避免被 ``/{sheet_id}`` 吞掉）。未绑 Web 账号 / 未加入 → 空态。
+    """
+    if player.web_account_id is None:
+        return MyConstructionResult(active=ParticipantState())
+    got = await construction_repo.get_my_active_participant(
+        session, player.web_account_id
+    )
+    if got is None:
+        return MyConstructionResult(active=ParticipantState())
+    participant, sheet = got
+    return MyConstructionResult(
+        active=ParticipantState(
+            sheet_id=participant.sheet_id,
+            sheet_title=sheet.title,
+            joined_at=participant.joined_at,
+            join_source=participant.join_source,
+        )
+    )
+
+
+async def _assert_sheet_joinable(
+    session: AsyncSession, sheet_id: int
+) -> Sheet:
+    """sheet 存在 + 非 archived（否则 404/409）。供 join/switch 共用。"""
+    sheet = (
+        await session.execute(select(Sheet).where(Sheet.id == sheet_id))
+    ).scalar_one_or_none()
+    if sheet is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "sheet not found")
+    if sheet.status == "archived":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "项目已归档，只读",
+        )
+    return sheet
+
+
+@router.post("/me/join", response_model=MyConstructionResult)
+async def join_construction(
+    body: JoinRequest,
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> MyConstructionResult:
+    """手动加入指定 sheet 的施工。
+
+    - 未绑 Web 账号 → 403；sheet 不存在 → 404；archived → 409。
+    - ``enforce_single_construction=True`` 且已活跃加入他 sheet → 409
+      「已活跃加入项目 X，先退出或切换」（ParticipantConflict）。
+    - 已活跃加入本 sheet → 幂等返回当前状态（不报错）。
+    """
+    if player.web_account_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "player not bound to web account"
+        )
+    await _assert_sheet_joinable(session, body.sheet_id)
+    try:
+        await construction_repo.join_construction(
+            session, player.web_account_id, body.sheet_id, source="manual"
+        )
+    except construction_repo.ParticipantConflict as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"已活跃加入项目 id={exc.current_sheet_id}，先退出或切换",
+        )
+    await session.commit()
+    # 重查拿到 sheet_title（join_construction 返回 Participant 但未 join sheet.title）
+    got = await construction_repo.get_my_active_participant(
+        session, player.web_account_id
+    )
+    if got is None:
+        return MyConstructionResult(active=ParticipantState())
+    participant, active_sheet = got
+    return MyConstructionResult(
+        active=ParticipantState(
+            sheet_id=participant.sheet_id,
+            sheet_title=active_sheet.title,
+            joined_at=participant.joined_at,
+            join_source=participant.join_source,
+        )
+    )
+
+
+@router.post("/me/switch", response_model=MyConstructionResult)
+async def switch_construction(
+    body: SwitchRequest,
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> MyConstructionResult:
+    """切换到指定 sheet（leave 旧活跃 + join 新 sheet 同事务）。
+
+    与 ``/me/join`` 的区别：``enforce_single_construction=True`` 且已活跃加入他 sheet
+    时，``/me/join`` 抛 409，``/me/switch`` 自动切换（enforce=False 时两者等价）。
+    实现统一走显式 leave + join：先 ``leave_construction`` 当前（如存在），再
+    ``join_construction`` 目标，绕开 enforce=True 的 ParticipantConflict。
+    """
+    if player.web_account_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "player not bound to web account"
+        )
+    await _assert_sheet_joinable(session, body.sheet_id)
+    await construction_repo.leave_construction(
+        session, player.web_account_id, reason="switched"
+    )
+    # 与 /me/join 一致：并发场景（leave→join 之间他人插入活跃行）join 仍可能抛
+    # ParticipantConflict → 409。未到 commit 即抛 → 整事务回滚，leave 一并撤销（原子）。
+    try:
+        await construction_repo.join_construction(
+            session, player.web_account_id, body.sheet_id, source="manual"
+        )
+    except construction_repo.ParticipantConflict as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"已活跃加入项目 id={exc.current_sheet_id}，先退出或切换",
+        )
+    await session.commit()
+    got = await construction_repo.get_my_active_participant(
+        session, player.web_account_id
+    )
+    if got is None:
+        return MyConstructionResult(active=ParticipantState())
+    participant, active_sheet = got
+    return MyConstructionResult(
+        active=ParticipantState(
+            sheet_id=participant.sheet_id,
+            sheet_title=active_sheet.title,
+            joined_at=participant.joined_at,
+            join_source=participant.join_source,
+        )
+    )
+
+
+@router.post("/me/leave", response_model=MyConstructionResult)
+async def leave_construction(
+    player: Player = Depends(get_current_player),
+    session: AsyncSession = Depends(get_session),
+) -> MyConstructionResult:
+    """退出当前活跃加入（未活跃加入 → 幂等返回空态）。"""
+    if player.web_account_id is None:
+        return MyConstructionResult(active=ParticipantState())
+    await construction_repo.leave_construction(
+        session, player.web_account_id, reason="manual_leave"
+    )
+    await session.commit()
+    return MyConstructionResult(active=ParticipantState())
+
+
+@router.post("/active-by-uuids", response_model=ActiveByUuidsResult)
+async def get_active_by_uuids(
+    body: ActiveByUuidsRequest,
+    _ok: None = Depends(require_service_token),
+    session: AsyncSession = Depends(get_session),
+) -> ActiveByUuidsResult:
+    """批量 UUID → 当前活跃 sheet_id（tracker 按玩家路由用，service-token 单头）。
+
+    非敏感数据（仅 sheet_id，无 account 信息）。未绑账号 / 未加入任何项目 → None。
+    """
+    mappings = await construction_repo.lookup_active_by_uuids(session, body.player_uuids)
+    return ActiveByUuidsResult(mappings=mappings)
 
 
 # ===========================================================================

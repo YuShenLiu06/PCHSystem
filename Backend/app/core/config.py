@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     construction_allow_server_mods: bool = True
     construction_report_interval_seconds: int = 30  # 追踪器 flush 频率（C-5）
     construction_anti_cheat_threshold: int | None = None  # None = 不限（轻度告警阈值，占位）
+    # 玩家同时最多活跃加入 1 个施工项目（DB partial unique index 永远生效；此开关仅控制
+    # repo ``join_construction`` 在冲突时的行为：True → manual 抛 409 / auto silent skip，
+    # False → 自动切换到新 sheet）。第三方/mod 源 ``POST /report`` 零 project 校验不变。
+    construction_enforce_single_construction: bool = True
 
     @field_validator("mcdr_service_token")
     @classmethod

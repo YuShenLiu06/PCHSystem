@@ -40,5 +40,11 @@ def test_paths_present():
         "/v1/construction/source/switch-self",
         "/v1/construction/source/me",
         "/v1/construction/{sheet_id}/progress",
+        # 加入施工（迁移 0021）
+        "/v1/construction/me/construction",
+        "/v1/construction/me/join",
+        "/v1/construction/me/switch",
+        "/v1/construction/me/leave",
+        "/v1/construction/active-by-uuids",
     ]:
         assert p in paths, f"missing {p}"
