@@ -77,6 +77,7 @@ from .messages import (
     SHEET_OK_SETREG,
     SHEET_SUBMIT_HEAD,
     SHEET_SUBMIT_NO_API,
+    SHEET_SUBMIT_EMPTY_INV,
     SHEET_SUBMIT_NO_ROWS,
     SHEET_SUBMIT_DONE_LINE,
     SHEET_SUBMIT_PROGRESS_LINE,
@@ -1306,72 +1307,58 @@ def _sheet_notify_list(src, ctx):
 
 # === 一键提交 / 手持建行 / 改 registry_id ===
 
-def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
-    """一键提交共享体：扫背包 → 按 registry_id 匹配 → 串行上报 → 汇总回执。
+def _build_submit_receipt(result: dict) -> RTextList:
+    """把后端 ``BatchSubmitResult`` dict 渲染为一键提交回执（纯函数，无 MCDR 依赖）。
 
-    纯申报语义（RS-4 衍生）：只读背包 + HTTP 上报，绝不清背包、不 data merge / clear。
-    单行失败不阻断其他行；汇总回执一次 tell（绿色 done/累计 + 黄色跳过原因）。
-    复用 scanner.skip_is_ready 折叠已备齐/进度已满的跳过行（玩家本次无可操作），
-    scanner.skip_is_noise 折叠与本人无关的跳过行（他人认领的 lock 行、progress 未携带项）。
+    遍历 ``outcomes`` 分四桶：
+    - ``delivered``（lock 认领人完成）/ ``contributed``（progress 增量上交）→ done 区；
+    - ``skipped``：``scanner.skip_is_ready``（已备齐）/ ``scanner.skip_is_noise``（与本人
+      无关）折叠计数；其余（本人认领的 lock 未完成、后端「行状态变化」/「行已删除」等）
+      逐行展示——这些是玩家本次可操作或需感知的项。
+    reason 字面量与后端 ``BATCH_REASON_*`` 逐字对齐 → 复用 scanner 折叠谓词，零适配。
+    全空 outcomes（表无配 registry_id 的行）→ 仅回 ``SHEET_SUBMIT_NO_ROWS``。
     """
-    api = server.get_plugin_instance("minecraft_data_api")
-    if api is None:
-        server.tell(player_name, SHEET_SUBMIT_NO_API)
-        return
-    inventory = scanner.scan_inventory(api, player_name)
-    view = sheet_client.view_sheet(CONFIG, player_uuid, sheet_id)
-    if not isinstance(view, dict):
-        _resolve(server, player_name, view)
-        return
-    if str(view.get("status", "")) == "archived":
-        # 归档终态只读：整体短路，避免逐行写返 409 刷「交付失败（状态变化）」
-        server.tell(player_name, SHEET_ARCHIVED_READONLY)
-        return
-    rows = view.get("rows") or []
-    viewer_uuids = {str(u) for u in (view.get("viewer_uuids") or [])}
-    actions = scanner.match_rows(rows, inventory, player_uuid=player_uuid, viewer_uuids=viewer_uuids)
-
+    outcomes = result.get("outcomes") or []
     done_lines: list = []
     shown_skips: list = []
     ready_folded = 0  # 折叠计数（已备齐/进度已满，玩家本次无可操作）
     folded = 0  # 折叠计数（与本人无关的跳过行）
 
-    for action in actions:
-        if action.action == "deliver":
-            # lock 行已认领且自己为认领人，直接 deliver(need) 绝对值 → done
-            deliv_out = sheet_client.deliver_row(
-                CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
-            if isinstance(deliv_out, dict):
-                done_lines.append(RText(SHEET_SUBMIT_DONE_LINE.format(
-                    item=action.item_name, qty=format_qty_safe(action.qty))))
-            else:
-                shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
-                    item=action.item_name, reason="交付失败（状态变化）")))
-        elif action.action == "contribute":
-            contrib_out = sheet_client.contribute_row(
-                CONFIG, player_uuid, sheet_id, action.row_id, action.qty)
-            if isinstance(contrib_out, dict):
-                delivered = int(contrib_out.get("delivered_qty", 0))
-                need = int(contrib_out.get("need_qty", 0))
-                done_lines.append(RText(SHEET_SUBMIT_PROGRESS_LINE.format(
-                    item=action.item_name, delivered=format_qty_safe(delivered), need=format_qty_safe(need))))
-            else:
-                shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
-                    item=action.item_name, reason="上交失败（状态变化）")))
-        else:  # skip
-            # 已备齐/进度已满优先归「备齐」桶（更准确），其次与本人无关折叠，其余逐行
-            if scanner.skip_is_ready(action):
+    for o in outcomes:
+        action = o.get("action")
+        item = o.get("item_name") or o.get("registry_id") or "?"
+        if action == "delivered":
+            done_lines.append(RText(SHEET_SUBMIT_DONE_LINE.format(
+                item=item, qty=format_qty_safe(o.get("qty", 0)))))
+        elif action == "contributed":
+            done_lines.append(RText(SHEET_SUBMIT_PROGRESS_LINE.format(
+                item=item,
+                delivered=format_qty_safe(o.get("delivered_qty", 0)),
+                need=format_qty_safe(o.get("need_qty", 0)),
+            )))
+        elif action == "skipped":
+            reason = o.get("reason", "")
+            if scanner.skip_is_ready(reason):
                 ready_folded += 1
-            elif scanner.skip_is_noise(action):
+            elif scanner.skip_is_noise(
+                mode=int(o.get("mode", 0)),
+                is_claimant=bool(o.get("is_claimant", False)),
+                reason=reason,
+            ):
                 folded += 1
             else:
                 shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
-                    item=action.item_name, reason=action.reason)))
+                    item=item, reason=reason)))
+        else:
+            # 未知 action：后端 BatchRowOutcome.action 当前 Literal[3]，本分支防御未来
+            # 扩展（如 rolled_back/partial）。显式逐行展示带动作名，绝不静默折叠
+            # （违 coding-style「禁静默吞」——让未知值可见可反馈，而非悄悄归类）。
+            shown_skips.append(RText(SHEET_SUBMIT_SKIP_LINE.format(
+                item=item, reason=f"未知动作 {action!r}")))
 
-    # 汇总回执（一次 tell，避免刷屏）
     if not done_lines and not shown_skips and ready_folded == 0 and folded == 0:
-        server.tell(player_name, RTextList(RText(SHEET_SUBMIT_HEAD), RText(SHEET_SUBMIT_NO_ROWS)))
-        return
+        return RTextList(RText(SHEET_SUBMIT_HEAD), RText(SHEET_SUBMIT_NO_ROWS))
+
     parts: list = [RText(SHEET_SUBMIT_HEAD), RText("\n")]
     if done_lines:
         parts.append(RText(SHEET_SUBMIT_DONE_HEAD.format(n=len(done_lines))))
@@ -1387,7 +1374,34 @@ def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
         parts.append(RText(SHEET_SUBMIT_READY_FOLDED_LINE.format(n=ready_folded)))
     if folded > 0:
         parts.append(RText(SHEET_SUBMIT_FOLDED_LINE.format(n=folded)))
-    server.tell(player_name, RTextList(*parts))
+    return RTextList(*parts)
+
+
+def _sheet_submit_impl(server, player_name, player_uuid, sheet_id):
+    """一键提交薄壳（P3）：扫背包 → POST /submit-batch → 渲染回执。
+
+    决策权威在后端 ``sheet_repo.batch_submit``（单事务逐行 FOR UPDATE，按行 mode 分发
+    deliver/contribute + reason）；本端只读背包 + 编排 items + 渲染 outcomes，不再
+    ``scanner.match_rows`` 复刻决策（消除客户端/后端双份逻辑漂移）。
+
+    纯申报语义（RS-3 衍生）：只读背包 + HTTP 上报，绝不清背包 / ``data merge``。
+    owner 通知由后端 ``_notify_batch_outcome`` 接管（deliver/contribute 行）。
+    archived 由后端 409 整批裁决（``_resolve`` 译 ``SHEET_ARCHIVED_READONLY``，无需预拉
+    ``view_sheet``）；空背包短路（``SHEET_SUBMIT_EMPTY_INV``，避后端 422 + 给玩家直观回执）。
+    """
+    api = server.get_plugin_instance("minecraft_data_api")
+    if api is None:
+        server.tell(player_name, SHEET_SUBMIT_NO_API)
+        return
+    inventory = scanner.scan_inventory(api, player_name)
+    if not inventory:
+        server.tell(player_name, SHEET_SUBMIT_EMPTY_INV)
+        return
+    outcome = sheet_client.submit_batch(CONFIG, player_uuid, sheet_id, inventory)
+    _resolve(
+        server, player_name, outcome,
+        on_success=lambda r: server.tell(player_name, _build_submit_receipt(r)),
+    )
 
 
 def _submit_safe(server, player_name, player_uuid, sheet_id):

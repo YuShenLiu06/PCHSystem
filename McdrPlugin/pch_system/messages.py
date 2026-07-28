@@ -116,6 +116,7 @@ SHEET_OK_SETREG = "§a已更新行 #{row_id} 的物品 id 为 {registry_id}"
 # submit 汇总回执段
 SHEET_SUBMIT_HEAD = "§6§l[PCH 一键提交]§r"
 SHEET_SUBMIT_NO_API = "§c未安装 minecraft_data_api 插件，无法扫描背包"
+SHEET_SUBMIT_EMPTY_INV = "§7背包为空，无可提交的材料"
 SHEET_SUBMIT_NO_ROWS = "§7表中无可匹配的行（需行已配 registry_id 且背包满足条件）"
 SHEET_SUBMIT_DONE_LINE = "§a  {item} ×{qty} §7→ §a完成"
 SHEET_SUBMIT_PROGRESS_LINE = "§a  {item} §7累计 §b{delivered}/{need}"

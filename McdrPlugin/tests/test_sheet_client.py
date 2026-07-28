@@ -67,6 +67,28 @@ class SheetClientTest(unittest.TestCase):
         self.assertEqual(captured["headers"]["X-Player-UUID"], self.UUID)
         self.assertNotIn("Authorization", captured["headers"])
 
+    def test_submit_batch_builds_items_body_from_inventory(self):
+        # {registry_id: qty} dict → POST /sheets/{id}/submit-batch body {items:[{registry_id,qty}]}
+        captured = {}
+
+        def _capture(method, url, params=None, json=None, headers=None, timeout=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = json
+            return _resp(200, {"sheet_id": 7, "totals": {}, "outcomes": []})
+
+        with mock.patch.object(sc.requests, "request", side_effect=_capture):
+            out = sc.submit_batch(_cfg(), self.UUID, 7, {"minecraft:stone": 64, "minecraft:dirt": 10})
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["url"], "http://backend:8000/sheets/7/submit-batch")
+        # items 由 inventory dict 展开（保留插入序）
+        self.assertEqual(captured["json"], {"items": [
+            {"registry_id": "minecraft:stone", "qty": 64},
+            {"registry_id": "minecraft:dirt", "qty": 10},
+        ]})
+        # 成功原样回传 BatchSubmitResult dict
+        self.assertEqual(out, {"sheet_id": 7, "totals": {}, "outcomes": []})
+
     def test_rate_limited_sentinel(self):
         with mock.patch.object(sc.requests, "request", return_value=_resp(429)):
             out = sc.claim_row(_cfg(), self.UUID, 1, 2)

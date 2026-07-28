@@ -27,10 +27,12 @@
 ### Changed
 
 - **管理员面板重构（迭代 3）**：原「允许第三方服务端 mod」单全局开关 + 白名单表格 → **「服务器上报源（插件）」卡片网格**——官方 MCDR 追踪器降为默认插件卡（开关走 `official_tracker_enabled`，不可移除）+ 第三方服务端 mod 逐卡启停（`el-switch` + 停用置灰 + 状态标签）；「切换某玩家的服务器上报源」移入默认折叠的「暂未上线」区（功能保留、暂不显眼）。前端不再渲染 `allow_server_mods` 单开关。dev 代理 `localhost:8000` → `127.0.0.1:8000`（IPv6 歧义修复）。
+- **游戏端 `!!submit` 改调后端批量端点（P3 薄壳化）**：`!!submit` / `!!submit <id>` / `!!PCH sheet submit <id>` 三个入口不再在客户端用 `scanner.match_rows` 复刻「按行 mode 分流 deliver/contribute」的决策逻辑，改为扫背包后一次性 `POST /sheets/{id}/submit-batch`，由后端 `batch_submit` 单事务逐行裁决。回执观感不变（done / 累计 / 已备齐折叠 / 与本人无关折叠四桶一致）；删除 `scanner.match_rows` / `MatchAction` 等客户端决策代码，消除前后端双份逻辑漂移。owner 通知改由后端 `_notify_batch_outcome` 接管。**行为变化（仅 1 处，用户可见）**：空背包时旧版会展示折叠的跳过计数，新版直接回「背包为空，无可提交的材料」——更直观，且避开后端 `items` 非空校验的 422。
 
 ### Fixed
 
-- _暂无_
+- **回执显式处理未知动作**：`_build_submit_receipt` 原把任何非 `delivered`/`contributed` 的 action 隐式当 `skipped` 走折叠，后端未来若扩展 action（如 `rolled_back`/`partial`）会静默错折叠或显示空原因行——违「禁静默吞」。改为显式 `elif skipped` + 兜底 `else`：未知 action 逐行展示带动作名（「未知动作 'xxx'」），让未来扩展可见可反馈。
+- **锁前后端 reason 字面量契约**：`scanner.REASON_*` 与后端 `sheet_repo.BATCH_REASON_*` 此前仅靠注释互指对齐，单端改字面量会让回执折叠静默退化（已备齐行不再折叠、刷屏）。新增契约测试 `test_reason_常量与后端_batch_reason_逐字对齐`：文本正则抓后端字面量断言相等，任一端漂移即红。
 
 ### Security
 
