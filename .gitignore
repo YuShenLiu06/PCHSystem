@@ -27,6 +27,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 McdrPlugin/config.json
+# TestServer 的 pch_system 运行时配置含 service_token（RS-5/R-11：密钥不进库）；
+# 仓库只提交 .example，本地按 .example 拷贝并填入与后端 MCDR_SERVICE_TOKEN 一致的 token。
+TestServer/config/pch_system_config.json
 
 # 本地临时文件（如 ./Run 测试产物）
 /Run
