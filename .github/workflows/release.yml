@@ -47,6 +47,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 分支守卫：release 只允许从 main 上的 tag 触发，防止 PR 分支 tag 反复调用 CI
+      - name: 校验 tag 在 main 上
+        run: |
+          git fetch origin main --quiet   # 防御性：fetch-depth: 0 已含 origin/main，此行保证守卫自包含
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::release tag '$GITHUB_REF_NAME' 指向的 commit ($GITHUB_SHA) 不在 origin/main 上。" >&2
+            echo "::error::release 只允许从 main 分支的 tag 触发（防止 PR 分支 tag 调用 CI）。请先合并 main，再在该 commit 上打 tag。" >&2
+            exit 1
+          fi
+          echo "分支守卫通过: $GITHUB_REF_NAME (commit $GITHUB_SHA) 在 origin/main 上"
+
       # 1. 校验 tag：读 id + version，要求 tag 匹配 <id>-v<semver> 且 version==tag（兜底「忘 bump」）
       - name: 校验 tag
         run: |

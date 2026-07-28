@@ -81,7 +81,7 @@ SemVer：BREAKING→MAJOR、兼容新功能→MINOR、兼容修复→PATCH；预
 
 **MCDR 发版（tag 驱动，自动化）**：
 1. 改 `plugin.json` `version` + `CHANGELOG.md` 固化 `## [pch_system-vX.Y.Z] - YYYY-MM-DD` 段
-2. `git tag pch_system-vX.Y.Z && git push origin pch_system-vX.Y.Z`
+2. `git tag pch_system-vX.Y.Z && git push origin pch_system-vX.Y.Z`（tag 必须指向 `main` 上的 commit——[`release.yml`](./.github/workflows/release.yml) 会校验，PR 分支上的 tag 会被拦截）
 3. [`release.yml`](./.github/workflows/release.yml) 自动：校验 tag（含 `version==tag`）→ 三端检测 → `mcdreforged pack` 构建 `.mcdr` → 创建**草稿 Release**（含 `.mcdr` + `SHA256.txt` + CHANGELOG notes）
 4. 所有者完善 notes、检验 `.mcdr`、手动 **Publish**
 
