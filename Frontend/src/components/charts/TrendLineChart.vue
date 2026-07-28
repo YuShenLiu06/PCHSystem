@@ -35,11 +35,18 @@ const props = defineProps<{
   points: ProgressTimelinePoint[]
   /** account_id → 展示名映射，由父组件从 account_totals + breakdown 构建 */
   accountNames: Record<number, string>
+  /** xAxis 左沿（施工开始时间）；null/undefined 时由 ECharts 自动决定 */
+  startTime?: string | null
+  /** xAxis 右沿（归档时间或当前时间）；null/undefined 时由 ECharts 自动决定 */
+  endTime?: string | null
 }>()
 
 // 按 account_id 分组 + 前向填充（逻辑见 utils/timelineFill，纯函数可单测）：
-// inactive 时段水平保持上一值，线全程不断；晚加入玩家从其首点起。
-const grouped = computed(() => forwardFillTimeline(props.points))
+// inactive 时段水平保持上一值，线全程不断；startTime 早于首点时补 [startTime, 0] 锚点，
+// 让每条线从 y=0 升起；晚加入玩家从其首点起。
+const grouped = computed(() =>
+  forwardFillTimeline(props.points, props.startTime),
+)
 
 const option = computed<Option>(() => {
   const series: LineSeriesOption[] = []
@@ -79,7 +86,12 @@ const option = computed<Option>(() => {
     },
     legend: { type: 'scroll', top: 0 },
     grid: { left: 40, right: 20, top: 40, bottom: 30, containLabel: true },
-    xAxis: { type: 'time' },
+    // xAxis 范围 = 施工开始 → 当前/归档：min/max 由父组件透传（null/undefined 时自动）
+    xAxis: {
+      type: 'time',
+      min: props.startTime ?? undefined,
+      max: props.endTime ?? undefined,
+    },
     yAxis: {
       type: 'value',
       name: '累计净放置',

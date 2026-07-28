@@ -66,4 +66,104 @@ describe('forwardFillTimeline', () => {
       ['t3', 30],
     ])
   })
+
+  // —— 施工开始 0 锚点（修复2）——
+  it('startTime 严格早于首点时，在最前补 [startTime, 0] 锚点', () => {
+    // A 真实首点 t2=10；startTime=t0 早于 t2 → 期望 [t0,0] + 真实填充
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 10), pt(1, 't3', 20)],
+      't0',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t0', 0],
+      ['t2', 10],
+      ['t3', 20],
+    ])
+  })
+
+  it('startTime 为 null 不补 0 锚点（降级到旧行为）', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 10), pt(1, 't3', 20)],
+      null,
+    )
+    expect(filled.get(1)).toEqual([
+      ['t2', 10],
+      ['t3', 20],
+    ])
+  })
+
+  it('startTime 为 undefined 不补 0 锚点', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 10), pt(1, 't3', 20)],
+      undefined,
+    )
+    expect(filled.get(1)).toEqual([
+      ['t2', 10],
+      ['t3', 20],
+    ])
+  })
+
+  it('startTime 等于首点时不补（避免重复点）', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 10), pt(1, 't3', 20)],
+      't2',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t2', 10],
+      ['t3', 20],
+    ])
+  })
+
+  it('startTime 晚于首点时不补', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 10), pt(1, 't3', 20)],
+      't2.5',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t2', 10],
+      ['t3', 20],
+    ])
+  })
+
+  it('多 account 各自独立判断补 0 锚点', () => {
+    // A 早（t2=10）；B 晚（t4=5）。startTime=t0 同时早于两者 → 都应补 [t0, 0]。
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 10), pt(2, 't4', 5)],
+      't0',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t0', 0],
+      ['t2', 10],
+      ['t4', 10],
+    ])
+    expect(filled.get(2)).toEqual([
+      ['t0', 0],
+      ['t4', 5],
+    ])
+  })
+
+  it('startTime 介于两 account 首点之间时，仅早于 startTime 的 account 不补', () => {
+    // A 首点 t1=10（早于 startTime t2）；B 首点 t3=5（晚于 startTime t2）。
+    // 仅 B 补 [t2, 0]；A 不补。
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10), pt(2, 't3', 5)],
+      't2',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t1', 10],
+      ['t3', 10],
+    ])
+    expect(filled.get(2)).toEqual([
+      ['t2', 0],
+      ['t3', 5],
+    ])
+  })
+
+  it('startTime 早于所有点但仅有一个 account 一个点（最小稀疏场景）', () => {
+    const filled = forwardFillTimeline([pt(1, 't2', 7)], 't0')
+    expect(filled.get(1)).toEqual([
+      ['t0', 0],
+      ['t2', 7],
+    ])
+  })
 })

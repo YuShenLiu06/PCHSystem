@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchMe, confirmBind, updateMyDisplayName, type MeResponse } from '../api/identity'
 import {
   getMyConstructionSource,
-  getMyReportHistory,
+  getMyReportEvents,
   switchSelfSource,
+  getMyConstruction,
+  leaveConstruction,
   type DormantSource,
-  type MyReportHistoryItem,
+  type MyConstructionResult,
+  type ReportEventItem,
   type SourceMeResult,
 } from '../api/construction'
 import { extractApiError } from '../utils/error'
@@ -106,18 +109,18 @@ const sourceMode = ref<'server' | 'local'>('server')
 const sourceIdInput = ref('')
 const switchingSource = ref(false)
 
-// 个人上报历史（placement_snapshots：每次 report 成功落一条；最近 50 条）
-const reportHistory = ref<MyReportHistoryItem[]>([])
-const reportHistoryLoading = ref(false)
+// 个人上报事件流水（report_events：accepted + 所有 skip 原因逐条落库；迭代 5）
+const reportEvents = ref<ReportEventItem[]>([])
+const reportEventsLoading = ref(false)
 
-async function loadReportHistory(): Promise<void> {
-  reportHistoryLoading.value = true
+async function loadReportEvents(): Promise<void> {
+  reportEventsLoading.value = true
   try {
-    reportHistory.value = await getMyReportHistory(50)
+    reportEvents.value = await getMyReportEvents(50)
   } catch {
     // 辅助展示，失败静默
   } finally {
-    reportHistoryLoading.value = false
+    reportEventsLoading.value = false
   }
 }
 
@@ -189,10 +192,53 @@ async function onSwitchSource(): Promise<void> {
   }
 }
 
+// 当前施工项目（participants 表当前活跃行；空 ParticipantState = 未加入）
+const myConstruction = ref<MyConstructionResult | null>(null)
+const myConstructionLoading = ref(false)
+const leavingConstruction = ref(false)
+
+/** active.sheet_id 为 truthy → 已加入某项目；否则后端返回空 ParticipantState（未加入/未绑账号）。 */
+const activeConstruction = computed(
+  () => (myConstruction.value?.active?.sheet_id ?? null) as number | null,
+)
+
+async function loadMyConstruction(): Promise<void> {
+  myConstructionLoading.value = true
+  try {
+    myConstruction.value = await getMyConstruction()
+  } catch {
+    // 辅助展示，失败静默（401 由拦截器统一处理）
+  } finally {
+    myConstructionLoading.value = false
+  }
+}
+
+async function onLeaveConstruction(): Promise<void> {
+  try {
+    await ElMessageBox.confirm('确认退出当前施工项目？退出后官方追踪器不会把你的方块记入此项目。', '退出施工', {
+      type: 'warning',
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return // 用户取消
+  }
+  leavingConstruction.value = true
+  try {
+    myConstruction.value = await leaveConstruction()
+    ElMessage.success('已退出施工项目')
+  } catch (e: unknown) {
+    ElMessage.error(extractApiError(e) ?? '退出失败')
+  } finally {
+    leavingConstruction.value = false
+  }
+}
+
 onMounted(() => {
   load()
   loadConstructionSource()
-  loadReportHistory()
+  loadReportEvents()
+  loadMyConstruction()
 })
 </script>
 
@@ -265,6 +311,30 @@ onMounted(() => {
       </el-empty>
     </el-card>
 
+    <!-- 当前施工项目（活跃加入；同一账号同时最多 1 个，后端约束） -->
+    <el-card header="当前施工项目" style="margin-top: 16px;" v-loading="myConstructionLoading">
+      <div v-if="myConstruction && activeConstruction">
+        <p>
+          <strong>项目：</strong>{{ myConstruction.active.sheet_title ?? ('#' + activeConstruction) }}
+        </p>
+        <p v-if="myConstruction.active.joined_at">
+          <strong>加入时间：</strong>{{ formatTime(myConstruction.active.joined_at) }}
+        </p>
+        <p>
+          <strong>加入来源：</strong>
+          <el-tag size="small" :type="myConstruction.active.join_source === 'auto' ? 'info' : 'success'">
+            {{ myConstruction.active.join_source === 'auto' ? '自动（认领/上交触发）' : '手动加入' }}
+          </el-tag>
+        </p>
+        <el-button type="danger" plain size="small" :loading="leavingConstruction" @click="onLeaveConstruction">退出施工</el-button>
+      </div>
+      <div v-else-if="myConstruction" style="color: #999;">
+        当前未加入任何施工项目。在项目备货/施工页点击「加入施工」，或游戏内执行
+        <code>!!PCH construction join</code> 加入。
+      </div>
+      <div v-else style="color: #999;">加载中...</div>
+    </el-card>
+
     <!-- 施工上报源（玩家自助切：影响「由谁替你统计施工方块净放置」） -->
     <el-card header="施工上报源" style="margin-top: 16px;">
       <div v-if="constructionSource">
@@ -327,27 +397,36 @@ onMounted(() => {
       </div>
     </el-card>
 
-    <!-- 个人上报历史（每次 report 成功落一条 placement_snapshot；最近 50 条） -->
+    <!-- 个人上报事件流水（accepted + 所有 skip 原因逐条落库；最近 50 条；迭代 5） -->
     <el-card v-if="me" style="margin-top: 16px;">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span>我的上报历史</span>
-          <el-button size="small" link :loading="reportHistoryLoading" @click="loadReportHistory">刷新</el-button>
+          <el-button size="small" link :loading="reportEventsLoading" @click="loadReportEvents">刷新</el-button>
         </div>
       </template>
-      <div v-if="reportHistory.length === 0" style="color: #999;">
-        暂无上报记录（官方追踪器 / 客户端 mod 上报成功后，每次会在此出现一条）。
+      <div v-if="reportEvents.length === 0" style="color: #999;">
+        暂无上报事件（含成功与被拒记录）。
       </div>
       <el-timeline v-else>
         <el-timeline-item
-          v-for="(r, idx) in reportHistory"
+          v-for="(r, idx) in reportEvents"
           :key="idx"
           :timestamp="formatTime(r.recorded_at)"
           placement="top"
+          :color="r.action === 'accepted' ? '#67c23a' : '#f56c6c'"
         >
-          <strong>{{ r.sheet_title || ('项目 #' + r.sheet_id) }}</strong>
-          <span v-if="r.delta !== null" style="margin-left: 8px; color: #67c23a;">本次 +{{ r.delta }}</span>
-          <span style="margin-left: 8px; color: #999;">累计净放置 {{ r.total_net }}</span>
+          <strong>{{ r.sheet_title || (r.sheet_id ? '项目 #' + r.sheet_id : '未归因') }}</strong>
+          <template v-if="r.action === 'accepted'">
+            <span style="margin-left: 8px; color: #67c23a;">+{{ r.net_delta ?? 0 }}</span>
+          </template>
+          <template v-else>
+            <span style="margin-left: 8px; color: #f56c6c;">被拒：{{ r.reason }}</span>
+            <span v-if="r.net_delta !== null && r.net_delta !== 0" style="margin-left: 8px; color: #999;">（尝试 {{ r.net_delta }}）</span>
+          </template>
+          <el-tooltip v-if="r.registry_id" :content="r.registry_id" placement="top">
+            <el-tag size="small" type="info" style="margin-left: 8px;">{{ r.registry_id }}</el-tag>
+          </el-tooltip>
         </el-timeline-item>
       </el-timeline>
     </el-card>

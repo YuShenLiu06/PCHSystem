@@ -84,6 +84,18 @@ const slotTimeline = computed(() => progress.value?.timeline ?? [])
 const slotCompletion = computed(() => progress.value?.material_completion ?? [])
 const slotTotals = computed(() => progress.value?.account_totals ?? [])
 
+// xAxis 左沿 = 施工开始时间（construction_started_at）；早期数据无此字段 → null（ECharts 自动）
+const chartStartTime = computed<string | null | undefined>(
+  () => progress.value?.construction_started_at ?? null,
+)
+// xAxis 右沿：archived 时停在归档时间；constructing 时取当前时间，使右沿随当前时间推进。
+// computed 依赖 progress.value（usePolling 每 5s 刷新重赋值），刷新时重新计算 endTime。
+const chartEndTime = computed<string | null | undefined>(() => {
+  const p = progress.value
+  if (!p) return null
+  return p.archived_at ?? new Date().toISOString()
+})
+
 // 项目总需求量（sum of material need_qty）—— 供 ContributionPieChart 算「未完成」扇区
 const totalNeed = computed(() =>
   (progress.value?.material_completion ?? []).reduce((s, m) => s + m.need_qty, 0),
@@ -128,6 +140,8 @@ const totalNeed = computed(() =>
           v-if="progress && (progress.timeline?.length ?? 0) > 0"
           :points="progress.timeline"
           :account-names="accountNames"
+          :start-time="chartStartTime"
+          :end-time="chartEndTime"
         />
         <el-empty v-else description="暂无时序数据（需上报后生成）" />
 

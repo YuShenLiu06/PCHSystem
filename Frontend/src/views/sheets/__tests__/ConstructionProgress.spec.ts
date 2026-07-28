@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
+import type { VueWrapper } from '@vue/test-utils'
 
 // mock api（不真发请求）
 vi.mock('../../../api/construction', () => ({
@@ -23,8 +24,13 @@ import ConstructionProgress from '../ConstructionProgress.vue'
 const mocked = getConstructionProgress as unknown as ReturnType<typeof vi.fn>
 
 // stub 图表组件 + element-plus（避免 echarts 在 jsdom 的 canvas 依赖）
+// TrendLineChart stub 接收 props 并透传到 data-* 属性，供断言透传是否正确
 const globalStubs = {
-  TrendLineChart: { template: '<div data-test="trend" />' },
+  TrendLineChart: {
+    props: ['points', 'accountNames', 'startTime', 'endTime'],
+    template:
+      '<div data-test="trend" :data-start="startTime ?? \'unset\'" :data-end="endTime ?? \'unset\'" />',
+  },
   MaterialCompletionChart: { template: '<div data-test="material" />' },
   ContributionPieChart: { template: '<div data-test="pie" />' },
   ElCard: { template: '<div><slot name="header" /><slot /></div>' },
@@ -52,6 +58,8 @@ const PROGRESS_WITH_DATA = {
   timeline: [
     { account_id: 1, total_net: 5, recorded_at: '2026-07-27T00:00:00Z' },
   ],
+  construction_started_at: '2026-07-20T00:00:00Z',
+  archived_at: null,
 }
 
 const PROGRESS_EMPTY = {
@@ -60,6 +68,8 @@ const PROGRESS_EMPTY = {
   breakdown: [],
   material_completion: [],
   timeline: [],
+  construction_started_at: null,
+  archived_at: null,
 }
 
 describe('ConstructionProgress', () => {
@@ -105,5 +115,56 @@ describe('ConstructionProgress', () => {
     expect(wrapper.find('.custom-chart').exists()).toBe(true)
     // 默认三图被覆盖（不存在）
     expect(wrapper.find('[data-test="trend"]').exists()).toBe(false)
+  })
+
+  it('透传 start-time / end-time 给 TrendLineChart（constructing: endTime=当前时间）', async () => {
+    // 固定系统时间，断言 endTime 取当前时间 ISO
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T12:00:00.000Z'))
+    try {
+      mocked.mockResolvedValueOnce(PROGRESS_WITH_DATA)
+      const wrapper: VueWrapper = mount(ConstructionProgress, {
+        props: { sheetId: 1 },
+        global: { stubs: globalStubs },
+      })
+      await flushPromises()
+      const trend = wrapper.find('[data-test="trend"]')
+      expect(trend.exists()).toBe(true)
+      // startTime 透传 = construction_started_at
+      expect(trend.attributes('data-start')).toBe('2026-07-20T00:00:00Z')
+      // archived_at 为 null → endTime 回退到当前时间
+      expect(trend.attributes('data-end')).toBe('2026-07-28T12:00:00.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('archived 时透传 endTime = archived_at（停在归档时间）', async () => {
+    mocked.mockResolvedValueOnce({
+      ...PROGRESS_WITH_DATA,
+      archived_at: '2026-07-25T00:00:00Z',
+    })
+    const wrapper: VueWrapper = mount(ConstructionProgress, {
+      props: { sheetId: 1 },
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    const trend = wrapper.find('[data-test="trend"]')
+    expect(trend.attributes('data-start')).toBe('2026-07-20T00:00:00Z')
+    expect(trend.attributes('data-end')).toBe('2026-07-25T00:00:00Z')
+  })
+
+  it('construction_started_at 为 null 时透传 startTime = unset', async () => {
+    mocked.mockResolvedValueOnce({
+      ...PROGRESS_WITH_DATA,
+      construction_started_at: null,
+    })
+    const wrapper: VueWrapper = mount(ConstructionProgress, {
+      props: { sheetId: 1 },
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    const trend = wrapper.find('[data-test="trend"]')
+    expect(trend.attributes('data-start')).toBe('unset')
   })
 })
