@@ -16,14 +16,8 @@
   <a href="https://github.com/YuShenLiu06/PCHSystem/releases">
     <img alt="Release" src="https://shields.io/github/v/release/YuShenLiu06/PCHSystem?display_name=tag&sort=semver&color=22C55E">
   </a>
-  <a href="https://github.com/YuShenLiu06/PCHSystem/releases">
-    <img alt="Downloads" src="https://shields.io/github/downloads/YuShenLiu06/PCHSystem/total?color=22C55E">
-  </a>
   <a href="https://github.com/YuShenLiu06/PCHSystem">
     <img alt="Stars" src="https://shields.io/github/stars/YuShenLiu06/PCHSystem?color=22C55E">
-  </a>
-  <a href="https://github.com/YuShenLiu06/PCHSystem/issues">
-    <img alt="Issues" src="https://shields.io/github/issues/YuShenLiu06/PCHSystem?color=22C55E">
   </a>
   <a href="LICENSE">
     <img alt="License" src="https://shields.io/github/license/YuShenLiu06/PCHSystem?color=22C55E">
