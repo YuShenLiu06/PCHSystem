@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 40" role="img" aria-labelledby="t d">
+  <title id="t">PCHSystem</title>
+  <desc id="d">像素方块徽标 + PCHSystem 字标(深色背景用)</desc>
+  <g transform="translate(4 4) scale(0.5)">
+    <rect x="50" y="4"  width="6" height="6" rx="2" fill="#4ADE80" opacity="0.45"/>
+    <rect x="4"  y="28" width="5" height="5" rx="1.5" fill="#4ADE80" opacity="0.30"/>
+    <rect x="52" y="50" width="7" height="7" rx="2" fill="#4ADE80" opacity="0.60"/>
+    <polygon points="12,24 32,34 32,54 12,44" fill="#7C5A3C"/>
+    <polygon points="32,34 52,24 52,44 32,54" fill="#5A4028"/>
+    <polygon points="12,24 32,34 32,38 12,28" fill="#31A04C"/>
+    <polygon points="32,34 52,24 52,28 32,38" fill="#278A3E"/>
+    <polygon points="32,14 52,24 32,34 12,24" fill="#4ADE80"/>
+    <polygon points="26,22.5 30,24.5 26,26.5 22,24.5" fill="#31A04C"/>
+    <polygon points="39,22.5 43,24.5 39,26.5 35,24.5" fill="#31A04C" opacity="0.75"/>
+    <g fill="#F1F5F9" stroke="#5A4028" stroke-width="0.6">
+      <polygon points="36,34.5 42,31.5 42,33.5 36,36.5"/>
+      <polygon points="36,36.5 40,34.5 40,36.5 36,38.5"/>
+      <polygon points="42,31.5 44,30.5 44,32.5 42,33.5"/>
+    </g>
+  </g>
+  <text x="42" y="28" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+        font-size="21" font-weight="700" letter-spacing="-0.4" fill="#F1F5F9">PCHSystem</text>
+</svg>

@@ -1,57 +1,147 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Assets/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="Assets/logo.svg">
+  <img alt="PCHSystem" src="Assets/logo.svg" width="280">
+</picture>
+
 # HTCMC Project Contribution & Honor System
 
-> 面向生电社区服的**项目管理系统以及贡献系统**：玩家在游戏里协作完成工程项目，系统跟踪每位参与者的贡献，完结后归档沉淀，（将来）提供积分兑换。流程全自动。
+**面向生电社区服的项目管理与贡献系统**
 
-> ⚠️ **仍在开发中**：积分、称号等核心玩法尚未落地。见[开发状态](#开发状态)。
+玩家在游戏里协作完成工程项目，系统跟踪每位参与者的贡献，完结后归档沉淀，（将来）提供积分兑换。流程全自动。
+
+<p>
+  <a href="https://github.com/YuShenLiu06/PCHSystem/releases">
+    <img alt="Release" src="https://shields.io/github/v/release/YuShenLiu06/PCHSystem?display_name=tag&sort=semver&color=22C55E">
+  </a>
+  <a href="https://github.com/YuShenLiu06/PCHSystem/releases">
+    <img alt="Downloads" src="https://shields.io/github/downloads/YuShenLiu06/PCHSystem/total?color=22C55E">
+  </a>
+  <a href="https://github.com/YuShenLiu06/PCHSystem">
+    <img alt="Stars" src="https://shields.io/github/stars/YuShenLiu06/PCHSystem?color=22C55E">
+  </a>
+  <a href="https://github.com/YuShenLiu06/PCHSystem/issues">
+    <img alt="Issues" src="https://shields.io/github/issues/YuShenLiu06/PCHSystem?color=22C55E">
+  </a>
+  <a href="LICENSE">
+    <img alt="License" src="https://shields.io/github/license/YuShenLiu06/PCHSystem?color=22C55E">
+  </a>
+  <a href="https://github.com/YuShenLiu06/PCHSystem/commits">
+    <img alt="Last Commit" src="https://shields.io/github/last-commit/YuShenLiu06/PCHSystem?color=22C55E">
+  </a>
+  <a href="https://yushenliu06.github.io/PCHSystem-wiki/">
+    <img alt="Wiki" src="https://shields.io/badge/Wiki-文档-22C55E?logo=github&logoColor=white">
+  </a>
+</p>
+
+<img alt="PCHSystem Web 端预览" src="Assets/hero-site.png" width="800">
+
+</div>
+
+> **仍在开发中**：积分、称号等核心玩法尚未落地。见[开发状态](#开发状态)。
+>
+> **Wiki 文档**：完整使用文档与玩法指引见 [**PCHSystem Wiki**](https://yushenliu06.github.io/PCHSystem-wiki/)（搭建中，内容持续补充）。
 
 ---
 
 ## 功能特性
 
-### 特性
+### 核心特性
 
-- **后端分离**：游戏内端与后端完全分离（不强制绑定MCDR），后端可独立部署，游戏内端仅作为客户端。
-- **独立前端**：提供独立的 Web 前端，玩家可在 Web 端查看项目进度、编辑材料清单、上传投影 / 蓝图等，不进游戏也能协作；游戏端或 MCDR 重启时，Web 端仍可独立访问
-- **兼容性强**：基于MCDR的强大兼容性，可以在几乎所有的我的世界版本上面运行
+- **后端分离** — 游戏内端与后端完全分离（不强制绑定 MCDR），后端可独立部署，游戏内端仅作为客户端
+- **独立前端** — 提供独立 Web 前端，玩家不进游戏也能查看项目进度、编辑材料清单、上传投影 / 蓝图；游戏端或 MCDR 重启时，Web 端仍可独立访问
+- **兼容性强** — 基于 MCDR 的强大兼容性，可在几乎所有 Minecraft 版本上运行
 
-### 功能（已实现）
+### 已实现功能
 
-- **游戏内登录后台**：`!!PCH login` 一键生成登录链接，点击直接进入 web 页面方便操作
-- **项目协作（在线表格）**：完整的项目材料清单协作——认领材料、多人累计上交、交付确认、打回返工、解除锁定，Web 端与游戏端**对等操作**
-  - 一键提交：支持一键扫描背包（支持潜影盒内物品）上报进度，同时提供双维度的抽象层，方便二次开发
-  - 投影 / 蓝图一键建表：上传 `.litematic` 投影或机械动力 `.nbt` 蓝图，自动解析方块、翻译成中文名、生成材料清单（支持原版与 Create 模组物品）（支持多份投影文件合并为同一个项目，支持单个投影文件设置倍数）（仅 web 端支持）
-  - 子物品：一键通过倍数（支持小数）来直接生成子一级的合成物品的清单
-  - 快捷命令：游戏内大量命令已经通过可点击的方式来达到便携化，尽可能的减少手打命令的状况
-  - 智能数量换算：自动将数量换算成可读性更高的 个/组/盒 （正在考虑加入箱盒）
-  - 游戏内快速读取手持 `registry-id` 直接更改所需的物品 id，新增物品，去除手打物品 id 的苦恼
-  - Web 端行编辑：在线编辑材料行（名称 / 数量 / `registry-id`），与游戏端操作对等
-- **项目协作（施工阶段）**：完成在施工阶段对于不同参与项目人员的贡献统计
-  - 开放的统计层：提供面向客户端/服务端的两种鉴权方式的API，复用 `JWT` 与 `service-token` + 开发文档
-  - 默认的服务端统计层： 使用轮询对玩家的 `json` 文件进行 `diff` 来统计相关数据，来达到进行汇报项目相关内容
-  - 多种图表：提供多种图表，直观，准确的显示项目进度，同时前端已预留接口，随时可以变更相关的表
-- **项目归档**：项目完结自动生成归档文档 + 贡献占比饼图，精确记录每位参与者的贡献
-- **通知投递**：认领 / 交付 / 打回 / 项目状况变化 / 上交等事件游戏内自动通知，离线期间的通知上线补推
+#### 登录鉴权
 
-![一览-材料清单](McdrPlugin/docs/img/sheet-mc.png)
-![一览-施工贡献图表](McdrPlugin/docs/img/construction.png)
+- `!!PCH login` 一键生成登录链接，点击直接进入 Web 页面
 
-### 规划中（尚未实现）
+#### 项目协作（在线表格）
 
-- **积分体系**：提供统一积分层，管理相关内容
-  - 提供统一积分入账层
-  - 提供统一积分出账层
-  - 提供积分排行榜
-  - 完善项目归档自动结算积分
-- **指数增长称号**：积分达标自动解锁，聊天前缀差异化，高阶全服公告
-- **项目协作（施工阶段）**：真正校验建造放置（当前已经完成主体部分）
-  - 提供实时的计分板进度显示
-- **Wiki 归档同步**：归档内容双向同步到 wiki.js
-  - 项目权限继承：将项目拥有者，admin，自动拥有该篇归档 wiki 的编辑权限
-- **管理员面板**：提供管理员面板，方便管理服务器相关内容
+完整的项目材料清单协作——认领材料、多人累计上交、交付确认、打回返工、解除锁定，Web 端与游戏端**对等操作**。
+
+- **一键提交**：支持扫描背包（含潜影盒内物品）上报进度，提供双维度抽象层方便二次开发
+- **投影 / 蓝图一键建表**：上传 `.litematic` 投影或 Create `.nbt` 蓝图，自动解析方块、翻译中文名、生成材料清单（支持原版与模组物品；多份投影合并为同一项目；单投影倍数设置）（仅 Web 端）
+- **子物品**：通过倍数（支持小数）直接生成子一级合成物品清单
+- **快捷命令**：游戏内大量命令支持可点击交互，减少手打
+- **智能换算**：自动将数量换算为可读性更高的 个 / 组 / 盒
+- **手持读取**：游戏内读取手持物品 `registry-id`，直接更改 / 新增所需物品，免去手打 ID
+- **Web 端行编辑**：在线编辑材料行（名称 / 数量 / `registry-id`），与游戏端对等
+
+#### 项目协作（施工阶段）
+
+完成施工阶段对不同参与者的贡献统计。
+
+- **开放统计层**：提供面向客户端 / 服务端两种鉴权方式的 API，复用 `JWT` 与 `service-token`
+- **默认服务端统计层**：轮询玩家 `json` 文件进行 `diff`，汇报项目相关数据
+- **多种图表**：提供多种图表直观、准确地显示项目进度，前端已预留接口随时切换
+
+#### 项目归档
+
+项目完结自动生成归档文档 + 贡献占比饼图，精确记录每位参与者的贡献。
+
+#### 通知投递
+
+认领 / 交付 / 打回 / 项目状况变化 / 上交等事件游戏内自动通知，离线期间通知上线补推。
+
+### 效果一览
+
+<table>
+  <tr>
+    <td align="center"><b>游戏内 · 材料清单</b></td>
+    <td align="center"><b>Web 端 · 施工贡献图表</b></td>
+  </tr>
+  <tr>
+    <td><img alt="游戏内材料清单" src="McdrPlugin/docs/img/sheet-mc.png"></td>
+    <td><img alt="施工贡献图表" src="McdrPlugin/docs/img/construction.png"></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>查看更多截图</b></summary>
+<table>
+  <tr>
+    <td align="center"><b>Web 端 · 在线表格</b></td>
+    <td align="center"><b>游戏内 · 登录链接</b></td>
+  </tr>
+  <tr>
+    <td><img alt="Web 端在线表格" src="McdrPlugin/docs/img/sheet-web.png"></td>
+    <td><img alt="游戏内登录" src="McdrPlugin/docs/img/login.png"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>游戏内 · 数量换算</b></td>
+    <td align="center"><b>Web 端 · 子物品提交</b></td>
+  </tr>
+  <tr>
+    <td><img alt="数量换算" src="McdrPlugin/docs/img/sheet-mc-amounts.png"></td>
+    <td><img alt="子物品提交" src="McdrPlugin/docs/img/sheet-web-sub.png"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>项目归档</b></td>
+    <td align="center"><b>通知投递</b></td>
+  </tr>
+  <tr>
+    <td><img alt="归档" src="McdrPlugin/docs/img/archived.png"></td>
+    <td><img alt="通知" src="McdrPlugin/docs/img/notify-1.png"></td>
+  </tr>
+</table>
+</details>
+
+### 规划中
+
+- **积分体系** — 统一积分入账 / 出账层 + 排行榜 + 项目归档自动结算
+- **指数增长称号** — 积分达标自动解锁，聊天前缀差异化，高阶全服公告
+- **施工阶段** — 真正校验建造放置（主体已完成）+ 实时计分板进度
+- **Wiki 归档同步** — 归档内容双向同步到 wiki.js + 项目权限继承
+- **管理员面板** — 服务器管理面板
 
 ---
 
-## 部署
+## 快速开始
 
 ### 一键脚本（推荐）
 
@@ -60,18 +150,17 @@
 ```bash
 git clone https://github.com/YuShenLiu06/PCHSystem.git
 
-# 或者使用 gitee 镜像站
-
+# 或使用 Gitee 镜像
 git clone https://gitee.com/yushenliu03/PCHSystem.git
 
 cd PCHSystem
-bash Scripts/install.sh    # 首次安装（交互式，幂等）
-bash Scripts/update.sh     # 之后日常更新
+bash Scripts/install.sh    # 首次安装（交互式、幂等）
+bash Scripts/update.sh     # 日常更新
 ```
 
-完整选项（镜像策略、排错、密钥轮换、禁用前端容器等）见 [`Scripts/README.md`](./Scripts/README.md)。
+> 完整选项（镜像策略、排错、密钥轮换、禁用前端容器等）见 [`Scripts/README.md`](./Scripts/README.md)。
 
-### 手动（docker compose）
+### 手动（Docker Compose）
 
 ```bash
 cp .env.example .env       # 按需改密钥
@@ -87,9 +176,13 @@ curl http://localhost:8000/healthz
 
 ## 架构
 
-三端分离：**后端（FastAPI + PostgreSQL）** 是唯一数据拥有者；**Web 端（Vue3）** 是浏览器后台；**游戏端（MCDR 插件）** 是纯客户端，不直连数据库，只经 HTTP 与后端通信。前端默认由 compose 的 web 容器（nginx）托管。
+三端分离：**后端（FastAPI + PostgreSQL）** 是唯一数据拥有者；**Web 端（Vue3）** 是浏览器后台；**游戏端（MCDR 插件）** 是纯客户端，不直连数据库，只经 HTTP 与后端通信。
 
-![architecture](Image/architecture.png)
+<div align="center">
+
+<img alt="PCHSystem 架构图" src="Assets/architecture.png" width="720">
+
+</div>
 
 完整架构图、ADR、跨服务流程见 [`Docs/architecture.md`](./Docs/architecture.md)。
 
@@ -98,19 +191,30 @@ curl http://localhost:8000/healthz
 ## 开发状态
 
 | 状态 | 模块 |
-|---|---|
-| ✅ 已交付 | 登录鉴权（Web 账号绑多身份 + 密码登录）、项目协作（在线表格 + 协管员角色）、投影 / 蓝图解析、材料上交、项目归档、通知投递、一键部署 |
-| 🚧 规划中 | 积分结算、指数称号、Wiki 管理 |
+|:---:|---|
+| 已交付 | 登录鉴权（Web 账号绑多身份 + 密码登录）、项目协作（在线表格 + 协管员角色）、投影 / 蓝图解析、材料上交、项目归档、通知投递、一键部署 |
+| 规划中 | 积分结算、指数称号、Wiki 管理 |
 
-详见 [`TODO.md`](./TODO.md) 与 [`CHANGELOG.md`](./CHANGELOG.md)。
+详见 [`CHANGELOG.md`](./CHANGELOG.md)。
 
 ---
 
 ## 开发与贡献
 
-- 部署 / 排错 / 回滚：[`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md)
-- 分支 / Commit / 发布规范：[`CONTRIBUTING.md`](./CONTRIBUTING.md)
-- 根规范（红线、命名）：[`CLAUDE.md`](./CLAUDE.md)
-- 各端开发指引：[`Backend/CLAUDE.md`](./Backend/CLAUDE.md) · [`Frontend/CLAUDE.md`](./Frontend/CLAUDE.md) · [`McdrPlugin/CLAUDE.md`](./McdrPlugin/CLAUDE.md)
+| 文档 | 说明 |
+|---|---|
+| [PCHSystem Wiki](https://yushenliu06.github.io/PCHSystem-wiki/) | 使用文档与玩法指引（搭建中） |
+| [`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md) | 部署 / 排错 / 回滚 |
+| [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 分支 / Commit / 发布规范 |
+| [`CLAUDE.md`](./CLAUDE.md) | 根规范（红线、命名） |
+| [`Backend/CLAUDE.md`](./Backend/CLAUDE.md) · [`Frontend/CLAUDE.md`](./Frontend/CLAUDE.md) · [`McdrPlugin/CLAUDE.md`](./McdrPlugin/CLAUDE.md) | 各端开发指引 |
 
 提 PR 前请先读 [`CONTRIBUTING.md`](./CONTRIBUTING.md) 与 [`CLAUDE.md`](./CLAUDE.md) §3 红线；涉及 MCDR 的改动须先联网核实 API（根 [`CLAUDE.md`](./CLAUDE.md) §0 S-1）。
+
+---
+
+<div align="center">
+
+<sub>Built for the HTCMC community</sub>
+
+</div>
