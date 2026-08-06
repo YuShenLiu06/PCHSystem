@@ -19,11 +19,14 @@ function compareTs(a: string, b: string): number {
  * 除施工开始 0 锚点外，首点之前不补——晚加入玩家的线从其首个上报点起。
  * 当 startTime 存在且严格早于某 account 首点时，在该 account 的线最前补一个 [startTime, 0]
  * 锚点，使折线从 y=0 升起（视觉上锚点→首点是斜线，符合「累计从 0 起」语义）。
+ * 当 endTime 存在且严格晚于某 account 末点时，在该 account 的线最末补一个 [endTime, lastValue]
+ * 锚点，使线以末值水平延伸到 xAxis 右沿（当前时间或归档时间），不会在最后一次上报处断开。
  * 返回 account_id → [ts, value][] 映射，供 ECharts `type: 'line'` + `xAxis.type: 'time'` 直接消费。
  */
 export function forwardFillTimeline(
   points: readonly ProgressTimelinePoint[],
   startTime?: string | null,
+  endTime?: string | null,
 ): Map<number, Array<[string, number]>> {
   const filled = new Map<number, Array<[string, number]>>()
   if (points.length === 0) return filled
@@ -63,6 +66,14 @@ export function forwardFillTimeline(
     // 占位串回退字典序（测试用）；out 是本地新数组，unshift 不影响入参。
     if (startTime !== null && startTime !== undefined && compareTs(startTime, firstTs) < 0) {
       out.unshift([startTime, 0])
+    }
+    // 右沿末值锚点：endTime 严格晚于该组末点时，在末尾补 (endTime, lastValue)，
+    // 让线水平延伸到 xAxis 右沿（当前时间或归档时间）；endTime 缺省或早于/等于末点则不补。
+    if (out.length > 0 && endTime !== null && endTime !== undefined) {
+      const lastTs = out[out.length - 1][0]
+      if (compareTs(endTime, lastTs) > 0) {
+        out.push([endTime, out[out.length - 1][1]])
+      }
     }
     if (out.length > 0) filled.set(accountId, out)
   }

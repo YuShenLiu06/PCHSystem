@@ -45,7 +45,7 @@ const props = defineProps<{
 // inactive 时段水平保持上一值，线全程不断；startTime 早于首点时补 [startTime, 0] 锚点，
 // 让每条线从 y=0 升起；晚加入玩家从其首点起。
 const grouped = computed(() =>
-  forwardFillTimeline(props.points, props.startTime),
+  forwardFillTimeline(props.points, props.startTime, props.endTime),
 )
 
 const option = computed<Option>(() => {
