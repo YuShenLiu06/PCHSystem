@@ -1,7 +1,8 @@
 """_sheet_upsert 默认值回归测试。
 
 背景：`!!PCH sheet add <表id> <物品> <数量>` 省略 mode/sort 时，命令树经
-`Integer("need").runs(_sheet_upsert)` 触发本回调，ctx 内不含 mode/sort 键。
+`Integer("need").runs(lambda s,c: _sheet_upsert(s,c, mode=0))` 触发本回调。
+mode 由命令树分支闭包烘入（MCDR Literal 不入 ctx，issue #47），
 此处锁定回调的默认映射：mode→0(lock)、sort→0，并覆盖 progress / 显式 sort 非默认路径。
 （注：`set` 改行数量走 `_sheet_set`（按 row_id），见 test_sheet_set_defaults.py。）
 
@@ -50,7 +51,7 @@ class _FakeSrc:
 class SheetUpsertDefaultsTest(unittest.TestCase):
     """ctx 省略 / 显式 mode/sort → upsert_row 收到的 mode/sort 参数。"""
 
-    def _run_upsert(self, ctx):
+    def _run_upsert(self, ctx, *, mode=0):
         """跑一次 _sheet_upsert，捕获传给 sheet_client.upsert_row 的参数。"""
         src = _FakeSrc()
         captured = {}
@@ -63,12 +64,12 @@ class SheetUpsertDefaultsTest(unittest.TestCase):
             return {"id": 1, "item_name": item, "need_qty": need}
 
         with mock.patch.object(sc.sheet_client, "upsert_row", side_effect=_capture):
-            sc._sheet_upsert(src, ctx)
+            sc._sheet_upsert(src, ctx, mode=mode)
         return src, captured
 
     def test_omitted_mode_and_sort_default_to_lock_zero(self):
-        # ctx 无 mode/sort —— 等价于命令树在 need 节点终止时回调入参
-        _, captured = self._run_upsert({"sheet_id": 1, "item": "dirt", "need": 5})
+        # 裸 add（无 Literal 祖先）→ 闭包烘入 mode=0（默认 lock）
+        _, captured = self._run_upsert({"sheet_id": 1, "item": "dirt", "need": 5}, mode=0)
         self.assertEqual(captured["mode"], 0, "省略 mode 应默认 lock(0)")
         self.assertEqual(captured["sort"], 0, "省略 sort 应默认 0")
         # 其余位置参数正常透传
@@ -77,15 +78,17 @@ class SheetUpsertDefaultsTest(unittest.TestCase):
         self.assertEqual(captured["need"], 5)
 
     def test_progress_literal_maps_to_mode_1(self):
+        # progress 字面量分支 → 闭包烘入 mode=1
         _, captured = self._run_upsert(
-            {"sheet_id": 1, "item": "dirt", "need": 5, "mode": "progress"}
+            {"sheet_id": 1, "item": "dirt", "need": 5}, mode=1,
         )
         self.assertEqual(captured["mode"], 1, "progress 字面量应映射 mode=1")
         self.assertEqual(captured["sort"], 0)
 
     def test_lock_literal_and_explicit_sort(self):
+        # lock 字面量分支 → 闭包烘入 mode=0 + 显式 sort
         _, captured = self._run_upsert(
-            {"sheet_id": 1, "item": "dirt", "need": 5, "mode": "lock", "sort": 7}
+            {"sheet_id": 1, "item": "dirt", "need": 5, "sort": 7}, mode=0,
         )
         self.assertEqual(captured["mode"], 0, "lock 字面量应映射 mode=0")
         self.assertEqual(captured["sort"], 7, "显式 sort 应原样透传")

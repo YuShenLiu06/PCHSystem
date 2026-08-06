@@ -123,13 +123,6 @@ describe('sheets API client', () => {
       expect(mocked.get).toHaveBeenCalledWith('/sheets/1', { params: undefined })
       expect(result).toEqual(detail)
     })
-
-    it('format=csv 返回字符串', async () => {
-      mocked.get.mockResolvedValue({ data: 'csv-data' })
-      const result = await getSheet(2, 'csv')
-      expect(mocked.get).toHaveBeenCalledWith('/sheets/2', { params: { format: 'csv' } })
-      expect(result).toBe('csv-data')
-    })
   })
 
   describe('createSheet', () => {
@@ -256,10 +249,14 @@ describe('sheets API client', () => {
   })
 
   describe('exportSheetCSV', () => {
-    it('等价 getSheet(id, "csv")', async () => {
+    it('GET /sheets/{id}?format=csv 带 responseType text', async () => {
       mocked.get.mockResolvedValue({ data: 'csv-text' })
       const result = await exportSheetCSV(3)
-      expect(mocked.get).toHaveBeenCalledWith('/sheets/3', { params: { format: 'csv' } })
+      expect(mocked.get).toHaveBeenCalledWith('/sheets/3', {
+        params: { format: 'csv' },
+        responseType: 'text',
+        transformResponse: expect.any(Function),
+      })
       expect(result).toBe('csv-text')
     })
   })

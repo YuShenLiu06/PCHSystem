@@ -80,7 +80,7 @@ class FormatNotificationTest(unittest.TestCase):
         self.assertTrue(s.startswith("§c"), s)
 
     def test_sheet_manager_granted(self):
-        n = {"category": "sheet_manager_granted", "payload": {"sheet_title": "202工程", "granted_by_name": "玩家A"}}
+        n = {"category": "sheet_manager_granted", "payload": {"sheet_title": "202工程", "actor_name": "玩家A", "granted_by_name": "玩家A"}}
         s = str(format_notification(n))
         self.assertIn("玩家A", s)
         self.assertIn("[202工程]", s)
@@ -88,7 +88,7 @@ class FormatNotificationTest(unittest.TestCase):
         self.assertTrue(s.startswith("§a"), s)  # 正向事件绿色
 
     def test_sheet_manager_revoked(self):
-        n = {"category": "sheet_manager_revoked", "payload": {"sheet_title": "202工程", "revoked_by_name": "玩家A"}}
+        n = {"category": "sheet_manager_revoked", "payload": {"sheet_title": "202工程", "actor_name": "玩家A", "revoked_by_name": "玩家A"}}
         s = str(format_notification(n))
         self.assertIn("玩家A", s)
         self.assertIn("[202工程]", s)

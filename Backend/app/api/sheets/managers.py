@@ -157,6 +157,7 @@ async def grant_manager(
             sheet_id=sheet.id,
             sheet_title=sheet.title,
             granted_by_uuid=str(player.uuid),
+            granted_by_name=actor_name,
         )
     await session.commit()
     return await _assemble_entries(session, sheet_id)
@@ -215,6 +216,7 @@ async def revoke_manager(
             sheet_id=sheet.id,
             sheet_title=sheet.title,
             revoked_by_uuid=str(player.uuid),
+            revoked_by_name=actor_name,
         )
     await session.commit()
     return await _assemble_entries(session, sheet_id)

@@ -829,10 +829,12 @@ def _sheet_advance_impl(src, ctx, *, to):
 
 # === 行级 ===
 
-def _sheet_upsert(src, ctx):
+def _sheet_upsert(src, ctx, *, mode=0):
     """add：按 item_name **新建**行（严格 INSERT，撞名 → 409；issue #20 后不再覆盖同名）。
 
-    mode 可选（默认 lock；字面量 lock/progress），sort 可选（默认 0）。
+    mode 由命令树分支闭包烘入（MCDR Literal 不入 ctx，见 _sheet_addsub 注释；
+    S-1：https://docs.mcdreforged.com/en/latest/code_references/command.html §Literal）：
+    0=lock（默认）/ 1=progress。sort 可选（默认 0）。
     注意：``set`` 改行数量走 ``_sheet_set``（按 row_id），不再复用本回调。
     """
     player_name = _require_player(src)
@@ -842,7 +844,6 @@ def _sheet_upsert(src, ctx):
     sheet_id = ctx["sheet_id"]
     item = ctx["item"]
     need = ctx["need"]
-    mode = 1 if ctx.get("mode") == "progress" else 0
     sort = ctx.get("sort", 0)
 
     @new_thread('pch_sheet_upsert')
@@ -1467,15 +1468,18 @@ def _submit_quick(src, ctx):
     _do()
 
 
-def _sheet_addhand(src, ctx):
-    """用手持物品的 registry_id 建行（item_name 由后端据 registry_id 翻译补中文）。"""
+def _sheet_addhand(src, ctx, *, mode=0):
+    """用手持物品的 registry_id 建行（item_name 由后端据 registry_id 翻译补中文）。
+
+    mode 由命令树分支闭包烘入（同 _sheet_upsert，MCDR Literal 不入 ctx）：
+    0=lock（默认）/ 1=progress。
+    """
     player_name = _require_player(src)
     if not player_name:
         return
     server = src.get_server()
     sheet_id = ctx["sheet_id"]
     need = ctx["need"]
-    mode = 1 if ctx.get("mode") == "progress" else 0
     sort = ctx.get("sort", 0)
 
     @new_thread('pch_sheet_addhand')
