@@ -166,4 +166,103 @@ describe('forwardFillTimeline', () => {
       ['t2', 7],
     ])
   })
+
+  // —— 右沿末值锚点（endTime）——
+  it('endTime 严格晚于末点时，在末尾补 [endTime, lastValue]', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10), pt(1, 't2', 20)],
+      undefined,
+      't3',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t1', 10],
+      ['t2', 20],
+      ['t3', 20],
+    ])
+  })
+
+  it('endTime 等于末点时不补（避免重复点）', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10), pt(1, 't2', 20)],
+      undefined,
+      't2',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t1', 10],
+      ['t2', 20],
+    ])
+  })
+
+  it('endTime 早于末点时不补', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10), pt(1, 't3', 20)],
+      undefined,
+      't2',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t1', 10],
+      ['t3', 20],
+    ])
+  })
+
+  it('endTime 为 null 时不补', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10)],
+      undefined,
+      null,
+    )
+    expect(filled.get(1)).toEqual([['t1', 10]])
+  })
+
+  it('endTime 为 undefined 时不补', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10)],
+      undefined,
+      undefined,
+    )
+    expect(filled.get(1)).toEqual([['t1', 10]])
+  })
+
+  it('多 account 各自独立补末值锚点（末值不同）', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't1', 10), pt(2, 't2', 5)],
+      undefined,
+      't3',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t1', 10],
+      ['t2', 10],
+      ['t3', 10],
+    ])
+    expect(filled.get(2)).toEqual([
+      ['t2', 5],
+      ['t3', 5],
+    ])
+  })
+
+  it('与 0 锚点同时生效（startTime + endTime 两端锚点）', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, 't2', 15), pt(1, 't3', 30)],
+      't0',
+      't4',
+    )
+    expect(filled.get(1)).toEqual([
+      ['t0', 0],
+      ['t2', 15],
+      ['t3', 30],
+      ['t4', 30],
+    ])
+  })
+
+  it('真实 ISO 时间戳：endTime 为当前时间，末点为旧日期时补右沿', () => {
+    const filled = forwardFillTimeline(
+      [pt(1, '2026-07-01T00:00:00Z', 100)],
+      undefined,
+      '2026-08-06T12:00:00Z',
+    )
+    expect(filled.get(1)).toEqual([
+      ['2026-07-01T00:00:00Z', 100],
+      ['2026-08-06T12:00:00Z', 100],
+    ])
+  })
 })

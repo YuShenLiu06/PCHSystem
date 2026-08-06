@@ -130,10 +130,10 @@ export async function listSheets(opts?: ListSheetsOptions): Promise<SheetSummary
   return data
 }
 
-/** GET /sheets/{id} —— format 传 "csv" 返回 text/csv 字符串，省略返回 SheetDetail JSON */
-export async function getSheet(id: number, format?: 'csv'): Promise<SheetDetail | string> {
-  const { data } = await http.get<SheetDetail | string>(`/sheets/${id}`, {
-    params: format ? { format } : undefined,
+/** GET /sheets/{id} —— 返回 SheetDetail JSON */
+export async function getSheet(id: number): Promise<SheetDetail> {
+  const { data } = await http.get<SheetDetail>(`/sheets/${id}`, {
+    params: undefined,
   })
   return data
 }
@@ -177,7 +177,12 @@ export async function deleteRow(id: number, rowId: number): Promise<void> {
 
 /** GET /sheets/{id}?format=csv —— 单表 CSV 文本（JWT 鉴权） */
 export async function exportSheetCSV(id: number): Promise<string> {
-  return getSheet(id, 'csv') as Promise<string>
+  const { data } = await http.get<string>(`/sheets/${id}`, {
+    params: { format: 'csv' },
+    responseType: 'text',
+    transformResponse: (r) => r,
+  })
+  return data
 }
 
 /** GET /sheets/export —— 全量 CSV 文本（service token 鉴权） */

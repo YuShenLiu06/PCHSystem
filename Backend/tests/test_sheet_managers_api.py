@@ -357,7 +357,7 @@ async def _notifications_for(player_uuid: uuid.UUID) -> list:
                 )
             )
         ).scalars().all()
-        return [(r.category, r.title, r.body) for r in rows]
+        return [(r.category, r.title, r.body, r.payload) for r in rows]
 
 
 @pytest.mark.asyncio
@@ -371,12 +371,17 @@ async def test_revoke_sends_notification_to_revoked_player(client):
     assert resp.status_code == 200
 
     notes = await _notifications_for(mgr_u)
-    categories = [c for c, _, _ in notes]
+    categories = [c for c, *_ in notes]
     assert "sheet_manager_granted" in categories
     assert "sheet_manager_revoked" in categories
-    revoked = [(c, t, b) for c, t, b in notes if c == "sheet_manager_revoked"][0]
+    revoked = [(c, t, b, p) for c, t, b, p in notes if c == "sheet_manager_revoked"][0]
     assert revoked[1] == "你不再是项目协管员"
     assert "MyProj" in revoked[2] and "alice" in revoked[2]
+    # issue #45: payload 必须含 revoked_by_name（MCDR 模板占位符依赖）
+    assert revoked[3].get("revoked_by_name") == "alice"
+
+    granted = [(c, t, b, p) for c, t, b, p in notes if c == "sheet_manager_granted"][0]
+    assert granted[3].get("granted_by_name") == "alice"
 
 
 @pytest.mark.asyncio
@@ -390,7 +395,7 @@ async def test_self_revoke_does_not_notify(client):
     assert resp.status_code == 200
 
     notes = await _notifications_for(mgr_u)
-    categories = [c for c, _, _ in notes]
+    categories = [c for c, *_ in notes]
     assert "sheet_manager_granted" in categories
     assert "sheet_manager_revoked" not in categories
 

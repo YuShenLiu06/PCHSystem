@@ -207,6 +207,8 @@ def _register_commands(server: PluginServerInterface):
                 )
             )
             # 行级 upsert：add / set 同端点，mode 可选（默认 lock；字面量 lock|progress），sort 可选
+            # mode 由分支闭包烘入（MCDR Literal 不入 ctx，S-1：
+            # https://docs.mcdreforged.com/en/latest/code_references/command.html §Literal）
             .then(
                 Literal("add")
                 .then(
@@ -214,14 +216,14 @@ def _register_commands(server: PluginServerInterface):
                     .then(
                         QuotableText("item")
                         .then(
-                            Integer("need").runs(_sheet_upsert)
+                            Integer("need").runs(lambda s, c: _sheet_upsert(s, c, mode=0))
                             .then(
-                                Literal("lock").runs(_sheet_upsert)
-                                .then(Integer("sort").runs(_sheet_upsert))
+                                Literal("lock").runs(lambda s, c: _sheet_upsert(s, c, mode=0))
+                                .then(Integer("sort").runs(lambda s, c: _sheet_upsert(s, c, mode=0)))
                             )
                             .then(
-                                Literal("progress").runs(_sheet_upsert)
-                                .then(Integer("sort").runs(_sheet_upsert))
+                                Literal("progress").runs(lambda s, c: _sheet_upsert(s, c, mode=1))
+                                .then(Integer("sort").runs(lambda s, c: _sheet_upsert(s, c, mode=1)))
                             )
                         )
                     )
@@ -301,19 +303,20 @@ def _register_commands(server: PluginServerInterface):
                 .then(Integer("sheet_id").runs(_sheet_submit_oneclick))
             )
             # 手持物品建行：registry_id 取自手持物，mode/sort 可选（沿用 add 节点模式）
+            # mode 由分支闭包烘入（同 add，MCDR Literal 不入 ctx）
             .then(
                 Literal("addhand")
                 .then(
                     Integer("sheet_id")
                     .then(
-                        Integer("need").runs(_sheet_addhand)
+                        Integer("need").runs(lambda s, c: _sheet_addhand(s, c, mode=0))
                         .then(
-                            Literal("lock").runs(_sheet_addhand)
-                            .then(Integer("sort").runs(_sheet_addhand))
+                            Literal("lock").runs(lambda s, c: _sheet_addhand(s, c, mode=0))
+                            .then(Integer("sort").runs(lambda s, c: _sheet_addhand(s, c, mode=0)))
                         )
                         .then(
-                            Literal("progress").runs(_sheet_addhand)
-                            .then(Integer("sort").runs(_sheet_addhand))
+                            Literal("progress").runs(lambda s, c: _sheet_addhand(s, c, mode=1))
+                            .then(Integer("sort").runs(lambda s, c: _sheet_addhand(s, c, mode=1)))
                         )
                     )
                 )

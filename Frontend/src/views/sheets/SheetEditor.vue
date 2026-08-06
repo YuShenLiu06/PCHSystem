@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteSheet } from '../../api/sheets'
+import { deleteSheet, exportSheetCSV } from '../../api/sheets'
 import {
   getMyConstruction,
   joinConstruction,
@@ -159,6 +159,24 @@ function back(): void {
   router.push('/sheets')
 }
 
+async function onExportCSV(): Promise<void> {
+  try {
+    const csv = await exportSheetCSV(sheetId.value)
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const rawTitle = sheet.value?.title ?? `sheet_${sheetId.value}`
+    a.download = `${rawTitle.replace(/[\\/:*?"<>|]/g, '_')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e: unknown) {
+    ElMessage.error(sheetErrorMessage(e))
+  }
+}
+
 // 加入施工按钮（RS-2：仅控可见性，后端 RBAC 兜底）。
 // 按钮出现条件：sheet 可写（非 archived）+ sheet 处于 collecting 或 constructing。
 // 按钮三态依赖 getMyConstruction 读后端活跃 participant（同一账号同时最多 1 个，后端约束）。
@@ -287,6 +305,7 @@ watch(sheetId, () => {
         </template>
         <!-- 已归档：查看归档文档 -->
         <el-button v-if="isReadOnly" size="small" @click="archiveVisible = true">查看归档文档</el-button>
+        <el-button size="small" plain @click="onExportCSV">下载 CSV</el-button>
         <span style="color: #888; font-size: 12px;">所有者：{{ sheet.owner_name }}</span>
         <el-button v-if="canManage && !isReadOnly" type="danger" plain @click="onDeleteSheet">删除项目</el-button>
       </div>
