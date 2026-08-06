@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="Assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="Assets/logo.svg">
-  <img alt="PCHSystem" src="Assets/logo.svg" width="280">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/logo.svg">
+  <img alt="PCHSystem" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/logo.svg" width="280">
 </picture>
 
 # HTCMC Project Contribution & Honor System
@@ -30,7 +30,7 @@
   </a>
 </p>
 
-<img alt="PCHSystem Web 端预览" src="Assets/hero-site.png" width="800">
+<img alt="PCHSystem Web 端预览" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/hero-site.png" width="800">
 
 </div>
 
@@ -90,8 +90,8 @@
     <td align="center"><b>Web 端 · 施工贡献图表</b></td>
   </tr>
   <tr>
-    <td><img alt="游戏内材料清单" src="McdrPlugin/docs/img/sheet-mc.png"></td>
-    <td><img alt="施工贡献图表" src="McdrPlugin/docs/img/construction.png"></td>
+    <td><img alt="游戏内材料清单" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-mc.png"></td>
+    <td><img alt="施工贡献图表" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/construction.png"></td>
   </tr>
 </table>
 
@@ -103,24 +103,24 @@
     <td align="center"><b>游戏内 · 登录链接</b></td>
   </tr>
   <tr>
-    <td><img alt="Web 端在线表格" src="McdrPlugin/docs/img/sheet-web.png"></td>
-    <td><img alt="游戏内登录" src="McdrPlugin/docs/img/login.png"></td>
+    <td><img alt="Web 端在线表格" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-web.png"></td>
+    <td><img alt="游戏内登录" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/login.png"></td>
   </tr>
   <tr>
     <td align="center"><b>游戏内 · 数量换算</b></td>
     <td align="center"><b>Web 端 · 子物品提交</b></td>
   </tr>
   <tr>
-    <td><img alt="数量换算" src="McdrPlugin/docs/img/sheet-mc-amounts.png"></td>
-    <td><img alt="子物品提交" src="McdrPlugin/docs/img/sheet-web-sub.png"></td>
+    <td><img alt="数量换算" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-mc-amounts.png"></td>
+    <td><img alt="子物品提交" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-web-sub.png"></td>
   </tr>
   <tr>
     <td align="center"><b>项目归档</b></td>
     <td align="center"><b>通知投递</b></td>
   </tr>
   <tr>
-    <td><img alt="归档" src="McdrPlugin/docs/img/archived.png"></td>
-    <td><img alt="通知" src="McdrPlugin/docs/img/notify-1.png"></td>
+    <td><img alt="归档" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/archived.png"></td>
+    <td><img alt="通知" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/notify-1.png"></td>
   </tr>
 </table>
 </details>
@@ -174,7 +174,7 @@ curl http://localhost:8000/healthz
 
 <div align="center">
 
-<img alt="PCHSystem 架构图" src="Assets/architecture.png" width="720">
+<img alt="PCHSystem 架构图" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/architecture.png" width="720">
 
 </div>
 
