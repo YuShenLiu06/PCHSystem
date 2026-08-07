@@ -15,15 +15,15 @@
 
 ### Added
 
-- _暂无_
-
-### Changed
-
-- _暂无_
+- **`!!PCH bind` 可点击链接（#54）**：游戏内 bind 回执新增可点击链接，点击直接跳转绑定页面并预填短码。后端 `POST /bind/token`、`POST /bind/issue` 响应新增 `bind_url` 字段；前端 `BindConfirm.vue` 从 URL `?code=XXX` 预填短码；未登录跳登录后自动回到绑定页。
+- **setreg 自动改名 + 合并（#53）**：`!!PCH sheet setreg` 更改 registry_id 时，`item_name` 自动翻译为新中文名。若新 registry_id 与另一顶层行冲突，自动合并（progress 优先，need/delivered 求和，子物品 reparent 不删除）。
 
 ### Fixed
 
-- _暂无_
+- **合并触发 409（#53）**：`_merge_rows` 先删 source 再 update target，避免 `uq_sheet_rows_top_name` 唯一约束冲突。
+- **`find_top_level_row_by_registry` 多行时 500**：改用 `.first()` 避免多结果 `MultipleResultsError`。
+- **合并丢失 contributor 贡献量**：source 贡献者 `contributed_qty` 正确累加到 target（`on_conflict_do_update`），不再清零。
+- **合并忽略用户显式传参**：`body.need_qty` / `body.mode` 显式传入时优先于求和。
 
 ### Security
 

@@ -522,6 +522,112 @@ async def test_delete_row(client):
     assert detail["rows"] == []
 
 
+# ---------- Issue #53：setreg 自动改名 + 合并 ----------
+async def _upsert_row_with_registry(client, bearer, sid, item=None, registry_id=None, need=64, mode=0, row_id=None):
+    """带 registry_id 的 upsert 辅助。"""
+    body = {"need_qty": need, "mode": mode, "sort_order": 0}
+    if item is not None:
+        body["item_name"] = item
+    if registry_id is not None:
+        body["registry_id"] = registry_id
+    if row_id is not None:
+        body["row_id"] = row_id
+    resp = await client.put(f"/sheets/{sid}/rows", json=body, headers=_auth(bearer))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_setreg_auto_rename_to_translated_name(client):
+    """Issue #53：改 registry_id 时 item_name 自动变为译名。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 建一行无 registry_id，item_name = 随便取的名
+    row = await _upsert_row(client, bearer, sid, "随便叫的", 10, 0)
+    # setreg：改 registry_id，不传 item_name
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": row["id"], "registry_id": "minecraft:oak_log"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["registry_id"] == "minecraft:oak_log"
+    # item_name 应自动变为译名（橡木原木），不再是旧名
+    assert body["item_name"] != "随便叫的"
+    assert "橡木" in body["item_name"] or body["item_name"] == "minecraft:oak_log"
+
+
+@pytest.mark.asyncio
+async def test_setreg_merge_same_registry_top_level(client):
+    """Issue #53：改 registry_id 撞到同 registry_id 顶层行 → 合并 need_qty、source 删除。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 行A：有 registry_id = oak_log，need=32
+    row_a = await _upsert_row_with_registry(client, bearer, sid, registry_id="minecraft:oak_log", need=32)
+    # 行B：无 registry_id，need=10
+    row_b = await _upsert_row(client, bearer, sid, "随便叫的", 10, 0)
+    # setreg 行B 的 registry_id = oak_log → 撞行A → 合并
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": row_b["id"], "registry_id": "minecraft:oak_log"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    merged = resp.json()
+    # 合并后 need = 32 + 10 = 42
+    assert merged["need_qty"] == 42
+    # 表里只剩 1 行（source 被删）
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
+    assert len(detail["rows"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_setreg_merge_progress_priority(client):
+    """Issue #53：合并时 mode progress 优先（一 lock 一 progress → progress）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 行A：progress，registry_id=oak_log，need=20，delivered=5
+    row_a = await _upsert_row_with_registry(client, bearer, sid, registry_id="minecraft:oak_log", need=20, mode=1)
+    # 行B：lock，无 registry_id，need=10
+    row_b = await _upsert_row(client, bearer, sid, "随便叫的", 10, 0)
+    # setreg 行B → 撞行A
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": row_b["id"], "registry_id": "minecraft:oak_log"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    merged = resp.json()
+    # 合并后 mode = progress（1）
+    assert merged["mode"] == 1
+    # need = 20 + 10 = 30
+    assert merged["need_qty"] == 30
+
+
+@pytest.mark.asyncio
+async def test_setreg_no_merge_when_no_conflict(client):
+    """Issue #53：改 registry_id 不撞名 → 正常改名，不合并。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    # 行A：registry_id = oak_log
+    await _upsert_row_with_registry(client, bearer, sid, registry_id="minecraft:oak_log", need=32)
+    # 行B：无 registry_id
+    row_b = await _upsert_row(client, bearer, sid, "随便叫的", 10, 0)
+    # setreg 行B = birch_log（不撞行A 的 oak_log）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": row_b["id"], "registry_id": "minecraft:birch_log"},
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["registry_id"] == "minecraft:birch_log"
+    # 仍有 2 行（没合并）
+    detail = (await client.get(f"/sheets/{sid}", headers=_auth(bearer))).json()
+    assert len(detail["rows"]) == 2
+
+
 @pytest.mark.asyncio
 async def test_delete_row_non_owner_forbidden(client):
     _, bearer_a = await _make_player("alice")

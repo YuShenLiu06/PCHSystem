@@ -183,15 +183,18 @@ def _bind(src, ctx):
         if isinstance(result, HttpError):
             server.tell(player_name, BIND_CONSUME_FAIL.format(reason=f"HTTP {result.status}: {result.detail}"))
             return
-        # result: dict {"short_code": "ABC123", "expires_in": 600}
-        # 整行 BIND_OK_TEMPLATE 已带 §7 灰色前缀（敏感信息规则，禁 § 高亮），
-        # 短码作为字符串嵌入即可（MC 聊天纯文本不可点击，无复制风险）。
+        # result: dict {"short_code": "ABC123", "expires_in": 600, "bind_url": "..."}
+        # 镜像 _login 回执：短码灰色文本（敏感信息禁 § 高亮）+ 可点击链接跳绑定页面
         short_code = str(result.get("short_code", ""))
         expires_in = int(result.get("expires_in", 600))
-        server.tell(player_name, BIND_OK_TEMPLATE.format(
-            code=short_code,
-            minutes=expires_in // 60,
-        ))
+        bind_url = str(result.get("bind_url", ""))
+        parts = [
+            RText(f"§7收到绑定请求，你的短码是 {short_code}"
+                  f"（有效期 {expires_in // 60} 分钟）§r\n"),
+        ]
+        if bind_url:
+            parts.append(rtext_link(bind_url, label="[点击此处打开绑定页面]"))
+        server.tell(player_name, RTextList(*parts))
 
     _do()
 

@@ -40,10 +40,10 @@ class BindClientTest(unittest.TestCase):
     NAME = "TestPlayer"
 
     def test_request_bind_token_success(self):
-        """POST /bind/token 成功返回 short_code + expires_in。"""
-        with mock.patch.object(bc.requests, "request", return_value=_resp(200, {"short_code": "ABC123", "expires_in": 600})):
+        """POST /bind/token 成功返回 short_code + expires_in + bind_url。"""
+        with mock.patch.object(bc.requests, "request", return_value=_resp(200, {"short_code": "ABC123", "expires_in": 600, "bind_url": "http://localhost:5173/bind/confirm?code=ABC123"})):
             out = bc.request_bind_token(_cfg(), self.NAME, self.UUID)
-        self.assertEqual(out, {"short_code": "ABC123", "expires_in": 600})
+        self.assertEqual(out, {"short_code": "ABC123", "expires_in": 600, "bind_url": "http://localhost:5173/bind/confirm?code=ABC123"})
 
     def test_request_bind_token_headers_no_player_uuid(self):
         """request_bind_token 头不含 X-Player-UUID（玩家为自己申请）。"""

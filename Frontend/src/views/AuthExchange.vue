@@ -17,7 +17,9 @@ onMounted(async () => {
   const token = route.query.token as string | undefined
   if (!token) {
     // 无 token（非 !!PCH login 回链：直接访问/书签/手输）→ 转账号密码登录
-    router.replace('/login')
+    // 保留 redirect 参数（如 bind/confirm?code=XXX 经路由守卫带来的 redirect）
+    const redirect = route.query.redirect as string | undefined
+    router.replace(redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login')
     return
   }
   try {
@@ -33,8 +35,11 @@ onMounted(async () => {
       resp.account,
     )
     ElMessage.success(`欢迎，${resolveDisplayName(resp.account, resp.player)}`)
-    // 临时账号引导注册，否则进 /me
-    if (resp.account.is_temporary) {
+    // 优先跳 redirect（如 bind 链接带来的 /bind/confirm?code=XXX）；临时账号引导注册，否则进 /me
+    const redirect = route.query.redirect as string | undefined
+    if (redirect) {
+      router.replace(redirect)
+    } else if (resp.account.is_temporary) {
       router.replace('/register')
     } else {
       router.replace('/me')
