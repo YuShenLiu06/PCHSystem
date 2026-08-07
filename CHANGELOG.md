@@ -17,6 +17,7 @@
 
 - **`!!PCH bind` 可点击链接（#54）**：游戏内 bind 回执新增可点击链接，点击直接跳转绑定页面并预填短码。后端 `POST /bind/token`、`POST /bind/issue` 响应新增 `bind_url` 字段；前端 `BindConfirm.vue` 从 URL `?code=XXX` 预填短码；未登录跳登录后自动回到绑定页。
 - **setreg 自动改名 + 合并（#53）**：`!!PCH sheet setreg` 更改 registry_id 时，`item_name` 自动翻译为新中文名。若新 registry_id 与另一顶层行冲突，自动合并（progress 优先，need/delivered 求和，子物品 reparent 不删除）。
+- **游戏端**：箱子一键提交（`!!submitc`，issue #48）—— 准星检测 6 格内首个容器或指定坐标，RCON 读取箱子内容后批量提交到表格。无参重开上次表（镜像 `!!submit`），坐标模式 `!!submitc <表id> <x> <y> <z>`。复用已有 `submit-batch` 端点，后端零改动。
 
 ### Fixed
 

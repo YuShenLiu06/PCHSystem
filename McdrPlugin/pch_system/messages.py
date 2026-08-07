@@ -126,6 +126,15 @@ SHEET_SUBMIT_SKIP_HEAD = "§e跳过 {n} 行：\n"
 SHEET_SUBMIT_FOLDED_LINE = "§7（另有 {n} 行与您无关已折叠：他人认领或背包未携带）"
 SHEET_SUBMIT_READY_FOLDED_LINE = "§7（另有 {n} 行已备齐/进度已满，已折叠）"
 SHEET_SUBMIT_FAIL = "§c一键提交处理失败：{err}（详见服务器日志，请稍后重试）"
+# 箱子提交（issue #48）
+SHEET_SUBMIT_CHEST_HEAD = "§6§l[📦 箱子提交 #{id}]§r"
+SHEET_SUBMIT_CHEST_NOT_FOUND = "§7准星 6 格内未检测到容器，请对准箱子或使用 !!submitc <表id> <x> <y> <z> 指定坐标"
+SHEET_SUBMIT_CHEST_NOT_CONTAINER = "§c该坐标不是容器方块"
+SHEET_SUBMIT_EMPTY_CHEST = "§7箱子为空，无可提交的材料"
+SHEET_SUBMIT_NO_RCON = "§cRCON 未运行，无法读取方块数据（请联系管理员开启 RCON）"
+SHEET_SUBMIT_CHEST_FAIL = "§c箱子提交处理失败：{err}（详见服务器日志，请稍后重试）"
+SHEET_SUBMIT_CHEST_NO_API = "§c无法获取玩家位置（minecraft_data_api 插件未加载），请使用 !!submitc <表id> <x> <y> <z> 指定坐标"
+SHEET_SUBMIT_CHEST_NO_POS = "§c无法获取玩家位置数据，请稍后重试或使用 !!submitc <表id> <x> <y> <z> 指定坐标"
 
 # === 项目三阶段生命周期（collecting → constructing → archived）===
 # 阶段标签：collecting 收集中(§b) / constructing 施工中(§e) / archived 已归档(§a)
