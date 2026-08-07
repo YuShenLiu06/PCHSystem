@@ -27,9 +27,14 @@
 | 配置键、YAML / JSON 字段 | **蛇形 snake_case** | `api_url`、`service_token` |
 | 数据库表 / 列 | **蛇形 snake_case** | `score_ledger`、`player_uuid`（见 [data-model.md](./Docs/architecture/data-model.md)） |
 | Skill 目录、`.claude/` 配置 | **kebab-case**（系统例外） | `service-claude-md/` —— 沿用 Claude Code 工具链约定 |
+| **文档文件**（`Docs/**/*.md`） | **kebab-case 小写** | `data-model.md`、`user-service.md`、`runbook.md` |
+| **文档子目录**（`Docs/` 下） | **小写**（单词或 kebab-case） | `architecture/`、`release-notes/`、`cheatsheets/`、`mcdr-plugin/` |
 
 > **原则**：目录与类用大驼峰；变量与方法用蛇形；Python 可 `import` 的包/模块、SQL 表列、配置键、Claude 工具链目录沿用各自生态惯例。
 > 全局 `naming-conventions` skill 的「目录 snake_case」约定**在本项目被本表覆盖**。
+>
+> **文档目录例外**：「目录 PascalCase」仅适用于代码域/容器目录（`Backend/`、`Frontend/`、`McdrPlugin/`）。`Docs/` 下的子目录是文档内容目录，沿用 Markdown/Web 内容惯例（小写），不适用 PascalCase。
+> **文档命名细则**：`services/` 下服务文档统一 `<name>-service.md`（`mcdr-plugin.md` 保留 `-plugin` 后缀，语义正确）；模板文件用 `<name>.template.md`，前缀 kebab-case。
 
 ---
 
@@ -83,8 +88,8 @@ PCHSystem/
 ├── .env.example                       # compose 环境变量模板
 ├── Docs/                              # 架构与设计文档（权威）
 │   ├── architecture.md                #   工程架构统一总览
-│   ├── guied.md                       #   玩法设计
-│   ├── Cheatsheets/dev-cheatsheet.md  #   开发指令速查
+│   ├── guide.md                       #   玩法设计
+│   ├── cheatsheets/dev-cheatsheet.md  #   开发指令速查
 │   └── architecture/                  #   data-model / frontend / services/* / api/*
 ├── Backend/        (M1+M2 已实现)     # FastAPI 模块化单体   → 内含 CLAUDE.md
 ├── Frontend/       (F1–F4 已实现)     # Vue3 后台            → 内含 CLAUDE.md
@@ -101,7 +106,7 @@ PCHSystem/
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | 工程架构总览 | [`Docs/architecture.md`](./Docs/architecture.md) | 三端架构、技术栈、ADR、风险矩阵、跨服务流程 |
-| 玩法设计 | [`Docs/guied.md`](./Docs/guied.md) | 黄皮子积分体系、项目管理、荣誉激励、风控 |
+| 玩法设计 | [`Docs/guide.md`](./Docs/guide.md) | 黄皮子积分体系、项目管理、荣誉激励、风控 |
 | 数据模型 | [`Docs/architecture/data-model.md`](./Docs/architecture/data-model.md) | 全部表结构、约束、索引、ER 图 |
 | 前端 | [`Docs/architecture/frontend.md`](./Docs/architecture/frontend.md) | Vue3 后台模块、鉴权、构建 |
 
@@ -109,8 +114,8 @@ PCHSystem/
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | 贡献与发布规范 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 分支模型 / Conventional Commits / 各组件独立 SemVer / MCDR 插件发布（参考 MCDR 标准） |
-| 开发指令速查表 | [`Docs/Cheatsheets/dev-cheatsheet.md`](./Docs/Cheatsheets/dev-cheatsheet.md) | 日常开发高频运维 / 调试指令（Docker / MCDR / 后端 / 前端）速查 |
-| 运维手册 | [`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md) | dev/staging 部署 / 健康检查 / 排错 / 回滚流程 |
+| 开发指令速查表 | [`Docs/cheatsheets/dev-cheatsheet.md`](./Docs/cheatsheets/dev-cheatsheet.md) | 日常开发高频运维 / 调试指令（Docker / MCDR / 后端 / 前端）速查 |
+| 运维手册 | [`Docs/runbook.md`](./Docs/runbook.md) | dev/staging 部署 / 健康检查 / 排错 / 回滚流程 |
 
 ### 各服务文档
 | 服务 | 路径 |
@@ -164,4 +169,4 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-07-28（精简 §7：已完成项的历史统一迁至 [`CHANGELOG.md`](./CHANGELOG.md)，本节仅保留未完成项；迭代 4-5 落地：加入施工机制 + 上报事件流水 + 按材料封顶 + 图表 xAxis/0 锚点修复 + MCDR 按玩家路由 + join/leave/current 命令，详见各子服务 CLAUDE.md「增量(2026-07-28)」段）*
+*最后更新：2026-08-07（§1 新增文档命名规范：Docs/ 文件 kebab-case 小写、子目录小写；统一对齐存量文件命名 + 全量交叉引用更新）*

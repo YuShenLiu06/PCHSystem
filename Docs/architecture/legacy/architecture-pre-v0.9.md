@@ -5,7 +5,7 @@
 # HTCMC PCHSystem 架构文档（统一总览）
 
 > **版本**：v0.1（2026-07-01 初版）
-> **玩法设计**：见 [`guied.md`](./guied.md)
+> **玩法设计**：见 [`guide.md`](./guide.md)
 > **本文档定位**：工程架构的统一总览与导航。各服务详见 [`architecture/services/`](./architecture/services/)，全局数据模型详见 [`architecture/data-model.md`](./architecture/data-model.md)，前端详见 [`architecture/frontend.md`](./architecture/frontend.md)。
 
 ---

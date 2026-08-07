@@ -4,7 +4,7 @@
 
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5 / §7.2
 > **数据模型**：[`../data-model.md`](../data-model.md) §4（`scoring` schema）
-> **玩法公式依据**：[`../../guied.md`](../../guied.md) 黄皮子积分体系
+> **玩法公式依据**：[`../../guide.md`](../../guide.md) 黄皮子积分体系
 
 ## 1. 职责边界
 

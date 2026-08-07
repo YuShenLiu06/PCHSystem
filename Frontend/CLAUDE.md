@@ -124,13 +124,13 @@ npm run dev                 # 启 Vite dev server（默认 http://localhost:5173
 
 ## 7. 与根规范的关系
 
-- 遵守根 [`CLAUDE.md`](../CLAUDE.md) 的命名分层（§1：目录大驼峰 `Frontend/`、Vue 组件 PascalCase）与全局红线（§3 R-1~R-12）。
+- 遵守根 [`CLAUDE.md`](../CLAUDE.md) 的命名分层（§1：目录大驼峰 `Frontend/`、Vue 组件 PascalCase、文档文件 kebab-case 小写）与全局红线（§3 R-1~R-12）。
 - 本文件的 RS-x 红线是**服务特有**补充，不覆写全局红线。
 - 命名 / 全局红线 / 技术栈若有冲突，以根 CLAUDE.md 为准并修正本文件。
 
 ---
 
-*最后更新：2026-07-28（迭代 4-5：加入施工 UI + 上报历史面板 + 图表 xAxis/0 锚点修复，详见 §4 端点表新增行）*
+*最后更新：2026-08-07（文档命名规范统一：Docs/ 文件 kebab-case 小写）*
 
 *增量（2026-07-28 迭代 4-5）：§4 端点表加 `/v1/construction/me/{construction,join,switch,leave,report-events}` 行——`Me.vue` 加「当前施工项目」卡片（活跃 participant + 退出按钮）+「我的上报历史」面板（`report-events` 时间轴，迭代 5）；`SheetEditor.vue` 加入/切换施工按钮三态（未加入/已加入本项目/已加入他项目 → join/禁用/switch + 二次确认）；`ConstructionProgress.vue` 图表 xAxis 锚定 `construction_started_at` → `archived_at` 或当前时间；`utils/timelineFill.ts` 0 锚点 + `compareTs` 数值时间戳比较（容错不同 ISO 格式 + 占位串回退字典序）。详见 [`flows/construction-progress.md`](../Docs/architecture/flows/construction-progress.md) §6.1/§6.2。*
 

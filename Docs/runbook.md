@@ -1,7 +1,7 @@
 # 运维手册（RUNBOOK）
 
 > HTCMC PCHSystem · **dev / staging / 服主自部署 运维手册**，聚焦**部署 / 排错 / 回滚**流程。
-> 日常高频**指令清单**见 [`Cheatsheets/dev-cheatsheet.md`](./Cheatsheets/dev-cheatsheet.md)；服主一键部署的**完整选项 / 边界**见 [`../Scripts/README.md`](../Scripts/README.md)（本文只摘要）。
+> 日常高频**指令清单**见 [`cheatsheets/dev-cheatsheet.md`](./cheatsheets/dev-cheatsheet.md)；服主一键部署的**完整选项 / 边界**见 [`../Scripts/README.md`](../Scripts/README.md)（本文只摘要）。
 
 ---
 
@@ -157,7 +157,7 @@ postgres 数据落 `pgdata` volume；整体恢复用 volume 备份，**禁止** 
 | 文档 | 用途 |
 |---|---|
 | [`../Scripts/README.md`](../Scripts/README.md) | 服主一键 install/update 完整选项 / 网络 / token / 前端部署 / 边界 |
-| [`Cheatsheets/dev-cheatsheet.md`](./Cheatsheets/dev-cheatsheet.md) | 日常高频指令速查 |
+| [`cheatsheets/dev-cheatsheet.md`](./cheatsheets/dev-cheatsheet.md) | 日常高频指令速查 |
 | [`../Backend/CLAUDE.md`](../Backend/CLAUDE.md) §5 | 后端热重载 / 排错 |
 | [`../McdrPlugin/CLAUDE.md`](../McdrPlugin/CLAUDE.md) §7 | MCDR 插件热重载 / 排错 |
 | [`../Frontend/CLAUDE.md`](../Frontend/CLAUDE.md) §6 | 前端热重载 / 排错 |

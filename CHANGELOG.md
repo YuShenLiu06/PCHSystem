@@ -554,4 +554,4 @@
 3. 重置 `[Unreleased]` 段为空占位。
 4. 打对应 tag。
 
-> MCDR tag 改名背景见 [`Docs/Reports/mcdr-publishing-strategy.md`](./Docs/Reports/mcdr-publishing-strategy.md)。
+> MCDR tag 改名背景见 [`Docs/reports/mcdr-publishing-strategy.md`](./Docs/reports/mcdr-publishing-strategy.md)。

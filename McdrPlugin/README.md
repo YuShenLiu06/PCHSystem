@@ -75,7 +75,7 @@ PCHSystem 面向**白名单生电社区服**，围绕「**项目制协作 + 积�
 - **黄皮子积分**（*规划中*）：项目设固定积分池，按玩家交付 / 贡献占比分配——物品收集类按材料占比；建造放置类按放置 + 收集加权；负责人享额外奖励。
 - **荣誉激励**（*规划中*）：总榜 / 赛季榜 / 项目榜；积分达标解锁指数增长的称号，聊天前缀展示，高阶称号解锁社区权益。
 
-> 完整玩法设计见 [`Docs/guied.md`](../Docs/guied.md)。⚠️ **积分 / 称号 / 自治等玩法依赖的后端能力尚未交付，当前主要可用的是项目协作与归档。**
+> 完整玩法设计见 [`Docs/guide.md`](../Docs/guide.md)。⚠️ **积分 / 称号 / 自治等玩法依赖的后端能力尚未交付，当前主要可用的是项目协作与归档。**
 
 ## 依赖
 
@@ -123,7 +123,7 @@ bash Scripts/install.sh
 
 ### B. 手动部署
 
-按 [`Docs/RUNBOOK.md`](../Docs/RUNBOOK.md) §3：
+按 [`Docs/runbook.md`](../Docs/runbook.md) §3：
 
 ---
 
@@ -163,11 +163,11 @@ bash Scripts/install.sh
 | 内容 | 路径 |
 |---|---|
 | 主仓库 | <https://github.com/YuShenLiu06/PCHSystem> |
-| 玩法设计 | [`Docs/guied.md`](../Docs/guied.md) |
+| 玩法设计 | [`Docs/guide.md`](../Docs/guide.md) |
 | 工程架构总览 | [`Docs/architecture.md`](../Docs/architecture.md) |
 | 本插件架构（权威） | [`Docs/architecture/services/mcdr-plugin.md`](../Docs/architecture/services/mcdr-plugin.md) |
-| 发布策略报告 | [`Docs/Reports/mcdr-publishing-strategy.md`](../Docs/Reports/mcdr-publishing-strategy.md) |
+| 发布策略报告 | [`Docs/reports/mcdr-publishing-strategy.md`](../Docs/reports/mcdr-publishing-strategy.md) |
 | 部署脚本说明 | [`Scripts/README.md`](../Scripts/README.md) |
-| 运维手册 | [`Docs/RUNBOOK.md`](../Docs/RUNBOOK.md) |
+| 运维手册 | [`Docs/runbook.md`](../Docs/runbook.md) |
 | 变更日志 | [`CHANGELOG.md`](../CHANGELOG.md) |
 | 待办清单 | [`TODO.md`](../TODO.md) |

@@ -37,7 +37,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | **RS-3** | **遵守 R-3 + R-4：清箱功能已废弃（v0.8.0 起）** | 根 R-3/R-4 已改写为「插件不再提供清箱功能」。原 `data merge block {Items:[]}` 清箱时序与 `/clear` 均已下线；`!!PCH sheet submit` 为**纯申报**——`scanner` 扫描背包按 `registry_id` 匹配行后调后端 `contribute`/`delivery`，**不清除玩家背包物品**。 |
 | **RS-4** | **遵守 R-7：纯客户端定位** | 不做积分计算、不持久化业务数据、不做 wiki 同步、不缓存超过「短时显示用」所需的玩家信息。 |
 | **RS-5** | **遵守 R-11：密钥不进代码库** | `service_token` / `api_url` / RCON 密码经 `config.json`（本地）或环境变量注入；`config.json` 已在 `.gitignore`。仓库只提交 `config.json.example`。 |
-| **RS-6** | **遵守 R-12：阻塞调用放 `@new_thread`** | 所有 HTTP 调用、RCON 查询、NBT 解析必须用 `@new_thread(...)`（`mcdreforged.api.decorator.new_thread`）卸载到后台线程；`schedule_task` 的同步回调跑在 task executor = 主线程，**禁止**用来卸载阻塞工作（曾导致 `!!PCH login` 卡顿——见 [`Docs/McdrPlugin/mcdr-api-cheatsheet.md`](../Docs/McdrPlugin/mcdr-api-cheatsheet.md) §8「常见误区」）；HTTP 必含超时（≤10s）+ 重试 + 失败回执给玩家（`server.tell` 线程安全，可在后台线程直接回执）。 |
+| **RS-6** | **遵守 R-12：阻塞调用放 `@new_thread`** | 所有 HTTP 调用、RCON 查询、NBT 解析必须用 `@new_thread(...)`（`mcdreforged.api.decorator.new_thread`）卸载到后台线程；`schedule_task` 的同步回调跑在 task executor = 主线程，**禁止**用来卸载阻塞工作（曾导致 `!!PCH login` 卡顿——见 [`Docs/mcdr-plugin/mcdr-api-cheatsheet.md`](../Docs/mcdr-plugin/mcdr-api-cheatsheet.md) §8「常见误区」）；HTTP 必含超时（≤10s）+ 重试 + 失败回执给玩家（`server.tell` 线程安全，可在后台线程直接回执）。 |
 | **RS-7** | **SNBT 解析不自研** | 潜影盒 / 复杂 NBT 一律走 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)，不为 SNBT 写正则或手写解析器；写完用真实潜影盒样本测试。 |
 | **RS-8** | **离线 UUID 推导只依赖 `uuid_api_remake`** | 不要在插件内重写 `OfflinePlayer.nameUUIDFromBytes` —— 复用 `uuid_api_remake.get_uuid(name)`（已在 `pch_system/__init__.py` 验证可用），保证与 `uuid_api_remake.mcdr` 全局一致。 |
 | **RS-9** | **称号 scoreboard prefix 兼容性** | team prefix 会干扰 MCDR 玩家名解析；部署时必须配合 [Title Prefix Handler](https://mcdreforged.com/zh-CN/plugin/title_prefix_handler)，并在真机回归玩家名解析。Fabric + Carpet 下聊天/Tab 前缀渲染待真机验证。 |
@@ -116,7 +116,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | **本服务架构（权威）** | [`../Docs/architecture/services/mcdr-plugin.md`](../Docs/architecture/services/mcdr-plugin.md) | 完整职责 / 接口 / 内部实现 / 风险矩阵 |
-| **MCDR API 速查** | [`../Docs/McdrPlugin/mcdr-api-cheatsheet.md`](../Docs/McdrPlugin/mcdr-api-cheatsheet.md) | 命令节点树、RText、schedule_task、事件、RCON 速查（Team B 维护） |
+| **MCDR API 速查** | [`../Docs/mcdr-plugin/mcdr-api-cheatsheet.md`](../Docs/mcdr-plugin/mcdr-api-cheatsheet.md) | 命令节点树、RText、schedule_task、事件、RCON 速查（Team B 维护） |
 | 数据模型 | [`../Docs/architecture/data-model.md`](../Docs/architecture/data-model.md) | 全局表结构与约束（本服务不直连，仅对照） |
 | **sheets API** | [`../Docs/architecture/api/sheets.md`](../Docs/architecture/api/sheets.md) | §2 鉴权 / §11 `!!PCH sheet` 命令映射 / §12 通知端点（RS-13/RS-14 依据） |
 | **construction API** | [`../Docs/architecture/api/construction.md`](../Docs/architecture/api/construction.md) | §3 双鉴权（report 单头 service-token → `{mcdr,official}` / active-sheets 双头）/ §5 C-1~C-10 默认追踪器实现契约（RS-15 依据） |
@@ -181,7 +181,7 @@ src.reply(
 )
 ```
 
-完整 API 速查见 [`Docs/McdrPlugin/mcdr-api-cheatsheet.md`](../Docs/McdrPlugin/mcdr-api-cheatsheet.md) §6（RText 色彩系统）。
+完整 API 速查见 [`Docs/mcdr-plugin/mcdr-api-cheatsheet.md`](../Docs/mcdr-plugin/mcdr-api-cheatsheet.md) §6（RText 色彩系统）。
 
 ---
 
@@ -215,13 +215,13 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 
 ## 8. 与根规范的关系
 
-- 遵守根 [`CLAUDE.md`](../CLAUDE.md) 的命名分层（§1）与全局红线（§3 S-1~S-2、R-1~R-12）。
+- 遵守根 [`CLAUDE.md`](../CLAUDE.md) 的命名分层（§1：目录大驼峰 `McdrPlugin/`、Python 包小写、文档文件 kebab-case 小写）与全局红线（§3 S-1~S-2、R-1~R-12）。
 - 本文件的 RS-x 红线是**服务特有**补充，不覆写全局红线。
 - 命名 / 全局红线 / 技术栈若有冲突，以根 CLAUDE.md 为准并修正本文件。
 
 ---
 
-*最后更新：2026-07-28（v0.9.0-rc.1：按玩家路由 + join/leave/current 命令，详见 RS-15 v0.9.0-rc.1 增量段）*
+*最后更新：2026-08-07（文档命名规范统一：Docs/ 文件 kebab-case 小写）*
 
 *增量（2026-07-28 v0.9.0-rc.1）：RS-15 段补按玩家路由 + join 命令——`construction_tracker._flush_once` 重写（`lookup_active_by_uuids` 批量查 `{uuid: sheet_id}` 后分桶上报：显式 sheet_id 优先 / heuristic fallback 恰 1 constructing / 无显式无 fallback skip 推进 baseline，取代 v0.9 整轮 heuristic gate）；lookup 网络失败降级 `mappings={}` + heuristic fallback 仍可用。新增 `!!PCH construction join [sheet_id]` / `leave` / `current`（双头代玩家写 `/me/{join,leave,construction}`，RS-13；`@new_thread` + 哨兵/HttpError 分支回执，401/403/404/409 中文翻译含「项目已归档」/「已加入他项目」分流）。`construction_client.py` 加 `lookup_active_by_uuids`/`join_construction`/`leave_construction`/`get_my_construction`。`!!PCH` 帮助页加 `construction` 条目。详见 [`api/construction.md`](../Docs/architecture/api/construction.md) §4.2/§5。*
 

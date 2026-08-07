@@ -2,7 +2,7 @@
 
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5 / §8
 > **数据模型**：[`../data-model.md`](../data-model.md) §7（`alerts` schema）
-> **玩法依据**：[`../../guied.md`](../../guied.md) 风控兜底
+> **玩法依据**：[`../../guide.md`](../../guide.md) 风控兜底
 
 ## 1. 职责边界
 
@@ -96,7 +96,7 @@ def maybe_flag_review(player_uuid):
     if high_count >= THRESHOLD:
         user_service.set_whitelist(player_uuid, "under_review")
 ```
-- **不自动移除白名单**，仅置 `under_review` 等待人工裁决（呼应 guied.md「风控前置入服」的克制原则）。
+- **不自动移除白名单**，仅置 `under_review` 等待人工裁决（呼应 guide.md「风控前置入服」的克制原则）。
 
 ## 4. 依赖的其他服务
 
