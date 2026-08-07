@@ -136,13 +136,13 @@ curl -sS http://localhost:8000/me                   # 应返回 401（未带 JWT
 
 ## 7. 与根规范的关系
 
-- 遵守根 [`CLAUDE.md`](../CLAUDE.md) 的命名分层（§1：变量/方法 snake_case、类 PascalCase、SQL 表列 snake_case）与全局红线（§3 R-1~R-12）。
+- 遵守根 [`CLAUDE.md`](../CLAUDE.md) 的命名分层（§1：变量/方法 snake_case、类 PascalCase、SQL 表列 snake_case、文档文件 kebab-case 小写）与全局红线（§3 R-1~R-12）。
 - 本文件的 RS-x 红线是**服务特有**补充，不覆写全局红线。
 - 待后端拆分为 `user_service/` 等子目录后，本文件职责下放给各子服务 CLAUDE.md（由 `service-claude-md` skill 生成）。
 
 ---
 
-*最后更新：2026-07-28（迭代 4-5：加入施工机制 + 上报事件流水 + 按材料封顶 + 图表/并发 CR 修复，详见 RS-12 增量段）*
+*最后更新：2026-08-07（文档命名规范统一：Docs/ 文件 kebab-case 小写）*
 
 *增量（2026-07-28 迭代 4-5）：RS-12 段补 4 处增量——① 加入施工机制（迁移 0021 `construction_participants` + `uq_participants_active` partial unique index + `enforce_single_construction` 升第 6 运行时开关默认 True，auto join 由 `sheet_repo._maybe_auto_join` 在 claim/contribute 触发、manual join/switch/leave 经 `/me/*` 端点，归档经 `close_all_participants` 批量退出）；② 按材料封顶（迁移 0022 回填，`submit_report` 逐条按 `(sheet_id, registry_id)` 跨账号合计净放置不得超过 `sum(need_qty)`，超量分支 `accepted`(部分) + `skipped`(over)，满额整条 skip）；③ 上报事件流水（迁移 0023 `report_events`，`_flush_report_events` 对 bound 玩家逐条落 `accepted` + 所有 `skipped` reason，best-effort + SAVEPOINT 隔离）；④ CR 修复（`/me/switch` 显式 leave+join 同事务绕开 409 / `join_construction` `begin_nested` + `MAX_JOIN_RETRIES` 有界重试 / `PlacementSnapshot`/`ReportEvent` SAVEPOINT 隔离失败不污染外层 / `Participant.updated_at` 显式刷新）。新增 6 端点：`GET /me/construction`、`POST /me/join`、`POST /me/switch`、`POST /me/leave`、`GET /me/report-events`、`POST /active-by-uuids`。详见 [`api/construction.md`](../Docs/architecture/api/construction.md) §4.2/§5/§7。*
 

@@ -2,7 +2,7 @@
 
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5 / §7.3
 > **数据模型**：[`../data-model.md`](../data-model.md) §5（`titles` schema）
-> **玩法依据**：[`../../guied.md`](../../guied.md) 指数称号梯度
+> **玩法依据**：[`../../guide.md`](../../guide.md) 指数称号梯度
 
 ## 1. 职责边界
 

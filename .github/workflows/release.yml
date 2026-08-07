@@ -130,7 +130,7 @@ jobs:
       - name: 准备 release notes
         run: |
           {
-            cat Docs/release-notes/pch_system.template.md
+            cat Docs/release-notes/pch-system.template.md
             echo
             python3 .github/scripts/changelog_section.py "${GITHUB_REF_NAME}"
           } > release-notes.md

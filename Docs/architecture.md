@@ -1,13 +1,13 @@
 # HTCMC PCHSystem 架构文档（统一总览）
 
 > 本文件是**顶层索引**——只讲全局架构与跨服务关系，**不含实现细节**（时序图 / SQL / 端点表 / 表结构 / ADR 论证一律在各子文档）。
-> 玩法设计见 [`guied.md`](./guied.md)；红线与命名见根 [`CLAUDE.md`](../CLAUDE.md)；开发指令见 [速查表](./Cheatsheets/dev-cheatsheet.md)。
+> 玩法设计见 [`guide.md`](./guide.md)；红线与命名见根 [`CLAUDE.md`](../CLAUDE.md)；开发指令见 [速查表](./cheatsheets/dev-cheatsheet.md)。
 
 ---
 
 ## 1. 项目定位
 
-白名单生电社区服 · 项目制工程协作玩法 · 纯荣誉激励（积分无实际价值）。三端联动：**游戏内端**（MCDR 命令交互）+ **网页后台端**（项目管理 / 积分 / 权限）+ **Wiki 端**（归档沉淀 / 荣誉榜单）。详细玩法见 [`guied.md`](./guied.md)。
+白名单生电社区服 · 项目制工程协作玩法 · 纯荣誉激励（积分无实际价值）。三端联动：**游戏内端**（MCDR 命令交互）+ **网页后台端**（项目管理 / 积分 / 权限）+ **Wiki 端**（归档沉淀 / 荣誉榜单）。详细玩法见 [`guide.md`](./guide.md)。
 
 ---
 
@@ -42,7 +42,7 @@ flowchart LR
 | 数据库 | PostgreSQL（Alembic 迁移，唯一业务库）| [`architecture/data-model.md`](./architecture/data-model.md) |
 | MC 层 | MCDReforged 插件（Fabric + Create + Carpet，离线模式）| [`McdrPlugin/CLAUDE.md`](../McdrPlugin/CLAUDE.md) |
 | Wiki | wiki.js（独立 git 仓双向同步）| [`architecture/services/wiki-service.md`](./architecture/services/wiki-service.md) |
-| 部署 | Docker Compose（postgres + backend + web）| [`docker-compose.yml`](../docker-compose.yml) + [`RUNBOOK.md`](./RUNBOOK.md) |
+| 部署 | Docker Compose（postgres + backend + web）| [`docker-compose.yml`](../docker-compose.yml) + [`runbook.md`](./runbook.md) |
 | 投影解析 | litemapy + amulet-nbt（不自研）| [`architecture/api/parsing.md`](./architecture/api/parsing.md) |
 | 多语言客户端 | OpenAPI spec（FastAPI 自动生成），不手写 SDK | scoring API 落地后启用 |
 
@@ -50,7 +50,7 @@ flowchart LR
 
 ## 4. 部署
 
-Docker Compose 三服务（postgres + backend + 可选 web），开发态源码挂载热重载。完整部署 / 排错 / 回滚见 [`RUNBOOK.md`](./RUNBOOK.md)；一键脚本见 [`Scripts/`](../Scripts/)。
+Docker Compose 三服务（postgres + backend + 可选 web），开发态源码挂载热重载。完整部署 / 排错 / 回滚见 [`runbook.md`](./runbook.md)；一键脚本见 [`Scripts/`](../Scripts/)。
 
 ---
 

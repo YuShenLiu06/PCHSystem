@@ -71,7 +71,7 @@
 
 ### #4 `.mcdr` release-notes 模板（给 CI PR 兜底文案）
 
-- **动文件**：新增 `Docs/release-notes/pch_system.template.md`（CI PR 的 workflow 把它拼进 release body）+ 可选 `.github/release.yml`（GitHub 自动生成 notes 配置）。
+- **动文件**：新增 `Docs/release-notes/pch-system.template.md`（CI PR 的 workflow 把它拼进 release body）+ 可选 `.github/release.yml`（GitHub 自动生成 notes 配置）。
 - **必含字段**：依赖（需 PCHSystem 后端）+ 最低兼容后端版本 + install.sh 链接 + 前端可选说明 + config.json 两个必填键（`api_url`/`service_token`）。
 
 ### #5 插件静态自述（catalogue 可见性）

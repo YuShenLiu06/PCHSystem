@@ -1,7 +1,7 @@
 # 开发指令速查表
 
 > 日常开发高频指令速查。完整流程与排错见各服务 README / CLAUDE.md。
-> MCDR **API** 速查（命令节点 / RText / 权限 …）另见 [`../McdrPlugin/mcdr-api-cheatsheet.md`](../McdrPlugin/mcdr-api-cheatsheet.md)，本表只收**运维 / 调试指令**。
+> MCDR **API** 速查（命令节点 / RText / 权限 …）另见 [`../mcdr-plugin/mcdr-api-cheatsheet.md`](../mcdr-plugin/mcdr-api-cheatsheet.md)，本表只收**运维 / 调试指令**。
 
 ---
 

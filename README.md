@@ -162,7 +162,7 @@ docker compose up -d       # 起 postgres + backend + web（前端默认由 web 
 curl http://localhost:8000/healthz
 ```
 
-> `.env` 的 `COMPOSE_PROFILES=web` 默认启用前端 web 容器（nginx 托管 `dist` + 反代 `/api`）；清空即禁用，改由自有 nginx 托管。详见 [`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md)。
+> `.env` 的 `COMPOSE_PROFILES=web` 默认启用前端 web 容器（nginx 托管 `dist` + 反代 `/api`）；清空即禁用，改由自有 nginx 托管。详见 [`Docs/runbook.md`](./Docs/runbook.md)。
 
 > 本项目**不含 Minecraft 服务端**：MCDReforged 由你持有，插件经 HTTP 与后端通信。MCDR 插件本身的部署见 [`McdrPlugin/README.md`](./McdrPlugin/README.md)。
 
@@ -198,7 +198,7 @@ curl http://localhost:8000/healthz
 | 文档 | 说明 |
 |---|---|
 | [PCHSystem Wiki](https://yushenliu06.github.io/PCHSystem-wiki/) | 使用文档与玩法指引（搭建中） |
-| [`Docs/RUNBOOK.md`](./Docs/RUNBOOK.md) | 部署 / 排错 / 回滚 |
+| [`Docs/runbook.md`](./Docs/runbook.md) | 部署 / 排错 / 回滚 |
 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 分支 / Commit / 发布规范 |
 | [`CLAUDE.md`](./CLAUDE.md) | 根规范（红线、命名） |
 | [`Backend/CLAUDE.md`](./Backend/CLAUDE.md) · [`Frontend/CLAUDE.md`](./Frontend/CLAUDE.md) · [`McdrPlugin/CLAUDE.md`](./McdrPlugin/CLAUDE.md) | 各端开发指引 |

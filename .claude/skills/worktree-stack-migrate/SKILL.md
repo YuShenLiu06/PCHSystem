@@ -38,7 +38,7 @@ PCHSystem 的开发栈**路径锚定主仓** `/home/yushen/opt/PCHSystem`，而 
 - 遇到 `worktree 起的栈端口冲突 / token 401 / mc-test 连不上 backend / MCDR reload 没反应`
 
 **不用**：
-- 直接在主仓主线本地开发（不起 worktree → 普通 `docker compose up -d` 即可，见 `Docs/Cheatsheets/dev-cheatsheet.md`）
+- 直接在主仓主线本地开发（不起 worktree → 普通 `docker compose up -d` 即可，见 `Docs/cheatsheets/dev-cheatsheet.md`）
 - 纯文档/单文件编辑、不涉及运行栈
 
 ---

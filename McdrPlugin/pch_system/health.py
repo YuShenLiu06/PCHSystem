@@ -3,7 +3,7 @@
 纯函数为主，便于单测（mock ``requests.get``）。所有探针设计为 **1 次尝试、短超时、
 best-effort 吞异常**，由调用方放进 ``@new_thread`` 后台线程跑（RS-6），绝不阻塞/炸 ``on_load``。
 
-状态矩阵与设计见 ``Docs/Reports/mcdr-publishing-strategy.md`` §5 与计划
+状态矩阵与设计见 ``Docs/reports/mcdr-publishing-strategy.md`` §5 与计划
 ``.claude/plans/mcdr-release-generic-fern.md``。
 
 MCDR API 已联网核实（S-1）：
@@ -32,7 +32,7 @@ DEFAULT_SERVICE_TOKEN = "change_me_service_token"
 MIN_BACKEND_VERSION = "0.6.0"
 
 RELEASE_URL = "https://github.com/YuShenLiu06/PCHSystem/releases/latest"
-BACKEND_DOC_URL = "https://github.com/YuShenLiu06/PCHSystem/blob/main/Docs/RUNBOOK.md"
+BACKEND_DOC_URL = "https://github.com/YuShenLiu06/PCHSystem/blob/main/Docs/runbook.md"
 FRONTEND_DOC_URL = (
     "https://github.com/YuShenLiu06/PCHSystem/blob/main/Docs/architecture/frontend.md"
 )

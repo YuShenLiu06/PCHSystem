@@ -162,7 +162,7 @@ catalogue 文档、CONTRIBUTING、labels、plugin_info.json schema 里**没有�
 
 ### 6.8 运营者首次部署引导
 - [ ] 容器路径：`scripts/bootstrap.sh`（或 `install.sh`）——检查 docker/compose → 从 `.env.example` 生成 `.env`（提示改密钥）→ `docker compose up -d --build` → 等 `pg_isready` → 打印后端 `api_url` + 提示签发 `MCDR_SERVICE_TOKEN`。
-- [ ] 非容器路径：`Docs/RUNBOOK.md` 加章节 + 后端 systemd unit、前端 nginx/Caddy 配置脚手手稿。
+- [ ] 非容器路径：`Docs/runbook.md` 加章节 + 后端 systemd unit、前端 nginx/Caddy 配置脚手手稿。
 - [ ] README 顶部钉死定位："PCHSystem——自部署的 MC 积分/项目系统；本仓库的游戏端组件，需配合后端。"
 
 ---

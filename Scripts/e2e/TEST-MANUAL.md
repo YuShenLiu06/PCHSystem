@@ -219,7 +219,7 @@ cd /home/yushen/opt/pchsandbox
 
 **期望**：[1] 0 命中；[2] 命中统一 reload；[3] `website` 不误判、`web,foo` 命中。
 
-> **MCDR reload 语义依据**：`mcdreforged.plugin.json` 任何字段（version/dependencies/...）变更都随 `!!MCDR plugin reload` 重新读取并由 `DependencyWalker` 重校依赖，**无需重启 MCDR**。源码：[`plugin_manager.py`](https://github.com/MCDReforged/MCDReforged/blob/master/mcdreforged/plugin/plugin_manager.py)（reload = unload→load→check dept）。详见 [`Docs/Reports/mcdr-release-prep.md`](../../Docs/Reports/mcdr-release-prep.md)。
+> **MCDR reload 语义依据**：`mcdreforged.plugin.json` 任何字段（version/dependencies/...）变更都随 `!!MCDR plugin reload` 重新读取并由 `DependencyWalker` 重校依赖，**无需重启 MCDR**。源码：[`plugin_manager.py`](https://github.com/MCDReforged/MCDReforged/blob/master/mcdreforged/plugin/plugin_manager.py)（reload = unload→load→check dept）。详见 [`Docs/reports/mcdr-release-prep.md`](../../Docs/reports/mcdr-release-prep.md)。
 
 ---
 
