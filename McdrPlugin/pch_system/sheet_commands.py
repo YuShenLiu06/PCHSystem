@@ -19,6 +19,7 @@ from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
 from . import sheet_client, scanner
+from . import chest_scanner
 from .view_args import paginate_rows, parse_view_args
 from .config import PchSystemConfig
 from .qty import format_qty_safe
@@ -87,6 +88,14 @@ from .messages import (
     SHEET_SUBMIT_FOLDED_LINE,
     SHEET_SUBMIT_READY_FOLDED_LINE,
     SHEET_SUBMIT_FAIL,
+    SHEET_SUBMIT_CHEST_HEAD,
+    SHEET_SUBMIT_CHEST_NOT_FOUND,
+    SHEET_SUBMIT_CHEST_NOT_CONTAINER,
+    SHEET_SUBMIT_EMPTY_CHEST,
+    SHEET_SUBMIT_NO_RCON,
+    SHEET_SUBMIT_CHEST_FAIL,
+    SHEET_SUBMIT_CHEST_NO_API,
+    SHEET_SUBMIT_CHEST_NO_POS,
 )
 
 # 由 __init__.py 在 on_load 中注入
@@ -1569,3 +1578,121 @@ def _sheet_setreg(src, ctx):
         _resolve(server, player_name, outcome, on_success=_show)
 
     _do()
+
+
+# === 箱子提交（issue #48）===
+
+# chest_scanner error_code → 消息常量映射
+_CHEST_ERR_MSG = {
+    "no_rcon": SHEET_SUBMIT_NO_RCON,
+    "not_container": SHEET_SUBMIT_CHEST_NOT_CONTAINER,
+    "parse_error": SHEET_SUBMIT_CHEST_FAIL,
+    "unknown_format": SHEET_SUBMIT_CHEST_FAIL,
+    "empty": SHEET_SUBMIT_EMPTY_CHEST,
+    "not_found": SHEET_SUBMIT_CHEST_NOT_FOUND,
+    "no_api": SHEET_SUBMIT_CHEST_NO_API,
+    "no_pos": SHEET_SUBMIT_CHEST_NO_POS,
+}
+
+
+def _submitchest_impl(server, player_name, player_uuid, sheet_id, *, x=None, y=None, z=None):
+    """箱子提交薄壳（issue #48）：读箱子 → POST /submit-batch → 渲染回执。
+
+    坐标模式（x/y/z 非 None）：直接读指定坐标。
+    准星模式（x/y/z 为 None）：射线检测玩家准星指向的首个容器。
+
+    决策权威在后端 ``sheet_repo.batch_submit``；本端只读箱子 + 编排 items + 渲染 outcomes。
+    纯申报语义（RS-3 衍生）：只读箱子 NBT，绝不 ``data merge`` 清空。
+    """
+    if x is not None and y is not None and z is not None:
+        items, err = chest_scanner.scan_chest_rcon(server, int(x), int(y), int(z))
+    else:
+        api = server.get_plugin_instance("minecraft_data_api")
+        items, err = chest_scanner.find_targeted_chest(api, server, player_name)
+
+    if err:
+        msg_tpl = _CHEST_ERR_MSG.get(err, SHEET_SUBMIT_CHEST_FAIL)
+        server.tell(player_name, msg_tpl.format(err=err) if "{err}" in msg_tpl else msg_tpl)
+        return
+    if not items:
+        server.tell(player_name, SHEET_SUBMIT_EMPTY_CHEST)
+        return
+
+    outcome = sheet_client.submit_batch(CONFIG, player_uuid, sheet_id, items)
+    # 回执标题用箱子专用头（区分背包提交），其余复用 _build_submit_receipt 渲染 outcomes
+    def _show(result):
+        server.tell(player_name, SHEET_SUBMIT_CHEST_HEAD.format(id=sheet_id))
+        server.tell(player_name, _build_submit_receipt(result))
+
+    _resolve(server, player_name, outcome, on_success=_show)
+
+
+def _submitc_safe(server, player_name, player_uuid, sheet_id, *, x=None, y=None, z=None):
+    """``_submitchest_impl`` 的异常兜底（RS-6 失败回执，镜像 ``_submit_safe``）。"""
+    try:
+        _submitchest_impl(server, player_name, player_uuid, sheet_id, x=x, y=y, z=z)
+    except Exception as e:
+        server.tell(player_name, SHEET_SUBMIT_CHEST_FAIL.format(err=e))
+        server.logger.exception("_submitchest_impl failed")
+
+
+def _submitc_dispatch(src, *, sheet_id=None, x=None, y=None, z=None, use_last_sheet=False):
+    """所有 ``!!submitc`` 入口的公共调度（消除 5×模板重复）。
+
+    * ``sheet_id`` 非 None → 直接提交；
+    * ``use_last_sheet=True`` → 先 ``get_last_sheet`` 取 sheet_id 再提交。
+    * ``x/y/z`` 非 None → 坐标模式，否则准星模式。
+    """
+    player_name = _require_player(src)
+    if not player_name:
+        return
+    server = src.get_server()
+
+    @new_thread('pch_submitchest')
+    def _do():
+        try:
+            player_uuid = uuid_api_remake.get_uuid(player_name)
+        except Exception as e:
+            server.tell(player_name, SHEET_UUID_FAIL.format(err=e))
+            return
+
+        if use_last_sheet:
+            outcome = sheet_client.get_last_sheet(CONFIG, player_uuid)
+
+            def _on_last(value):
+                sid = value.get("sheet_id")
+                if sid is None:
+                    server.tell(player_name, SHEET_LAST_EMPTY)
+                    return
+                _submitc_safe(server, player_name, player_uuid, sid, x=x, y=y, z=z)
+
+            _resolve(server, player_name, outcome, on_success=_on_last)
+        else:
+            _submitc_safe(server, player_name, player_uuid, sheet_id, x=x, y=y, z=z)
+
+    _do()
+
+
+def _sheet_submitchest(src, ctx):
+    """!!PCH sheet submitchest <sheet_id> —— 准星检测箱子并提交。"""
+    _submitc_dispatch(src, sheet_id=ctx["sheet_id"])
+
+
+def _sheet_submitchest_coords(src, ctx):
+    """!!PCH sheet submitchest <sheet_id> <x> <y> <z> —— 坐标模式箱子提交。"""
+    _submitc_dispatch(src, sheet_id=ctx["sheet_id"], x=ctx["x"], y=ctx["y"], z=ctx["z"])
+
+
+def _submitc_oneclick(src, ctx):
+    """!!submitc <sheet_id> —— 指定表 + 准星检测箱子提交。"""
+    _submitc_dispatch(src, sheet_id=ctx["sheet_id"])
+
+
+def _submitc_coords(src, ctx):
+    """!!submitc <sheet_id> <x> <y> <z> —— 指定表 + 坐标模式箱子提交。"""
+    _submitc_dispatch(src, sheet_id=ctx["sheet_id"], x=ctx["x"], y=ctx["y"], z=ctx["z"])
+
+
+def _submitc_quick(src, ctx):
+    """!!submitc —— 重开上次查看的表 + 准星检测箱子提交（无参，镜像 !!submit）。"""
+    _submitc_dispatch(src, use_last_sheet=True)

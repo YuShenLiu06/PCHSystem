@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # MCDR + 插件 Python 依赖：
 #   - mcdreforged / requests：MCDR 本体 + pch_system HTTP 客户端
-#   - hjson / parse：MinecraftDataAPI 的 requirements（之前漏装 → minecraft_data_api 加载失败
-#     → pch_system 因缺依赖被卸载）。单独成层，改 pip 依赖时 apt 层缓存仍命中。
+#   - hjson：MinecraftDataAPI 的 requirements + pch_system chest_scanner SNBT 解析（issue #48）
+#   - parse：MinecraftDataAPI 的 requirements
+#   单独成层，改 pip 依赖时 apt 层缓存仍命中。
 RUN pip install --no-cache-dir 'mcdreforged>=2.14,<3' requests hjson parse
 
 WORKDIR /mcdr

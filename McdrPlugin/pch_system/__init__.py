@@ -47,6 +47,11 @@ from .sheet_commands import (
     _sheet_manager_list,
     _sheet_manager_add,
     _sheet_manager_remove,
+    _sheet_submitchest,
+    _sheet_submitchest_coords,
+    _submitc_oneclick,
+    _submitc_coords,
+    _submitc_quick,
 )
 
 CONFIG: PchSystemConfig = PchSystemConfig()
@@ -302,6 +307,21 @@ def _register_commands(server: PluginServerInterface):
                 Literal("submit")
                 .then(Integer("sheet_id").runs(_sheet_submit_oneclick))
             )
+            # 箱子提交（issue #48）：准星检测 / 坐标模式
+            .then(
+                Literal("submitchest")
+                .then(
+                    Integer("sheet_id")
+                    .runs(_sheet_submitchest)  # 准星检测
+                    .then(
+                        Integer("x").then(
+                            Integer("y").then(
+                                Integer("z").runs(_sheet_submitchest_coords)
+                            )
+                        )
+                    )
+                )
+            )
             # 手持物品建行：registry_id 取自手持物，mode/sort 可选（沿用 add 节点模式）
             # mode 由分支闭包烘入（同 add，MCDR Literal 不入 ctx）
             .then(
@@ -427,3 +447,23 @@ def _register_commands(server: PluginServerInterface):
     )
     server.register_command(submit_alias)
     server.register_help_message("!!submit", "一键提交背包材料：!!submit 重开上次表格；!!submit <编号> 指定表格")
+
+    # !!submitc 快捷别名根（第四根：箱子提交；issue #48）
+    # 三段式镜像 !!submit：无参→重开上次+准星 / <id>→指定表+准星 / <id> <x y z>→坐标模式
+    submitc_alias = (
+        Literal("!!submitc")
+        .runs(_submitc_quick)                                     # !!submitc → 重开上次 + 准星
+        .then(
+            Integer("sheet_id")
+            .runs(_submitc_oneclick)                              # !!submitc <id> → 指定表 + 准星
+            .then(
+                Integer("x").then(
+                    Integer("y").then(
+                        Integer("z").runs(_submitc_coords)       # !!submitc <id> <x y z> → 坐标模式
+                    )
+                )
+            )
+        )
+    )
+    server.register_command(submitc_alias)
+    server.register_help_message("!!submitc", "箱子一键提交：!!submitc 准星检测；!!submitc <编号> [x y z] 指定表格")
