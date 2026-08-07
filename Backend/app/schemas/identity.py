@@ -105,6 +105,7 @@ class BindTokenIssueResponse(BaseModel):
     """绑定短码响应（前端 BindCodeResponse）。"""
     short_code: str
     expires_in: int
+    bind_url: str = ""
 
 
 class BindConfirmResponse(BaseModel):

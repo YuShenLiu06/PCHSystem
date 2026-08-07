@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { confirmBind } from '../../api/identity'
 import { extractApiError } from '../../utils/error'
 
+const route = useRoute()
 const router = useRouter()
-const shortCode = ref('')
+const shortCode = ref((route.query.code as string) || '')
 const loading = ref(false)
 
 async function onConfirm(): Promise<void> {

@@ -429,6 +429,8 @@ async def test_game_init_bind_token_then_confirm_attaches_player(client):
     code = issue.json()["short_code"]
     assert len(code) == 6
     assert issue.json()["expires_in"] > 0
+    assert "bind_url" in issue.json(), "bind_url 字段应存在"
+    assert f"code={code}" in issue.json()["bind_url"], "bind_url 应含短码"
 
     # Act 2 — Web 端 /bind/confirm {short_code} (Bearer JWT)
     confirm = await client.post(

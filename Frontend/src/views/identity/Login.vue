@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { passwordLogin } from '../../api/identity'
 import { resolveDisplayName } from '../../utils/identity'
 import { useAuthStore } from '../../stores/auth'
 import { extractApiError } from '../../utils/error'
 
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const username = ref('')
@@ -41,7 +42,9 @@ async function onLogin(): Promise<void> {
       resp.account,
     )
     ElMessage.success(`欢迎，${resolveDisplayName(resp.account, resp.player)}`)
-    router.replace('/me')
+    // 优先跳 redirect（如 bind 链接带来的 /bind/confirm?code=XXX），否则进 /me
+    const redirect = route.query.redirect as string | undefined
+    router.replace(redirect || '/me')
   } catch (e: unknown) {
     ElMessage.error(extractApiError(e) ?? '登录失败')
   } finally {

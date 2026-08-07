@@ -46,6 +46,7 @@ export interface MyAccountResponse {
 export interface BindCodeResponse {
   short_code: string
   expires_in: number
+  bind_url?: string
 }
 
 /** 绑定确认响应 */

@@ -410,6 +410,28 @@ async def get_row(
     return row, name
 
 
+async def find_top_level_row_by_registry(
+    session: AsyncSession,
+    sheet_id: int,
+    registry_id: str,
+    exclude_row_id: int,
+) -> SheetRow | None:
+    """查找同 sheet 下、指定 registry_id 的另一顶层行（parent_row_id IS NULL）。
+
+    用于 setreg 改 registry_id 后的自动合并检测（issue #53）。
+    排除正在更新的行自身（exclude_row_id）。
+    用 .first() 而非 .scalar_one_or_none()：多个同名 registry_id 的顶层行
+    在理论上可能存在（item_name 唯一约束 ≠ registry_id 唯一），取第一个即可。
+    """
+    stmt = select(SheetRow).where(
+        SheetRow.sheet_id == sheet_id,
+        SheetRow.registry_id == registry_id,
+        SheetRow.parent_row_id.is_(None),
+        SheetRow.id != exclude_row_id,
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
 async def upsert_row(
     session: AsyncSession,
     sheet_id: int,

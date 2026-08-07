@@ -221,9 +221,11 @@ async def issue_bind_token_from_game(
     player = await player_repo.get_or_create(session, body.uuid, body.name)
     token = await bind_token_repo.issue_game_init(session, player.uuid)
     await session.commit()
+    bind_url = f"{_settings.web_base_url.rstrip('/')}/bind/confirm?code={token.short_code}"
     return BindTokenIssueResponse(
         short_code=token.short_code,
         expires_in=_settings.bind_token_ttl_seconds,
+        bind_url=bind_url,
     )
 
 
@@ -242,9 +244,11 @@ async def issue_bind_token_from_web(
         )
     token = await bind_token_repo.issue_web_init(session, account.id)
     await session.commit()
+    bind_url = f"{_settings.web_base_url.rstrip('/')}/bind/confirm?code={token.short_code}"
     return BindTokenIssueResponse(
         short_code=token.short_code,
         expires_in=_settings.bind_token_ttl_seconds,
+        bind_url=bind_url,
     )
 
 

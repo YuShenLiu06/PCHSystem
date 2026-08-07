@@ -36,7 +36,10 @@ export const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  if (!to.meta.public && !auth.isAuthenticated) return '/auth'
+  if (!to.meta.public && !auth.isAuthenticated) {
+    // 未登录 → 跳 /auth，带 redirect 参数让登录后回到原页面（issue #54 bind 链接场景）
+    return `/auth?redirect=${encodeURIComponent(to.fullPath)}`
+  }
   // admin 守卫：非 admin/owner 访问 admin 路由 → 回 /me（后端 RBAC 仍会 403 兜底）
   if (to.meta.requiresAdmin && !isAdmin()) return '/me'
 })
