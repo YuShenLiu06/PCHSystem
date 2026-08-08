@@ -19,6 +19,8 @@
   <a href="https://github.com/YuShenLiu06/PCHSystem">
     <img alt="Stars" src="https://shields.io/github/stars/YuShenLiu06/PCHSystem?color=22C55E">
   </a>
+  <img alt="Clones" src="https://shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/.github/clone-stats.json&query=$.clones&label=clones&color=22C55E">
+  <img alt="Unique Clones" src="https://shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/.github/clone-stats.json&query=$.uniques&label=unique%20clones&color=22C55E">
   <a href="LICENSE">
     <img alt="License" src="https://shields.io/github/license/YuShenLiu06/PCHSystem?color=22C55E">
   </a>
