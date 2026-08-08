@@ -1,3 +1,4 @@
+<!-- omit in toc -->
 # 服务文档：notification-service（统一通知抽象层）
 
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5
@@ -5,13 +6,46 @@
 > **设计依据**：[`../../superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md`](../../superpowers/specs/2026-07-02-sheets-mcdr-bridge-design.md)
 > **消费方**：MCDR 插件（轮询投递）；sheets / scoring / title / alert / 未来业务模块（发通知）
 
+---
+
+- [1. 概述](#1-%E6%A6%82%E8%BF%B0)
+- [2. 调用契约（业务模块发通知的唯一入口）](#2-%E8%B0%83%E7%94%A8%E5%A5%91%E7%BA%A6%E4%B8%9A%E5%8A%A1%E6%A8%A1%E5%9D%97%E5%8F%91%E9%80%9A%E7%9F%A5%E7%9A%84%E5%94%AF%E4%B8%80%E5%85%A5%E5%8F%A3)
+  - [2.1 签名](#21-%E7%AD%BE%E5%90%8D)
+  - [2.2 关键不变量（CRITICAL）](#22-%E5%85%B3%E9%94%AE%E4%B8%8D%E5%8F%98%E9%87%8Fcritical)
+  - [2.3 sheets 参考实现（伪代码）](#23-sheets-%E5%8F%82%E8%80%83%E5%AE%9E%E7%8E%B0%E4%BC%AA%E4%BB%A3%E7%A0%81)
+- [3. `category` 枚举注册表](#3-category-%E6%9E%9A%E4%B8%BE%E6%B3%A8%E5%86%8C%E8%A1%A8)
+  - [3.1 行级通知（sheets 专用）](#31-%E8%A1%8C%E7%BA%A7%E9%80%9A%E7%9F%A5sheets-%E4%B8%93%E7%94%A8)
+  - [3.2 项目级通知（sheets 阶段流转，迁移 0009 + issue #4）](#32-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E9%80%9A%E7%9F%A5sheets-%E9%98%B6%E6%AE%B5%E6%B5%81%E8%BD%AC%E8%BF%81%E7%A7%BB-0009--issue-4)
+  - [3.3 扩展规约](#33-%E6%89%A9%E5%B1%95%E8%A7%84%E7%BA%A6)
+- [4. 数据模型（迁移 `0006_notifications`）](#4-%E6%95%B0%E6%8D%AE%E6%A8%A1%E5%9E%8B%E8%BF%81%E7%A7%BB-0006notifications)
+  - [4.1 `notifications.notifications` 表](#41-notificationsnotifications-%E8%A1%A8)
+  - [4.2 索引](#42-%E7%B4%A2%E5%BC%95)
+  - [4.3 分层（遵循现有 repo/service/api 惯例）](#43-%E5%88%86%E5%B1%82%E9%81%B5%E5%BE%AA%E7%8E%B0%E6%9C%89-reposerviceapi-%E6%83%AF%E4%BE%8B)
+- [5. Notifier Protocol 与扩展点](#5-notifier-protocol-%E4%B8%8E%E6%89%A9%E5%B1%95%E7%82%B9)
+  - [5.1 Protocol](#51-protocol)
+  - [5.2 首期实现](#52-%E9%A6%96%E6%9C%9F%E5%AE%9E%E7%8E%B0)
+  - [5.3 预留扩展（首期不实现）](#53-%E9%A2%84%E7%95%99%E6%89%A9%E5%B1%95%E9%A6%96%E6%9C%9F%E4%B8%8D%E5%AE%9E%E7%8E%B0)
+- [6. 端点契约（均 service-token 鉴权）](#6-%E7%AB%AF%E7%82%B9%E5%A5%91%E7%BA%A6%E5%9D%87-service-token-%E9%89%B4%E6%9D%83)
+  - [6.1 `GET /notifications/pending`](#61-get-notificationspending)
+  - [6.2 `POST /notifications/ack`](#62-post-notificationsack)
+  - [6.3 `POST /notifications/{id}/read`](#63-post-notificationsidread)
+- [7. service-token 安全运维要点（CRITICAL）](#7-service-token-%E5%AE%89%E5%85%A8%E8%BF%90%E7%BB%B4%E8%A6%81%E7%82%B9critical)
+  - [7.1 威胁模型](#71-%E5%A8%81%E8%83%81%E6%A8%A1%E5%9E%8B)
+  - [7.2 必做缓解（部署 + 运维侧）](#72-%E5%BF%85%E5%81%9A%E7%BC%93%E8%A7%A3%E9%83%A8%E7%BD%B2--%E8%BF%90%E7%BB%B4%E4%BE%A7)
+  - [7.3 红线引用](#73-%E7%BA%A2%E7%BA%BF%E5%BC%95%E7%94%A8)
+- [8. MCDR 投递契约（消费方）](#8-mcdr-%E6%8A%95%E9%80%92%E5%A5%91%E7%BA%A6%E6%B6%88%E8%B4%B9%E6%96%B9)
+- [9. 与 alert-service 的关系](#9-%E4%B8%8E-alert-service-%E7%9A%84%E5%85%B3%E7%B3%BB)
+- [10. 红线遵循（根 CLAUDE.md §3）](#10-%E7%BA%A2%E7%BA%BF%E9%81%B5%E5%BE%AA%E6%A0%B9-claudemd-%C2%A73)
+- [11. 风险与待确认](#11-%E9%A3%8E%E9%99%A9%E4%B8%8E%E5%BE%85%E7%A1%AE%E8%AE%A4)
+
+
 ## 1. 概述
 
 notification-service 是后端**模块化单体**（红线 R-10）的新增 schema，职责单一：
 
 > **业务事件 → 给特定玩家记一条通知 → 等待投递（落库 + 拉取）。**
 
-它是后端**第一套统一通知基础设施**。在此之前各业务模块没有「给玩家发消息」的能力（sheets 协作的成功回执只能靠 HTTP 响应同步返回；alert-service 的游戏内告警只有 `InGameNotifier.mcdr_broadcast` 伪代码占位，未落地）。本服务把这一能力抽成**可复用的调用契约 + 端点契约**，所有业务模块按同一约定发通知，MCDR 按同一约定轮询投递。
+本服务把「给玩家发消息」抽成**可复用的调用契约 + 端点契约**：所有业务模块按同一约定发通知，MCDR 按同一约定轮询投递。在此之前各模块没有统一通知能力（sheets 回执靠 HTTP 响应同步返回；alert-service 游戏内告警仅有伪代码占位）。
 
 | 管 | 不管 |
 |---|---|
@@ -20,7 +54,7 @@ notification-service 是后端**模块化单体**（红线 R-10）的新增 sche
 | `category` 注册表（约定命名，不校验枚举） | 实时推送（首期轮询，非 SSE/websocket） |
 | `payload` 结构化字段透传 | 客户端渲染（MCDR/Web 自行解析） |
 
-**定位**：风控/协作等业务事件的「投递候选池」。落库即候选，由 MCDR 后台轮询拉取并 `server.tell` 投递；离线玩家通知堆积在库，上线时补推。
+**定位**：风控/协作等业务事件的「投递候选池」。落库即候选，MCDR 后台轮询拉取并 `server.tell` 投递；离线通知堆积在库，上线时补推。
 
 ---
 
@@ -41,10 +75,9 @@ notification_service.notify(
 
 ### 2.2 关键不变量（CRITICAL）
 
-- **必须传调用方事务的 session**：调用方在写端点（如 `claim`）的同一事务内调 `notify`，保证「改库 + 记通知」原子。事务回滚则通知不落库 —— 不会出现「业务没成功却发了通知」。
-- **调用方不可自开新 session 记通知**：违反上述原子性。
-- **接收者必须是已知 Player**：`recipient_uuid` FK→`users.players.uuid`，`ON DELETE CASCADE`（玩家硬删则通知随之消失，与 RS-5 一致）。
-- **通知中心不校验 `category` 枚举值**：仅作为字符串落库 + 客户端展示分类用；新增枚举无需改 notification-service（见 §3 扩展规约）。
+- **必须传调用方事务的 session**：调用方在同一事务内调 `notify`（如 `claim` 端点），保证「改库 + 记通知」原子。事务回滚则通知不落库。
+- **接收者必须是已知 Player**：`recipient_uuid` FK→`users.players.uuid`，`ON DELETE CASCADE`（玩家硬删则通知消失，RS-5）。
+- **不校验 `category` 枚举值**：仅作为字符串落库；新增枚举无需改 notification-service（见 §3）。
 
 ### 2.3 sheets 参考实现（伪代码）
 
@@ -247,27 +280,16 @@ class Notifier(Protocol):
 
 ## 8. MCDR 投递契约（消费方）
 
-> 完整实现见 [`mcdr-plugin.md`](./mcdr-plugin.md)「通知轮询」章节。
-
-| 阶段 | 动作 |
-|---|---|
-| **在线集合维护** | `on_player_joined` 加入集合 / `on_player_left` 移出；插件加载时 `server.rcon_query('list')` 初始化兜底 |
-| **后台轮询** | `@new_thread('pch_sheet_notifier')` 循环，每 `notify_poll_interval_seconds`（默认 2.0）对每个在线玩家调 `GET /notifications/pending?player_uuid=<uuid>&limit=notify_max_per_poll`（默认 20） |
-| **逐条投递** | `server.tell(player, format_notification(n))` |
-| **ack** | 投递成功后 `POST /notifications/ack {player_uuid, ids}` |
-| **上线补推** | `on_player_joined` 立即为该玩家拉一次 pending（离线期间堆积的补推） |
-| **主动查看** | `!!PCH sheet notify list` 拉取并分页回显 |
-| **离线处理** | 通知仅落库后端；MCDR 不持久化，重启后靠上线拉取恢复 |
+> 完整实现见 [`mcdr-plugin.md`](./mcdr-plugin.md) §3.8（通知轮询）。MCDR 按 §6 端点契约轮询 `GET /notifications/pending` → `server.tell` 投递 → `POST /notifications/ack`；离线堆积靠上线补推。
 
 ---
 
 ## 9. 与 alert-service 的关系
 
-alert-service 文档（[`alert-service.md`](./alert-service.md) §3.1）曾有 `InGameNotifier.mcdr_broadcast` 伪代码占位 —— 风控告警经 HTTP 推 MCDR 广播。**notification-service 是其落地与泛化**：
+alert-service 的 `Notifier` Protocol 与本服务形状一致（`notify(record)`），未来可统一合并。当前分工：
 
-- **统一通道**：未来 alert 异常（`score_spike` / `behavior_abuse` / `material_anomaly` 等）也走 `notify()`（`category="alert_raised"`），落库后由 MCDR 轮询投递给相关玩家/管理员。
-- **首期不迁移**：alert-service 仍保留 `LogNotifier`（后台日志）+ `InGameNotifier` 占位；待 notification-service 稳定后再统一切换。
-- **Notifier Protocol 同源**：alert-service 的 `Notifier` Protocol 与本服务的 `Notifier` Protocol 形状一致（`notify(record)`），未来合并时形状兼容。
+- **首期**：alert-service 保留 `LogNotifier`（后台日志）+ `InGameNotifier` 占位；notification-service 负责落库 + 轮询投递。
+- **未来**：alert 异常（`score_spike` / `behavior_abuse` 等）统一切换到 `notify(category="alert_raised")`，由 MCDR 轮询投递。
 
 ---
 

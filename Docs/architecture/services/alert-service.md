@@ -25,11 +25,11 @@
 | PATCH | `/alerts/{id}` | Web(admin) | 状态流转 new→ack→resolved |
 | POST | `/alerts/{id}/whitelist-review` | Web(admin) | 转白名单复核（联动 user-service） |
 
-## 3. 内部实现要点
+## 3. 实现要点（Notifier 抽象 · 检测规则 · 去重 · 白名单联动）
 
 ### 3.1 Notifier 抽象（核心）
 
-用户明确：「抽象接口 + 首期实现一个，仅游戏内 + 后台」。定义统一接口，首期两个实现：
+统一接口 + 首期两个实现（游戏内 + 后台日志）：
 
 ```python
 from typing import Protocol

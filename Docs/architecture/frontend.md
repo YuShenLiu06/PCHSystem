@@ -1,7 +1,22 @@
+<!-- omit in toc -->
 # 前端文档：Web 后台（Vue 3 + Element Plus）
 
 > **统一总览**：[`../architecture.md`](../architecture.md) §5
 > **对接后端**：所有 REST API 见 [`services/`](./services/) 各服务文档
+
+---
+
+- [1. 定位与技术栈](#1-%E5%AE%9A%E4%BD%8D%E4%B8%8E%E6%8A%80%E6%9C%AF%E6%A0%88)
+- [2. 页面模块地图（与后端服务对应）](#2-%E9%A1%B5%E9%9D%A2%E6%A8%A1%E5%9D%97%E5%9C%B0%E5%9B%BE%E4%B8%8E%E5%90%8E%E7%AB%AF%E6%9C%8D%E5%8A%A1%E5%AF%B9%E5%BA%94)
+- [3. 关键交互流程](#3-%E5%85%B3%E9%94%AE%E4%BA%A4%E4%BA%92%E6%B5%81%E7%A8%8B)
+  - [3.1 立项（上传 .litematic）](#31-%E7%AB%8B%E9%A1%B9%E4%B8%8A%E4%BC%A0-litematic)
+  - [3.2 绑定确认（双向流程）](#32-%E7%BB%91%E5%AE%9A%E7%A1%AE%E8%AE%A4%E5%8F%8C%E5%90%91%E6%B5%81%E7%A8%8B)
+  - [3.3 协管员管理（三层 RBAC）](#33-%E5%8D%8F%E7%AE%A1%E5%91%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82-rbac)
+  - [3.4 告警处理](#34-%E5%91%8A%E8%AD%A6%E5%A4%84%E7%90%86)
+- [4. 鉴权与路由守卫](#4-%E9%89%B4%E6%9D%83%E4%B8%8E%E8%B7%AF%E7%94%B1%E5%AE%88%E5%8D%AB)
+- [5. 构建与部署](#5-%E6%9E%84%E5%BB%BA%E4%B8%8E%E9%83%A8%E7%BD%B2)
+- [6. 风险与待确认](#6-%E9%A3%8E%E9%99%A9%E4%B8%8E%E5%BE%85%E7%A1%AE%E8%AE%A4)
+
 
 ## 1. 定位与技术栈
 
@@ -71,7 +86,6 @@ sequenceDiagram
     F->>API: PATCH /projects/{id} (draft→active)
 ```
 - `.litematic` 用 `multipart/form-data` 上传，Element Plus `el-upload` 组件。
-- 后端解析后回显材料清单，负责人确认才激活。
 
 ### 3.2 绑定确认（双向流程）
 
@@ -101,10 +115,6 @@ sequenceDiagram
     Note over W: 临时会话可凭永久账号凭据经 /bind/claim 挂接
 ```
 
-**两种方向**：
-- **game_init**：玩家游戏内 `!!PCH bind` 出短码 → Web `/bind/confirm` 输码确认
-- **web_init**：Web `/bind/issue` 出短码 → 玩家游戏内 `!!PCH bind <code>` 消费 → Web `/bind/claim` 挂接（临时会话挂永久账号）
-
 **关键端点**：
 - `POST /bind/token`（service-token，game_init 出码）
 - `POST /bind/confirm`（JWT，消费 game_init 码）
@@ -133,10 +143,6 @@ sequenceDiagram
 - **授予流程**：玩家名联想（el-autocomplete 远程搜索）→ 选中后存 uuid → `POST /sheets/{id}/managers {player_uuid}`
 - **撤销流程**：`DELETE /sheets/{id}/managers {web_account_id}`（self-revoke 需 `player.web_account_id is not null`）
 - **权限矩阵**：详见 [`Docs/architecture/api/sheets.md`](./api/sheets.md) §7.1（M01-M26 全覆盖）
-
-**阶段按钮分流**：
-- **Tier A**：归档、改名、删表按钮（owner 专属）
-- **Tier B**：进入施工按钮（owner + 协管员）
 
 ### 3.4 告警处理
 
@@ -171,11 +177,9 @@ instance.interceptors.response.use(r => r, err => {
 - 路由 `meta.public` 二分：公开路由（`/auth`、`/login`、`/register`）无需登录，其余需登录
 - 401 由 axios 拦截器统一处理（`auth.clear()` + 跳 `/auth`）
 
-**权限架构**（R-5 一致）：
-- **前端权限仅可见性**（R-9）：真实权限以**后端 RBAC 为准**，前端只控展示
+**权限架构**（R-9：前端权限仅可见性，后端 RBAC 为准）：
 - **account 级权威源**：`auth.account.role`（未绑玩家回退 `auth.player.role`）
-- **viewer_uuids**：同 account 所有 UUID（后端按当前查看者的 account 解析返回）
-- **三层 RBAC**：`canManage`（tier A）/ `isManager` / `canEdit`（tier B = canManage ∨ isManager）
+- **三层 RBAC 详解**：见 §3.3 协管员管理
 
 ## 5. 构建与部署
 

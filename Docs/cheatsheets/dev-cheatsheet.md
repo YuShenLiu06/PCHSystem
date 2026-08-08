@@ -58,7 +58,7 @@ docker attach pchsystem-mc-test-1
 | `WEB_BASE_URL` | 是（联调） | `http://localhost:5173` | 前端 base URL，`!!PCH login` 回链前缀；改端口须同步 |
 <!-- AUTO-GENERATED END -->
 
-> ⚠️ 本地 venv 直跑 uvicorn 读 `Backend/.env`（`POSTGRES_HOST=postgres` 连不上 DB）；开箱即用走 compose（读根 `.env`）。
+> ⚠️ 本地 venv 直跑 uvicorn 读 `Backend/.env`（`POSTGRES_HOST=postgres` 连不上 DB），开箱即用走 compose（读根 `.env`）。详见下方 [后端 FastAPI](#后端-fastapi) 雷点。
 
 ---
 
@@ -85,9 +85,7 @@ docker compose down                                 # 停止并移除容器（po
 | `localhost:8000` | backend API（映射自容器 8000） |
 | `127.0.0.1:5433` | postgres（仅本机可达，映射自容器 5432） |
 
-> ⚠️ **雷点**：compose 用 `${VAR}` 插值，读的是**根 `.env`**（compose 文件同目录），**不是** `Backend/.env`。
-> 启动前确认根 `.env` 已设 `POSTGRES_*` / `JWT_SECRET` / `MCDR_SERVICE_TOKEN`（空 `MCDR_SERVICE_TOKEN` 会 fail-fast，RS-4 / `config.py` 校验）。
-> 本地 venv 直跑 uvicorn 会因 `Backend/.env` 的 `POSTGRES_HOST=postgres` 连不上 DB —— 走 compose 才是开箱即用路径。
+> ⚠️ **雷点**：compose `${VAR}` 插值读**根 `.env`**（非 `Backend/.env`）；启动前确认根 `.env` 已设 `POSTGRES_*` / `JWT_SECRET` / `MCDR_SERVICE_TOKEN`（空 `MCDR_SERVICE_TOKEN` 会 fail-fast）。
 
 ### 跑迁移 / 验证健康
 

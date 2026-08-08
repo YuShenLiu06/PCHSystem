@@ -26,7 +26,7 @@
 | POST | `/players/me/titles/{id}/activate` | MCDR/Web | `!!title set` 切换展示称号 |
 | POST | `/internal/titles/check` | scoring-service | 积分变更后触发解锁检查（内部） |
 
-## 3. 内部实现要点
+## 3. 实现要点（指数梯度 · 解锁判定 · 切换 · 前缀分工 · wiki 权益）
 
 ### 3.1 指数梯度（核心公式）
 

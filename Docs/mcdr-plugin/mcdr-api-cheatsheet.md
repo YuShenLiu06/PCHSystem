@@ -1,3 +1,4 @@
+<!-- omit in toc -->
 # MCDReforged API 速查表
 
 > **本项目红线 S-1**（[根 CLAUDE.md](../../CLAUDE.md) §0）：MCDR 相关 API 必须联网核实后再使用，本表所有 API 已于 2026-07-02 联网核对。
@@ -8,17 +9,59 @@
 
 ---
 
-## 目录
+- [1. 命令节点（Command Node）](#1-%E5%91%BD%E4%BB%A4%E8%8A%82%E7%82%B9command-node)
+  - [节点构造通用关键字参数（ArgumentNode，v2.13.0+ / v2.14.0+）](#%E8%8A%82%E7%82%B9%E6%9E%84%E9%80%A0%E9%80%9A%E7%94%A8%E5%85%B3%E9%94%AE%E5%AD%97%E5%8F%82%E6%95%B0argumentnodev2130--v2140)
+  - [数值范围与文本长度约束](#%E6%95%B0%E5%80%BC%E8%8C%83%E5%9B%B4%E4%B8%8E%E6%96%87%E6%9C%AC%E9%95%BF%E5%BA%A6%E7%BA%A6%E6%9D%9F)
+  - [项目内实战片段](#%E9%A1%B9%E7%9B%AE%E5%86%85%E5%AE%9E%E6%88%98%E7%89%87%E6%AE%B5)
+- [2. 节点链式 API](#2-%E8%8A%82%E7%82%B9%E9%93%BE%E5%BC%8F-api)
+  - [`requires` vs `precondition` —— 关键差异](#requires-vs-precondition--%E5%85%B3%E9%94%AE%E5%B7%AE%E5%BC%82)
+  - [`requires` 自定义失败消息](#requires-%E8%87%AA%E5%AE%9A%E4%B9%89%E5%A4%B1%E8%B4%A5%E6%B6%88%E6%81%AF)
+  - [`Requirements` 工具类（v2.6.0+）](#requirements-%E5%B7%A5%E5%85%B7%E7%B1%BBv260)
+- [3. CommandSource 常用成员](#3-commandsource-%E5%B8%B8%E7%94%A8%E6%88%90%E5%91%98)
+  - [子类特有方法](#%E5%AD%90%E7%B1%BB%E7%89%B9%E6%9C%89%E6%96%B9%E6%B3%95)
+  - [实战片段](#%E5%AE%9E%E6%88%98%E7%89%87%E6%AE%B5)
+- [4. 回调签名（动态适配）](#4-%E5%9B%9E%E8%B0%83%E7%AD%BE%E5%90%8D%E5%8A%A8%E6%80%81%E9%80%82%E9%85%8D)
+  - [4 种合法的回调写法](#4-%E7%A7%8D%E5%90%88%E6%B3%95%E7%9A%84%E5%9B%9E%E8%B0%83%E5%86%99%E6%B3%95)
+  - [`CommandContext` —— 取参数的字典](#commandcontext--%E5%8F%96%E5%8F%82%E6%95%B0%E7%9A%84%E5%AD%97%E5%85%B8)
+- [5. 权限等级表](#5-%E6%9D%83%E9%99%90%E7%AD%89%E7%BA%A7%E8%A1%A8)
+  - [配置与热重载](#%E9%85%8D%E7%BD%AE%E4%B8%8E%E7%83%AD%E9%87%8D%E8%BD%BD)
+  - [API 用法（项目内推荐写法）](#api-%E7%94%A8%E6%B3%95%E9%A1%B9%E7%9B%AE%E5%86%85%E6%8E%A8%E8%8D%90%E5%86%99%E6%B3%95)
+    - [方式 1：`CommandSource.has_permission(level)`](#%E6%96%B9%E5%BC%8F-1commandsourcehaspermissionlevel)
+    - [方式 2：`Requirements.has_permission(level)` + `requires`（最简洁）](#%E6%96%B9%E5%BC%8F-2requirementshaspermissionlevel--requires%E6%9C%80%E7%AE%80%E6%B4%81)
+    - [方式 3：`precondition` 隐藏命令（不对低权限者暴露）](#%E6%96%B9%E5%BC%8F-3precondition-%E9%9A%90%E8%97%8F%E5%91%BD%E4%BB%A4%E4%B8%8D%E5%AF%B9%E4%BD%8E%E6%9D%83%E9%99%90%E8%80%85%E6%9A%B4%E9%9C%B2)
+- [6. RText 色彩系统](#6-rtext-%E8%89%B2%E5%BD%A9%E7%B3%BB%E7%BB%9F)
+  - [核心类](#%E6%A0%B8%E5%BF%83%E7%B1%BB)
+  - [`RColor` —— 16 色枚举 + reset](#rcolor--16-%E8%89%B2%E6%9E%9A%E4%B8%BE--reset)
+  - [`RStyle` —— 文本样式](#rstyle--%E6%96%87%E6%9C%AC%E6%A0%B7%E5%BC%8F)
+  - [`RAction`（= `RClickAction`）—— 点击事件](#raction-rclickaction-%E7%82%B9%E5%87%BB%E4%BA%8B%E4%BB%B6)
+  - [`RHoverAction` —— 悬停事件（v2.15.0+）](#rhoveraction--%E6%82%AC%E5%81%9C%E4%BA%8B%E4%BB%B6v2150)
+  - [链式 API（在 `RTextBase` 上）](#%E9%93%BE%E5%BC%8F-api%E5%9C%A8-rtextbase-%E4%B8%8A)
+  - [实战片段：多色拼接 + 可点击链接](#%E5%AE%9E%E6%88%98%E7%89%87%E6%AE%B5%E5%A4%9A%E8%89%B2%E6%8B%BC%E6%8E%A5--%E5%8F%AF%E7%82%B9%E5%87%BB%E9%93%BE%E6%8E%A5)
+  - [`RTextMCDRTranslation` —— 多语言（v2.1.0+）](#rtextmcdrtranslation--%E5%A4%9A%E8%AF%AD%E8%A8%80v210)
+- [7. `!!help` 集成](#7-help-%E9%9B%86%E6%88%90)
+  - [API](#api)
+  - [项目内示例](#%E9%A1%B9%E7%9B%AE%E5%86%85%E7%A4%BA%E4%BE%8B)
+  - [`!!help` 命令本身](#help-%E5%91%BD%E4%BB%A4%E6%9C%AC%E8%BA%AB)
+- [8. 耗时任务（schedule\_task）](#8-%E8%80%97%E6%97%B6%E4%BB%BB%E5%8A%A1scheduletask)
+  - [API](#api-1)
+  - [项目内 HTTP 调用模板（红线 R-12 实施）](#%E9%A1%B9%E7%9B%AE%E5%86%85-http-%E8%B0%83%E7%94%A8%E6%A8%A1%E6%9D%BF%E7%BA%A2%E7%BA%BF-r-12-%E5%AE%9E%E6%96%BD)
+  - [同步判断当前是否在 executor 线程](#%E5%90%8C%E6%AD%A5%E5%88%A4%E6%96%AD%E5%BD%93%E5%89%8D%E6%98%AF%E5%90%A6%E5%9C%A8-executor-%E7%BA%BF%E7%A8%8B)
+  - [带重试的完整模板（红线 R-12 全面落地）](#%E5%B8%A6%E9%87%8D%E8%AF%95%E7%9A%84%E5%AE%8C%E6%95%B4%E6%A8%A1%E6%9D%BF%E7%BA%A2%E7%BA%BF-r-12-%E5%85%A8%E9%9D%A2%E8%90%BD%E5%9C%B0)
+  - [哪些操作**必须**卸载到后台线程（`@new_thread`）](#%E5%93%AA%E4%BA%9B%E6%93%8D%E4%BD%9C%E5%BF%85%E9%A1%BB%E5%8D%B8%E8%BD%BD%E5%88%B0%E5%90%8E%E5%8F%B0%E7%BA%BF%E7%A8%8Bnewthread)
+- [9. 配置加载（load\_config\_simple）](#9-%E9%85%8D%E7%BD%AE%E5%8A%A0%E8%BD%BDloadconfigsimple)
+  - [API](#api-2)
+  - [`Serializable` 基类](#serializable-%E5%9F%BA%E7%B1%BB)
+  - [项目内推荐写法（target\_class + Serializable）](#%E9%A1%B9%E7%9B%AE%E5%86%85%E6%8E%A8%E8%8D%90%E5%86%99%E6%B3%95targetclass--serializable)
+  - [写回配置](#%E5%86%99%E5%9B%9E%E9%85%8D%E7%BD%AE)
+  - [替代写法（pydantic，v2.14.0+）](#%E6%9B%BF%E4%BB%A3%E5%86%99%E6%B3%95pydanticv2140)
+- [附录：命令异常家族](#%E9%99%84%E5%BD%95%E5%91%BD%E4%BB%A4%E5%BC%82%E5%B8%B8%E5%AE%B6%E6%97%8F)
+  - [项目内常用错误处理](#%E9%A1%B9%E7%9B%AE%E5%86%85%E5%B8%B8%E7%94%A8%E9%94%99%E8%AF%AF%E5%A4%84%E7%90%86)
+- [附录：导入速查](#%E9%99%84%E5%BD%95%E5%AF%BC%E5%85%A5%E9%80%9F%E6%9F%A5)
+  - [一次性导入（推荐）](#%E4%B8%80%E6%AC%A1%E6%80%A7%E5%AF%BC%E5%85%A5%E6%8E%A8%E8%8D%90)
+  - [精确导入（避免命名冲突）](#%E7%B2%BE%E7%A1%AE%E5%AF%BC%E5%85%A5%E9%81%BF%E5%85%8D%E5%91%BD%E5%90%8D%E5%86%B2%E7%AA%81)
+- [附录：关键版本对应](#%E9%99%84%E5%BD%95%E5%85%B3%E9%94%AE%E7%89%88%E6%9C%AC%E5%AF%B9%E5%BA%94)
+- [附录：官方文档导航](#%E9%99%84%E5%BD%95%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E5%AF%BC%E8%88%AA)
 
-1. [命令节点（Command Node）](#1-命令节点command-node)
-2. [节点链式 API](#2-节点链式-api)
-3. [CommandSource 常用成员](#3-commandsource-常用成员)
-4. [回调签名（动态适配）](#4-回调签名动态适配)
-5. [权限等级表](#5-权限等级表)
-6. [RText 色彩系统](#6-rtext-色彩系统)
-7. [`!!help` 集成](#7-help-集成)
-8. [耗时任务（schedule_task）](#8-耗时任务schedule_task)
-9. [配置加载（load_config_simple）](#9-配置加载load_config_simple)
 
 ---
 
@@ -97,7 +140,7 @@ server.register_command(
 |---|---|---|---|
 | `.then(node)` | 附加子节点，返回自身（用于建树） | `Literal('!!email').then(Literal('list'))` | [AbstractNode.then](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.then) |
 | `.runs(callback)` | 设置节点回调：命令解析在此结束时调用。回调签名动态适配（见 [§4](#4-回调签名动态适配)） | `Literal('!!ping').runs(lambda src: src.reply('pong'))` | [AbstractNode.runs](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.runs) |
-| `.requires tester)` | **要求**：tester 返回 `False` 时抛 `RequirementNotMet` 异常，向玩家报错（节点仍可见） | `node.requires(lambda src: src.has_permission(3))` | [AbstractNode.requires](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.requires) |
+| `.requires(tester)` | **要求**：tester 返回 `False` 时抛 `RequirementNotMet` 异常，向玩家报错（节点仍可见） | `node.requires(lambda src: src.has_permission(3))` | [AbstractNode.requires](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.requires) |
 | `.precondition(tester)` | **前置条件**：tester 返回 `False` 时**过滤节点**，视为不存在（隐藏，不报错）。v2.14.0+ | `node.precondition(lambda src: src.has_permission(3))` | [AbstractNode.precondition](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.precondition) |
 | `.suggests(provider)` | 设置 Tab 补全建议；`Literal` **不支持**此方法 | `Text('player').suggests(lambda: online_players)` | [AbstractNode.suggests](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.suggests) |
 | `.on_error(error_type, handler, *, handled=False)` | 当此节点抛出 `error_type`（及其子类）异常时调用 handler | `node.on_error(UnknownArgument, hint_usage)` | [AbstractNode.on_error](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.builder.nodes.basic.AbstractNode.on_error) |
@@ -155,12 +198,12 @@ Literal('!!reload')
 
 继承树：
 
-```
-CommandSource
-├── InfoCommandSource
-│   ├── PlayerCommandSource       # 玩家
-│   └── ConsoleCommandSource      # 控制台
-└── PluginCommandSource           # 插件本身
+```mermaid
+classDiagram
+    CommandSource <|-- InfoCommandSource
+    CommandSource <|-- PluginCommandSource
+    InfoCommandSource <|-- PlayerCommandSource
+    InfoCommandSource <|-- ConsoleCommandSource
 ```
 
 来源：[command.html#CommandSource](https://docs.mcdreforged.com/en/latest/code_references/command.html#mcdreforged.command.command_source.CommandSource)
@@ -457,11 +500,7 @@ def reply_submit_success(source: CommandSource, project: str, x: int, y: int, z:
     source.reply(msg)
 ```
 
-**逐行解释**：
-1. `RText('✔ 提交成功', RColor.green, RStyle.bold)`：绿色加粗文本
-2. `RText(' → ', RColor.dark_gray)`：灰色分隔符
-3. `RText(f'{project}', RColor.aqua).c(RAction.suggest_command, ...)`：青色项目名，点击后向聊天栏填入 `!!project info <project>`，悬停显示黄色提示
-4. `RTextList(...)` 把所有片段拼成一个组件
+**要点**：`.c(RAction.suggest_command, ...)` 点击后向聊天栏填入命令、`.h(...)` 悬停显示提示文本；`RTextList(...)` 把所有片段拼成一个组件。
 
 ### `RTextMCDRTranslation` —— 多语言（v2.1.0+）
 
@@ -789,25 +828,29 @@ def on_load(server: PluginServerInterface, prev):
 
 来源：[command.html#Exceptions](https://docs.mcdreforged.com/en/latest/code_references/command.html#module-mcdreforged.command.builder.exception)
 
+```mermaid
+classDiagram
+    CommandErrorBase <|-- IllegalNodeOperation
+    CommandErrorBase <|-- CommandError
+    CommandError <|-- UnknownCommand
+    CommandError <|-- UnknownArgument
+    CommandError <|-- RequirementNotMet
+    CommandError <|-- CommandSyntaxError
+    CommandSyntaxError <|-- IllegalArgument
+    IllegalArgument <|-- AbstractOutOfRange
+    IllegalArgument <|-- InvalidNumber
+    IllegalArgument <|-- IllegalEscapesUsage
+    IllegalArgument <|-- UnclosedQuotedString
+    IllegalArgument <|-- EmptyText
+    IllegalArgument <|-- InvalidBoolean
+    IllegalArgument <|-- InvalidEnumeration
+    AbstractOutOfRange <|-- NumberOutOfRange
+    AbstractOutOfRange <|-- TextLengthOutOfRange
+    InvalidNumber <|-- InvalidInteger
+    InvalidNumber <|-- InvalidFloat
 ```
-CommandErrorBase
-├── IllegalNodeOperation              # 不支持的操作（如 Literal.suggests）
-└── CommandError
-    ├── UnknownCommand                # 解析完但无回调
-    ├── UnknownArgument               # 还有剩余输入但无匹配子节点
-    ├── RequirementNotMet             # requires 失败
-    └── CommandSyntaxError
-        └── IllegalArgument
-            ├── AbstractOutOfRange
-            │   ├── NumberOutOfRange  # Number/Integer/Float 越界
-            │   └── TextLengthOutOfRange
-            ├── InvalidNumber / InvalidInteger / InvalidFloat
-            ├── IllegalEscapesUsage
-            ├── UnclosedQuotedString
-            ├── EmptyText
-            ├── InvalidBoolean
-            └── InvalidEnumeration
-```
+
+> `IllegalNodeOperation`：不支持的操作（如 `Literal.suggests`）；`NumberOutOfRange`：Number/Integer/Float 越界
 
 ### 项目内常用错误处理
 

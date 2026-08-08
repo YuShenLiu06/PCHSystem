@@ -35,7 +35,26 @@
 
 ### #1 插件 `on_load` 增后端可达性自检（最高价值）— ✅ 已落地 2026-07-12
 
-> **落地**：`McdrPlugin/pch_system/pch_system/health.py`（探针 + 渲染 + `run_console_check`）+ `__init__.py:_start_health_check`（`@new_thread`）+ `commands.py:_status`（游戏内 `!!PCH status`）。**超出原设计的扩展**：除后端探针外，新增 ① 前端嗅探（靠 #2 `/info` 回传的 `web_base_url`）② 「未配置 / 离线 / 在线-低版本」分档链接（release / RUNBOOK / frontend.md）③ **令牌真校验**（`probe_token` 探 service-token 保护端点 `/notifications/pending`，401=不一致 error / 非 401=一致 ok，取代占位串启发式——后者无法识别「两边都用占位」与「单边占位代写必 401」）④ 插件自身版本置顶（`resolve_plugin_meta` → `get_plugin_metadata`）+ 作者页脚 `作者：YuShen`。`probe_backend` / `probe_token` 独立放 `health.py` 而非 `client.py`（职责分离：client=auth 写通道，health=自检只读探针）。下方原计划保留作设计溯源。
+> **落地**（2026-07-12）：
+
+| 文件 | 内容 |
+|---|---|
+| `health.py` | `probe_backend` + `probe_token` 探针 + 渲染 + `run_console_check` |
+| `__init__.py` | `_start_health_check`（`@new_thread`） |
+| `commands.py` | `_status`（游戏内 `!!PCH status`） |
+
+> `probe_backend` / `probe_token` 独立放 `health.py` 而非 `client.py`（职责分离：client=auth 写通道，health=自检只读探针）。
+
+**超出原设计的扩展**：
+
+| # | 扩展 | 说明 |
+|---|---|---|
+| ① | 前端嗅探 | 靠 #2 `/info` 回传的 `web_base_url` |
+| ② | 分档链接 | 「未配置 / 离线 / 在线-低版本」三档，指向 release / RUNBOOK / frontend.md |
+| ③ | 令牌真校验 | `probe_token` 探 `/notifications/pending`：401=不一致 error / 非 401=一致 ok（取代占位串启发式，后者无法识别「两边都用占位」） |
+| ④ | 版本置顶 + 作者 | `resolve_plugin_meta` → `get_plugin_metadata`；页脚 `作者：YuShen` |
+
+下方原计划保留作设计溯源。
 
 - **动文件**：`McdrPlugin/pch_system/pch_system/__init__.py`（`on_load` 末尾调用）+ `client.py` 新增 `probe_backend(cfg) -> (ok: bool, info: dict|None)`。
 - **行为**：
@@ -50,7 +69,16 @@
 
 ### #2 后端补 `GET /info` + 修陈旧 version — ✅ 已落地 2026-07-12
 
-> **落地**：`Backend/app/main.py` — `_backend_version()` 走 `importlib.metadata.version("pchsystem-backend")`，`FastAPI(version=_backend_version())` 同步修掉写死的 `"0.1.0"`；`GET /info` 公开返 `{name, version, status, web_base_url}`（`web_base_url` 为 #1 前端嗅探喂料，超出原设计的 `{name, version, status}`）。`/healthz` 契约不变。下方原计划保留作设计溯源。
+> **落地**（2026-07-12）：`Backend/app/main.py` —
+
+| 改动 | 说明 |
+|---|---|
+| `_backend_version()` | 走 `importlib.metadata.version("pchsystem-backend")` |
+| `FastAPI(version=...)` | 同步修掉写死的 `"0.1.0"` |
+| `GET /info` | 公开返 `{name, version, status, web_base_url}`（`web_base_url` 为 #1 前端嗅探喂料，超出原设计） |
+| `/healthz` | 契约不变 |
+
+下方原计划保留作设计溯源。
 
 - **动文件**：`Backend/app/main.py`（`create_app` 内）。
 - **行为**：新增 `GET /info` → `{"name":"HTCMC PCHSystem","version":"<真值>","status":"ok"}`，**公开无需鉴权**（同 `/healthz`）。
