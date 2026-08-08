@@ -7,6 +7,7 @@
 
 mock requests.request（construction_client 走统一 _request）。
 """
+import logging
 import os
 import sys
 import unittest
@@ -323,6 +324,49 @@ class ConstructionClientV2Test(unittest.TestCase):
             out = cc.get_my_construction(_cfg(), self.UUID_A)
         self.assertEqual(out["active"]["sheet_id"], 7)
         self.assertEqual(out["active"]["sheet_title"], "主城")
+
+
+class LogDedupTest(unittest.TestCase):
+    """_request 网络错误日志去重：首次 ERROR、后续 DEBUG、恢复时 INFO。"""
+
+    UUID = "11111111-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        cc._consecutive_net_errors = 0
+
+    def test_first_network_error_logged_at_error(self):
+        import requests as real_requests
+
+        cfg = _cfg()
+        cfg.http_retries = 0
+        with self.assertLogs(cc._log, level="ERROR") as cm:
+            with mock.patch.object(cc.requests, "request", side_effect=real_requests.ConnectionError("down")):
+                cc.get_active_sheets(cfg, self.UUID)
+        error_records = [r for r in cm.records if r.levelno >= logging.ERROR]
+        self.assertEqual(len(error_records), 1)
+
+    def test_subsequent_network_errors_demoted_to_debug(self):
+        import requests as real_requests
+
+        cfg = _cfg()
+        cfg.http_retries = 0
+        cc._consecutive_net_errors = 1
+        with self.assertLogs(cc._log, level="DEBUG") as cm:
+            with mock.patch.object(cc.requests, "request", side_effect=real_requests.ConnectionError("down")):
+                cc.get_active_sheets(cfg, self.UUID)
+        error_records = [r for r in cm.records if r.levelno >= logging.ERROR]
+        self.assertEqual(len(error_records), 0)
+
+    def test_success_after_errors_logs_recovery_and_resets(self):
+        cc._consecutive_net_errors = 3
+        cfg = _cfg()
+        with self.assertLogs(cc._log, level="INFO") as cm:
+            with mock.patch.object(cc.requests, "request", return_value=_resp(200, {"sheets": []})):
+                cc.get_active_sheets(cfg, self.UUID)
+        self.assertEqual(cc._consecutive_net_errors, 0)
+        info_records = [r for r in cm.records if r.levelno == logging.INFO]
+        self.assertEqual(len(info_records), 1)
+        self.assertIn("reachable again", info_records[0].message)
 
 
 if __name__ == "__main__":

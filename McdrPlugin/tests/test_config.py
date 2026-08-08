@@ -26,6 +26,7 @@ _BEHAVIOR_FIELDS = (
     "http_retries",
     "notify_poll_interval_seconds",
     "notify_max_per_poll",
+    "backoff_max_seconds",
 )
 
 

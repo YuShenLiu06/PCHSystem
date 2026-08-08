@@ -152,15 +152,34 @@ class DeliverForPlayerTest(unittest.TestCase):
         server.tell.assert_not_called()
         ack.assert_not_called()
 
-    def test_network_failure_silent(self):
-        # pending 返回 None（网络失败）→ 不 tell、不 ack、不抛
+    def test_network_failure_silent_returns_false(self):
+        # pending 返回 None（网络失败）→ 不 tell、不 ack、不抛、返回 False
         notifier.configure(_cfg())
         server = mock.Mock()
         with mock.patch.object(notifier.sheet_client, "pending_notifications", return_value=None):
             with mock.patch.object(notifier.sheet_client, "ack_notifications") as ack:
-                notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
+                result = notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
+        self.assertFalse(result)
         server.tell.assert_not_called()
         ack.assert_not_called()
+
+    def test_empty_list_returns_true(self):
+        # pending 返回空 list（HTTP 成功但无通知）→ 返回 True
+        notifier.configure(_cfg())
+        server = mock.Mock()
+        with mock.patch.object(notifier.sheet_client, "pending_notifications", return_value=[]):
+            result = notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
+        self.assertTrue(result)
+
+    def test_success_returns_true(self):
+        notifier.configure(_cfg())
+        server = mock.Mock()
+        with mock.patch.object(notifier.sheet_client, "pending_notifications", return_value=[
+            {"id": 1, "category": "sheet_claimed", "payload": {"actor_name": "B", "item_name": "i"}}
+        ]):
+            with mock.patch.object(notifier.sheet_client, "ack_notifications", return_value={}):
+                result = notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
+        self.assertTrue(result)
 
     def test_ack_failure_does_not_raise(self):
         notifier.configure(_cfg())
@@ -186,6 +205,63 @@ class DeliverForPlayerTest(unittest.TestCase):
                 # 不应抛
                 notifier._deliver_for_player(server, "Alice", "uuid-a", _cfg())
         self.assertTrue(server.tell.called)
+
+
+class RunBackoffTest(unittest.TestCase):
+    """run() 退避状态机：连续网络失败 → 指数增大间隔 + server.logger 提示；恢复 → 重置。"""
+
+    def setUp(self):
+        with notifier._online_lock:
+            notifier._online_players.clear()
+
+    def test_backoff_increases_interval_and_logs_transitions(self):
+        notifier.configure(_cfg())
+        notifier._set_online("Alice", "uuid-a")
+
+        server = mock.Mock()
+        server.is_server_running.return_value = True
+
+        # 3 iterations: fail, fail, success → then stop
+        pending_returns = [None, None, []]
+        wait_returns = [False, False, False, True]
+
+        with mock.patch.object(notifier.sheet_client, "pending_notifications", side_effect=pending_returns):
+            with mock.patch.object(notifier.sheet_client, "ack_notifications"):
+                stop_event = mock.Mock()
+                stop_event.is_set.return_value = False
+                stop_event.wait.side_effect = wait_returns
+                notifier.run(server, _cfg(), stop_event)
+
+        # 进入退避时 warning 一次
+        server.logger.warning.assert_called_once()
+        warning_msg = server.logger.warning.call_args[0][0]
+        self.assertIn("后端不可达", warning_msg)
+        # 恢复时 info 一次
+        server.logger.info.assert_called_once()
+        info_msg = server.logger.info.call_args[0][0]
+        self.assertIn("恢复", info_msg)
+
+        # 验证间隔递增：1.0(base) → 2.0(2^1) → 4.0(2^2) → 1.0(recovered)
+        intervals = [call.args[0] for call in stop_event.wait.call_args_list]
+        self.assertAlmostEqual(intervals[0], 1.0)
+        self.assertAlmostEqual(intervals[1], 2.0)
+        self.assertAlmostEqual(intervals[2], 4.0)
+        self.assertAlmostEqual(intervals[3], 1.0)
+
+    def test_no_online_players_does_not_trigger_backoff(self):
+        notifier.configure(_cfg())
+        server = mock.Mock()
+        server.is_server_running.return_value = True
+
+        with mock.patch.object(notifier.sheet_client, "pending_notifications") as pending:
+            stop_event = mock.Mock()
+            stop_event.is_set.return_value = False
+            stop_event.wait.side_effect = [False, True]
+            notifier.run(server, _cfg(), stop_event)
+
+        # 无在线玩家 → 不调 HTTP、不触发退避日志
+        pending.assert_not_called()
+        server.logger.warning.assert_not_called()
 
 
 if __name__ == "__main__":

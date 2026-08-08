@@ -2,6 +2,7 @@
 
 mock requests.request（sheet_client 走统一的 _request）。
 """
+import logging
 import os
 import sys
 import unittest
@@ -252,6 +253,66 @@ class SheetClientTest(unittest.TestCase):
         self.assertIn("/sheets/1/rows/2/progress", captured["url"])
         self.assertEqual(captured["json"], {"delivered_qty": 10})
         self.assertEqual(out["delivered_qty"], 10)
+
+
+class LogDedupTest(unittest.TestCase):
+    """_request 网络错误日志去重：首次 ERROR、后续 DEBUG、恢复时 INFO。"""
+
+    UUID = "11111111-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        # 每个测试前重置模块级计数器
+        sc._consecutive_net_errors = 0
+
+    def test_first_network_error_logged_at_error(self):
+        import requests as real_requests
+
+        cfg = _cfg()
+        cfg.http_retries = 0
+        with self.assertLogs(sc._log, level="ERROR") as cm:
+            with mock.patch.object(sc.requests, "request", side_effect=real_requests.ConnectionError("down")):
+                sc.list_sheets(cfg, self.UUID)
+        error_records = [r for r in cm.records if r.levelno >= logging.ERROR]
+        self.assertEqual(len(error_records), 1)
+        self.assertIn("failed", error_records[0].message)
+
+    def test_subsequent_network_errors_demoted_to_debug(self):
+        import requests as real_requests
+
+        cfg = _cfg()
+        cfg.http_retries = 0
+        # 模拟首次错误已发生
+        sc._consecutive_net_errors = 1
+        with self.assertLogs(sc._log, level="DEBUG") as cm:
+            with mock.patch.object(sc.requests, "request", side_effect=real_requests.ConnectionError("down")):
+                sc.list_sheets(cfg, self.UUID)
+        error_records = [r for r in cm.records if r.levelno >= logging.ERROR]
+        self.assertEqual(len(error_records), 0)
+        debug_records = [r for r in cm.records if r.levelno == logging.DEBUG]
+        self.assertEqual(len(debug_records), 1)
+
+    def test_success_after_errors_logs_recovery_and_resets(self):
+        sc._consecutive_net_errors = 3
+        cfg = _cfg()
+        with self.assertLogs(sc._log, level="INFO") as cm:
+            with mock.patch.object(sc.requests, "request", return_value=_resp(200, [])):
+                out = sc.list_sheets(cfg, self.UUID)
+        self.assertEqual(out, [])
+        self.assertEqual(sc._consecutive_net_errors, 0)
+        info_records = [r for r in cm.records if r.levelno == logging.INFO]
+        self.assertEqual(len(info_records), 1)
+        self.assertIn("reachable again", info_records[0].message)
+
+    def test_http_error_does_not_count_as_network_failure(self):
+        """HTTP 404/500 等响应 = 后端可达，不增计数、若有计数则重置。"""
+        sc._consecutive_net_errors = 2
+        cfg = _cfg()
+        with self.assertLogs(sc._log, level="INFO") as cm:
+            with mock.patch.object(sc.requests, "request", return_value=_resp(404, {"detail": "gone"})):
+                sc.view_sheet(cfg, self.UUID, 99)
+        self.assertEqual(sc._consecutive_net_errors, 0)
+        info_records = [r for r in cm.records if r.levelno == logging.INFO]
+        self.assertEqual(len(info_records), 1)
 
 
 if __name__ == "__main__":

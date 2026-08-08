@@ -19,6 +19,10 @@ from .config import PchSystemConfig
 
 _log = logging.getLogger("pch_system.sheet_client")
 
+# 连续网络错误计数（仅 RequestException；任意 HTTP 响应到达即重置）
+# 首次错误 log ERROR，后续降 DEBUG，避免后端离线时刷屏
+_consecutive_net_errors: int = 0
+
 # 哨兵字符串（与 client.py 一致，RS-11：必须回执玩家）
 RATE_LIMITED = "__RATE_LIMITED__"
 REMOVED = "__REMOVED__"
@@ -45,6 +49,19 @@ def _base_headers(cfg: PchSystemConfig, player_uuid: str) -> dict:
     }
 
 
+def _reset_net_errors_if_any() -> None:
+    """任意 HTTP 响应到达 = 后端可达 → 重置网络错误计数 + log 恢复。
+
+    注意：``_log`` 是裸 Python logger，MCDR 生产环境 INFO 级不可见（无 handler）。
+    操作者可见的恢复提示由 ``notifier.run()`` / ``construction_tracker.run()``
+    经 ``server.logger.info`` 发出；此处的 INFO 仅供测试与非 MCDR 环境诊断。
+    """
+    global _consecutive_net_errors
+    if _consecutive_net_errors > 0:
+        _log.info("sheet backend reachable again after %d consecutive errors", _consecutive_net_errors)
+        _consecutive_net_errors = 0
+
+
 def _request(
     cfg: PchSystemConfig,
     method: str,
@@ -55,6 +72,7 @@ def _request(
     json_body: Optional[dict] = None,
 ) -> SheetOutcome:
     """统一请求入口：超时 + 重试 + 哨兵 + HttpError。"""
+    global _consecutive_net_errors
     url = f"{cfg.api_url.rstrip('/')}{path}"
     headers = _base_headers(cfg, player_uuid)
     last_err: Optional[str] = None
@@ -68,6 +86,7 @@ def _request(
                 headers=headers,
                 timeout=cfg.http_timeout_seconds,
             )
+            _reset_net_errors_if_any()
             status = resp.status_code
             if status == 429:
                 _log.warning("sheet %s %s rate limited", method, path)
@@ -87,7 +106,14 @@ def _request(
             return HttpError(status=status, detail=str(detail)[:200])
         except requests.RequestException as e:
             last_err = repr(e)
-    _log.error("sheet %s %s failed: %s", method, path, last_err)
+    _consecutive_net_errors += 1
+    if _consecutive_net_errors == 1:
+        _log.error("sheet %s %s failed: %s", method, path, last_err)
+    else:
+        _log.debug(
+            "sheet %s %s failed: %s (consecutive #%d)",
+            method, path, last_err, _consecutive_net_errors,
+        )
     return None
 
 
