@@ -1,7 +1,33 @@
+<!-- omit in toc -->
 # 服务文档：MCDR 插件（游戏内端）
 
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5
 > **数据模型**：[`../data-model.md`](../data-model.md)（本服务**不直连数据库**）
+
+---
+
+- [1. 职责边界](#1-%E8%81%8C%E8%B4%A3%E8%BE%B9%E7%95%8C)
+- [2. 对外接口（游戏内命令）](#2-%E5%AF%B9%E5%A4%96%E6%8E%A5%E5%8F%A3%E6%B8%B8%E6%88%8F%E5%86%85%E5%91%BD%E4%BB%A4)
+- [3. 实现要点（命令注册 · 扫描 · UUID · 称号 · HTTP · 绑定）](#3-%E5%AE%9E%E7%8E%B0%E8%A6%81%E7%82%B9%E5%91%BD%E4%BB%A4%E6%B3%A8%E5%86%8C--%E6%89%AB%E6%8F%8F--uuid--%E7%A7%B0%E5%8F%B7--http--%E7%BB%91%E5%AE%9A)
+  - [3.1 命令注册（MCDR API）](#31-%E5%91%BD%E4%BB%A4%E6%B3%A8%E5%86%8Cmcdr-api)
+  - [3.2 坐标箱子扫描（RCON + amulet-nbt）](#32-%E5%9D%90%E6%A0%87%E7%AE%B1%E5%AD%90%E6%89%AB%E6%8F%8Frcon--amulet-nbt)
+  - [3.3 背包/手持扫描](#33-%E8%83%8C%E5%8C%85%E6%89%8B%E6%8C%81%E6%89%AB%E6%8F%8F)
+  - [3.4 玩家 UUID 推导（离线模式）](#34-%E7%8E%A9%E5%AE%B6-uuid-%E6%8E%A8%E5%AF%BC%E7%A6%BB%E7%BA%BF%E6%A8%A1%E5%BC%8F)
+  - [3.5 称号前缀下发（scoreboard）](#35-%E7%A7%B0%E5%8F%B7%E5%89%8D%E7%BC%80%E4%B8%8B%E5%8F%91scoreboard)
+  - [3.6 HTTP 客户端（超时 + 重试 + 鉴权 + 哨兵回执）](#36-http-%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%B6%85%E6%97%B6--%E9%87%8D%E8%AF%95--%E9%89%B4%E6%9D%83--%E5%93%A8%E5%85%B5%E5%9B%9E%E6%89%A7)
+    - [3.6.1 service-token + `X-Player-UUID` 代玩家写](#361-service-token--x-player-uuid-%E4%BB%A3%E7%8E%A9%E5%AE%B6%E5%86%99)
+  - [3.7 sheets 命令树](#37-sheets-%E5%91%BD%E4%BB%A4%E6%A0%91)
+  - [3.7.1 项目语义对齐设计（⚠️ 仅设计，本期不实现）](#371-%E9%A1%B9%E7%9B%AE%E8%AF%AD%E4%B9%89%E5%AF%B9%E9%BD%90%E8%AE%BE%E8%AE%A1%E2%9A%A0%EF%B8%8F-%E4%BB%85%E8%AE%BE%E8%AE%A1%E6%9C%AC%E6%9C%9F%E4%B8%8D%E5%AE%9E%E7%8E%B0)
+  - [3.8 通知轮询（投递候选池）](#38-%E9%80%9A%E7%9F%A5%E8%BD%AE%E8%AF%A2%E6%8A%95%E9%80%92%E5%80%99%E9%80%89%E6%B1%A0)
+  - [3.9 一键提交 / 手持新建行 / 补 registry\_id（registry\_id 配套）](#39-%E4%B8%80%E9%94%AE%E6%8F%90%E4%BA%A4--%E6%89%8B%E6%8C%81%E6%96%B0%E5%BB%BA%E8%A1%8C--%E8%A1%A5-registryidregistryid-%E9%85%8D%E5%A5%97)
+  - [3.10 数量显示换算（三端统一）](#310-%E6%95%B0%E9%87%8F%E6%98%BE%E7%A4%BA%E6%8D%A2%E7%AE%97%E4%B8%89%E7%AB%AF%E7%BB%9F%E4%B8%80)
+  - [3.11 健康自检（`!!PCH status` + on\_load）](#311-%E5%81%A5%E5%BA%B7%E8%87%AA%E6%A3%80pch-status--onload)
+  - [3.12 双向绑定（bind）](#312-%E5%8F%8C%E5%90%91%E7%BB%91%E5%AE%9Abind)
+- [4. 依赖的其他服务（HTTP API）](#4-%E4%BE%9D%E8%B5%96%E7%9A%84%E5%85%B6%E4%BB%96%E6%9C%8D%E5%8A%A1http-api)
+  - [4.1 MCDR 端插件依赖（游戏内协作）](#41-mcdr-%E7%AB%AF%E6%8F%92%E4%BB%B6%E4%BE%9D%E8%B5%96%E6%B8%B8%E6%88%8F%E5%86%85%E5%8D%8F%E4%BD%9C)
+- [5. 所属数据表](#5-%E6%89%80%E5%B1%9E%E6%95%B0%E6%8D%AE%E8%A1%A8)
+- [6. 风险与待确认](#6-%E9%A3%8E%E9%99%A9%E4%B8%8E%E5%BE%85%E7%A1%AE%E8%AE%A4)
+- [增量日志](#%E5%A2%9E%E9%87%8F%E6%97%A5%E5%BF%97)
 
 ## 1. 职责边界
 
@@ -38,7 +64,7 @@
 | `!!PCH login` | user | 申请登录链接（已落地） |
 | `!!PCH sheet …` | user / owner | sheets 全套（list/view/create/rename/delete/add/set/delrow/claim/deliver/done/release/reject/notify list + **`submit`/`addhand`/`setreg`/`advance`**），详见 [`api/sheets.md`](../api/sheets.md) §11。**设计待办**（§3.7.1）：主节点拟改 `!!PCH project`、文案改「项目」，迁移期双注册 |
 
-## 3. 内部实现要点
+## 3. 实现要点（命令注册 · 扫描 · UUID · 称号 · HTTP · 绑定）
 
 ### 3.1 命令注册（MCDR API）
 ```python
@@ -52,7 +78,7 @@ def on_load(server, prev):
 ```
 证据：[MCDR 命令系统](https://docs.mcdreforged.com/zh-cn/latest/)（`server.register_command` + `Literal/Text/Integer` 节点树）。
 
-### 3.2 箱子扫描（核心）
+### 3.2 坐标箱子扫描（RCON + amulet-nbt）
 ```python
 raw = server.rcon_query(f'data get block {x} {y} {z}')
 # raw 是 SNBT 字符串，形如 "{Items:[{id:'minecraft:chest',Count:64b,Slot:0b},...]}"
@@ -92,7 +118,7 @@ def apply_prefix(server, player, prefix_text):
 - **配套**：安装 [Title Prefix Handler](https://mcdreforged.com/zh-CN/plugin/title_prefix_handler)，修正 team prefix 对 MCDR 玩家名解析的干扰。
 - 切换称号时重建 team prefix。
 
-### 3.6 HTTP 客户端（带鉴权）
+### 3.6 HTTP 客户端（超时 + 重试 + 鉴权 + 哨兵回执）
 
 ```python
 import requests
@@ -102,9 +128,8 @@ def call_backend(server, path, payload):
         headers={'X-Service-Token': SERVICE_TOKEN},   # MCDR↔后端服务密钥
     ).json()
 ```
-- 用 `requests`（或 `aiohttp`）。
 - **阻塞型 HTTP 必须放 `@new_thread('name')`**（如 `@new_thread('pch_system sheet')`）—— 卸载到 daemon 线程，`server.tell` 线程安全。
-- ⚠️ `server.schedule_task(...)` 的回调跑在 **TaskExecutor = 主线程**，**不可**用于卸载阻塞工作（RS-6）。它仅用于协程调度 / 延迟到主线程下一 tick / 从后台线程回主线程。误用会卡住整个 MCDR 主循环（命令/事件/控制台输出解析全停滞）。
+- ⚠️ `server.schedule_task(...)` 回调跑在 **TaskExecutor = 主线程**，**不可**用于卸载阻塞工作（RS-6）。误用会卡住整个 MCDR 主循环。
 - 含超时（≤10s）+ 重试 + 失败回执给玩家。
 - 哨兵字符串必须回执玩家（RS-11）：`__RATE_LIMITED__`（限频）/`__REMOVED__`（玩家被移出白名单）/`None`（服务不可用）。
 
@@ -259,11 +284,7 @@ def _do_claim(server, player, sheet_id, row_id):
 
 **短码回执格式**：整行 `§7` 灰（敏感信息规则，禁 `§` 高亮），MC 聊天纯文本不可点击，无复制风险。
 
-**HTTP 客户端契约**（复用 sheet_client 双头通道与哨兵机制）：
-
-- 返回类型约定：成功 dict / 哨兵字符串 `__RATE_LIMITED__`（429）/ `__REMOVED__`（403）/ `HttpError(status, detail)` 对象 / 网络失败 None。
-- 超时 + 重试 + 哨兵 + HttpError 统一处理。
-- 详细：`pch_system/bind_client.py`。
+> HTTP 客户端复用 §3.6 双头通道 + 哨兵机制（`__RATE_LIMITED__` / `__REMOVED__` / `HttpError` / None），实现见 `pch_system/bind_client.py`。
 
 ## 4. 依赖的其他服务（HTTP API）
 
@@ -272,12 +293,9 @@ def _do_claim(server, player, sheet_id, row_id):
 | user-service | `POST /bind/token`（game_init，仅 service-token） | `!!PCH bind` 无参 |
 | user-service | `POST /bind/consume`（web_init，service-token + `X-Player-UUID` 双头） | `!!PCH bind <code>` |
 | user-service | `GET /players/me`（按 UUID） | `!!info` |
-| user-service | `POST /auth/login` | （预留，密码登录） |
-| user-service | `POST /web-accounts/register` | （预留，临时→永久） |
-| user-service | `GET /web-accounts/me` | （预留，账号信息） |
-| user-service | `POST /bind/issue` | （预留，Web 端发起） |
-| user-service | `POST /bind/confirm` | （预留，Web 端输入） |
-| user-service | `POST /bind/claim` | （预留，临时账号凭据） |
+| user-service | `POST /auth/login` | （预留） |
+| user-service | `POST /web-accounts/register` | （预留） |
+| user-service | `GET /web-accounts/me` | （预留） |
 | project-service | `GET /projects/{id}` | `!!project info` |
 | scoring-service | `POST /submissions` | `!!submit` |
 | title-service | `GET/POST /players/me/titles` | `!!title` |
@@ -326,11 +344,11 @@ def _do_claim(server, player, sheet_id, row_id):
 
 ## 增量日志
 
-**2026-07-12**：插件 id `htcmc_auth → pch_system`（MCDR 硬性要求 `id` = 文件夹名 = 包名，S-1 联网核实 [catalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html)「id 需与 plugin_info.json 所在目录同名」+ [metadata](https://docs.mcdreforged.com/en/latest/plugin_dev/metadata.html)「entrypoint 缺省 = id」）；git mv `McdrPlugin/htcmc_auth → McdrPlugin/pch_system` + 内部包 `htcmc_auth → pch_system` + 类 `HtcmcAuthConfig → PchSystemConfig`；全仓 import / 路径 / logger 名 / 线程名（`htcmc_sheet_* → pch_sheet_*`、`htcmc_health_check → pch_health_check`）/ 脚本 / 编排（`TestServer` Dockerfile + compose + config 文件名）/ 活跃文档对齐；`!!PCH status` + on_load 健康自检落地（四探针：plugin/backend/token/frontend，状态矩阵 + 可点击链接）。
+**2026-07-12**：插件 id `htcmc_auth → pch_system`（MCDR 要求 `id` = 文件夹名 = 包名，S-1 联网核实 [catalogue](https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html) + [metadata](https://docs.mcdreforged.com/en/latest/plugin_dev/metadata.html)）；全仓 import / logger 名 / 线程名 / 编排文件名对齐；`!!PCH status` 健康自检落地（四探针 + 状态矩阵，§3.11）。
 
-**2026-07-19**：`!!PCH bind` 双向绑定（game_init/web_init）落地，支持「玩家游戏内发起」与「Web 端发起」两种场景；新增 `bind_client.py`（复用 sheet_client 双头通道与哨兵机制，`request_bind_token` 单头 / `consume_bind_code` 双头）；`commands.py` 加 `_bind`/`_bind_consume`（镜像 `_login` 的 `@new_thread('pch_system bind')` 模板）；`__init__.py` 命令树替换 `_not_impl("bind")` stub 为 `Literal("bind").runs(_bind).then(Text("code").runs(_bind_consume))`；短码回执整行 `§7` 灰（敏感信息规则，禁 `§` 高亮）；**身份主锚升级为 Web 账号（R-5）**：JWT `sub` 由 `player_uuid` 改 `web_account_id`（破坏性，旧会话失效）；MCDR 端 service-token 通道不变，但后端聚合按 account（`viewer_uuids` = 同账号所有 UUID）；未绑玩家权限回退 `player.role` 默认值，**已由 `_is_superuser` 切 `_resolve_role` 修复**（account 级 role 权威）。
+**2026-07-19**：`!!PCH bind` 双向绑定落地（game_init/web_init，§3.12）；新增 `bind_client.py`（复用 sheet_client 双头通道 + 哨兵）；身份主锚升 Web 账号（R-5），`_is_superuser` 切 `_resolve_role`（account 级 role 权威，§3.6.1）。
 
-**2026-07-19**：协管员 `!!PCH sheet manager` 升 account 锚（迁移 0016，`SheetManager` 锚 `web_account_id`，同账号任一 UUID 继承）；`sheet_commands.py` 加 `_sheet_manager_list`/`_sheet_manager_add`/`_sheet_manager_remove`（先 `uuid_api_remake.get_uuid(玩家名)` 转 UUID，后端解析 account）；`__init__.py` 命令树加 `manager` 子树；`_render_sheet_detail` 的 `is_manager` 改 account 级——新增 `_is_manager(managers, viewer_uuids)` 单一 helper（N2 DRY，`any(uuid in viewer_uuids for m in managers for uuid in (m.get("member_uuids") or []))`）；行级 `[改][-][子][调]` 与底部 `[进入施工][新增物品]` 按钮对协管员可见（tier B），归档/改名/删表按钮仅 owner 可见（tier A）；提交回执折叠（`scanner.skip_is_ready`/`skip_is_noise`）与归档写短路（issue #7，返「项目已归档，只读」）落地。
+**2026-07-19**：协管员 `!!PCH sheet manager` 升 account 锚（迁移 0016）；`SheetManager` 锚 `web_account_id`，同账号任一 UUID 继承；行级按钮 + 底部按钮按 tier A/B 分权；提交回执折叠 + 归档写短路（issue #7）落地。
 
 ---
 

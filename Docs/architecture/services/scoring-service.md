@@ -30,7 +30,7 @@
 | GET | `/scores/rank` | MCDR/Web | 榜单（总/赛季/分类，分页） |
 | POST | `/admin/scores/adjust` | Web(admin/owner) | 手动修正（写 reason=manual_adj） |
 
-## 3. 内部实现要点
+## 3. 实现要点（结算事务 · 公式 · 占比 SQL · 流水 · 防重）
 
 ### 3.1 提交结算事务（核心链路）
 

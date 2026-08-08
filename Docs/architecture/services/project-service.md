@@ -30,7 +30,7 @@
 | POST | `/projects/{id}/litematic` | Web(admin) | 重新上传/重新解析投影 |
 | GET | `/projects/{id}/export.csv` | Web | 导出 CSV（`Item,Total,Missing,Available`） |
 
-## 3. 内部实现要点
+## 3. 实现要点（投影解析 · 归一化 · 状态机 · 积分池）
 
 ### 3.1 `.litematic` 解析（核心）—— 复用 litemapy
 
@@ -67,7 +67,7 @@ def parse_litematic(path: str) -> dict[str, int]:
 
 ### 3.3 CSV 导出（投影→导出）
 
-用户明确：「做一个抽象层，现在暂时仅仅支持投影到导出的 CSV」。导出格式对齐现有 `Material/material_list_*.csv`：
+定义 `ProjectionExporter` 抽象层，首版仅 `CsvExporter` 实现（未来可扩展 `LitematicExporter` 等）。导出格式对齐现有 `Material/material_list_*.csv`：
 
 ```python
 def export_csv(project_id) -> str:
@@ -82,7 +82,6 @@ def export_csv(project_id) -> str:
         lines.append(f"{r.item_id},{r.required_qty},{missing},{r.delivered_qty}")
     return "\n".join(lines)
 ```
-- **抽象层**：定义 `ProjectionExporter` 接口，首版仅 `CsvExporter` 实现，未来可扩展 `LitematicExporter` 等。
 
 ### 3.4 项目状态机
 

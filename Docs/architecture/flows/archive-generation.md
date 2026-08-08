@@ -1,3 +1,4 @@
+<!-- omit in toc -->
 # 归档文档生成 · 端到端流程指南
 
 > 本文件是归档层的**二次开发指南**：讲清「项目归档那一刻发生了什么」+「想改归档输出该动哪里」。
@@ -8,6 +9,23 @@
 **状态**：✅ 已实现（迁移 0009，2026-07-03）。本指南§7 含三条**未执行**的改造路线（接线死代码 / ChartRenderer Protocol / helper 库），作为后续动手清单。
 
 ---
+
+- [1. 一句话定位](#1-%E4%B8%80%E5%8F%A5%E8%AF%9D%E5%AE%9A%E4%BD%8D)
+- [2. 端到端流程](#2-%E7%AB%AF%E5%88%B0%E7%AB%AF%E6%B5%81%E7%A8%8B)
+- [3. 核心抽象：markdown\_render Route C](#3-%E6%A0%B8%E5%BF%83%E6%8A%BD%E8%B1%A1markdownrender-route-c)
+  - [SectionRenderer Protocol（protocols.py）](#sectionrenderer-protocolprotocolspy)
+  - [TemplateSection / FunctionSection（sections.py）](#templatesection--functionsectionsectionspy)
+  - [MarkdownDocument（document.py）](#markdowndocumentdocumentpy)
+- [4. 首个消费者：sheet 归档 renderer](#4-%E9%A6%96%E4%B8%AA%E6%B6%88%E8%B4%B9%E8%80%85sheet-%E5%BD%92%E6%A1%A3-renderer)
+- [5. 落盘与事务一致性](#5-%E8%90%BD%E7%9B%98%E4%B8%8E%E4%BA%8B%E5%8A%A1%E4%B8%80%E8%87%B4%E6%80%A7)
+- [6. wiki 推送（可选副产物）](#6-wiki-%E6%8E%A8%E9%80%81%E5%8F%AF%E9%80%89%E5%89%AF%E4%BA%A7%E7%89%A9)
+- [7. 二次开发指南](#7-%E4%BA%8C%E6%AC%A1%E5%BC%80%E5%8F%91%E6%8C%87%E5%8D%97)
+  - [7.1 加一个新 section（最常见）](#71-%E5%8A%A0%E4%B8%80%E4%B8%AA%E6%96%B0-section%E6%9C%80%E5%B8%B8%E8%A7%81)
+  - [7.2 覆盖默认文案 · 接线死代码（改造路线，未执行）](#72-%E8%A6%86%E7%9B%96%E9%BB%98%E8%AE%A4%E6%96%87%E6%A1%88--%E6%8E%A5%E7%BA%BF%E6%AD%BB%E4%BB%A3%E7%A0%81%E6%94%B9%E9%80%A0%E8%B7%AF%E7%BA%BF%E6%9C%AA%E6%89%A7%E8%A1%8C)
+  - [7.3 换图表渲染器 · ChartRenderer Protocol（改造路线，未执行）](#73-%E6%8D%A2%E5%9B%BE%E8%A1%A8%E6%B8%B2%E6%9F%93%E5%99%A8--chartrenderer-protocol%E6%94%B9%E9%80%A0%E8%B7%AF%E7%BA%BF%E6%9C%AA%E6%89%A7%E8%A1%8C)
+  - [7.4 helper 库（改造路线，未执行）](#74-helper-%E5%BA%93%E6%94%B9%E9%80%A0%E8%B7%AF%E7%BA%BF%E6%9C%AA%E6%89%A7%E8%A1%8C)
+- [8. 红线速查](#8-%E7%BA%A2%E7%BA%BF%E9%80%9F%E6%9F%A5)
+
 
 ## 1. 一句话定位
 

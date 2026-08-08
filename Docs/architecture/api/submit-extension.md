@@ -92,7 +92,7 @@ for o in r.json()["outcomes"]:        # 遍历回执
     ...  # o["action"] ∈ delivered/contributed/skipped；skipped 看 o["reason"]
 ```
 
-## 错误码
+## HTTP 错误码与处理
 
 | HTTP | 场景 | 调用方处理 |
 |---|---|---|
@@ -101,7 +101,7 @@ for o in r.json()["outcomes"]:        # 遍历回执
 | 409 | 项目已归档（只读） | 不可写，提示用户 |
 | 422 | `items` 空 / `qty<0` / `registry_id` 空 / >2000 条 | 修请求体 |
 
-## 注意
+## 关键约束
 
 - **匹配键 = `registry_id`**（`namespace:path`）；block id ≠ item id，提交前确认是物品形态 id
 - **批量 vs 单行**：本端点一次编排多行；`claim`/`delivery`/`contribute` 是精细单行控制（认领/绝对交付/增量上交），两者可混用

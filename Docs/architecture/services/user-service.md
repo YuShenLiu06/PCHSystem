@@ -1,7 +1,26 @@
+<!-- omit in toc -->
 # 服务文档：user-service（身份核心）
 
 > **统一总览**：[`../../architecture.md`](../../architecture.md) §5
 > **数据模型**：[`../data-model.md`](../data-model.md) §2（`users` schema）
+
+---
+
+- [1. 职责边界](#1-%E8%81%8C%E8%B4%A3%E8%BE%B9%E7%95%8C)
+- [2. 对外接口（REST API）](#2-%E5%AF%B9%E5%A4%96%E6%8E%A5%E5%8F%A3rest-api)
+  - [2.1 双鉴权模型](#21-%E5%8F%8C%E9%89%B4%E6%9D%83%E6%A8%A1%E5%9E%8B)
+  - [2.2 端点清单](#22-%E7%AB%AF%E7%82%B9%E6%B8%85%E5%8D%95)
+- [3. 实现要点（身份锚 · 过户 · 绑定 · wiki · RBAC · JWT）](#3-%E5%AE%9E%E7%8E%B0%E8%A6%81%E7%82%B9%E8%BA%AB%E4%BB%BD%E9%94%9A--%E8%BF%87%E6%88%B7--%E7%BB%91%E5%AE%9A--wiki--rbac--jwt)
+  - [3.1 身份锚策略（核心）](#31-%E8%BA%AB%E4%BB%BD%E9%94%9A%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83)
+  - [3.2 离线改名过户流程](#32-%E7%A6%BB%E7%BA%BF%E6%94%B9%E5%90%8D%E8%BF%87%E6%88%B7%E6%B5%81%E7%A8%8B)
+  - [3.3 绑定 Token 流程（双向）](#33-%E7%BB%91%E5%AE%9A-token-%E6%B5%81%E7%A8%8B%E5%8F%8C%E5%90%91)
+  - [3.4 wiki.js 账号映射](#34-wikijs-%E8%B4%A6%E5%8F%B7%E6%98%A0%E5%B0%84)
+  - [3.5 RBAC 权限中间件](#35-rbac-%E6%9D%83%E9%99%90%E4%B8%AD%E9%97%B4%E4%BB%B6)
+  - [3.6 JWT sub=web\_account\_id（v0.8.0 破坏性变更）](#36-jwt-subwebaccountidv080-%E7%A0%B4%E5%9D%8F%E6%80%A7%E5%8F%98%E6%9B%B4)
+- [4. 依赖的其他服务](#4-%E4%BE%9D%E8%B5%96%E7%9A%84%E5%85%B6%E4%BB%96%E6%9C%8D%E5%8A%A1)
+- [5. 所属数据表](#5-%E6%89%80%E5%B1%9E%E6%95%B0%E6%8D%AE%E8%A1%A8)
+- [6. 风险与待确认](#6-%E9%A3%8E%E9%99%A9%E4%B8%8E%E5%BE%85%E7%A1%AE%E8%AE%A4)
+- [7. 增量日志](#7-%E5%A2%9E%E9%87%8F%E6%97%A5%E5%BF%97)
 
 ## 1. 职责边界
 
@@ -45,7 +64,7 @@
 | GET | `/players/{uuid}` | JWT（admin） | Web | 查玩家详情 |
 | PATCH | `/players/{uuid}` | JWT（admin） | Web | 改名过户 / 白名单状态 |
 
-## 3. 内部实现要点
+## 3. 实现要点（身份锚 · 过户 · 绑定 · wiki · RBAC · JWT）
 
 ### 3.1 身份锚策略（核心）
 
@@ -143,25 +162,15 @@ async def update_player(uuid, body, _=Depends(require_role("admin", "owner"))):
 ```
 三级：`user` / `admin`（运维）/ `owner`（超管）。FastAPI 依赖注入统一鉴权。
 
-### 3.6 JWT sub=web_account_id（**破坏性变更**）
+### 3.6 JWT sub=web_account_id（v0.8.0 破坏性变更）
 
-**JWT 签名变更**：
-- `sub` 由 `player_uuid`（UUID）改为 `web_account_id`（bigint）
-- 新增 `active_uuid` claim：会话来源 UUID（`/auth/login` 取首个绑定 player，`/auth/exchange` 取兑换玩家）
-- **破坏性**：现有 JWT 全部失效，所有玩家需重新登录
-
-**RBAC 权威源迁移**：
-- `role` 权威源由 `player.role` 迁移到 `account.role`（account 级）
-- `require_role` 重构：从 `player.role` 改为 `_resolve_role(player, account)`（未绑玩家回退 `player.role`）
-
-**聚合查询影响**（按 account 级聚合）：
-- `sheet_repo.list_sheets` 参与优先排序：`JOIN players → GROUP BY web_account_id`（NULL 用 `COALESCE(web_account_id::text, uuid::text)` 回退）
-- `notification_repo.pending`：同上
-- `aggregate_contributor_totals` 归档排行：同上，`min(uuid)` 统一 cast text 规避 PostgreSQL 限制
-
-**积分归属落地**：
-- 已实现：聚合查询按 `web_account_id` 分组
-- 待建表：`score_ledger` 直接加 `owner_account_id` 列（不再待确认）
+| 维度 | 变更 |
+|---|---|
+| JWT `sub` | `player_uuid`（UUID）→ `web_account_id`（bigint）；现有会话全失效，需重新登录 |
+| 新增 `active_uuid` claim | 会话来源 UUID（`/auth/login` 取首个绑定 player，`/auth/exchange` 取兑换玩家） |
+| RBAC 权威源 | `player.role` → `_resolve_role(player, account)`（未绑玩家回退 `player.role`） |
+| 聚合查询 | `sheet_repo.list_sheets` / `notification_repo.pending` / `aggregate_contributor_totals` 均按 `web_account_id` 分组（NULL 用 `COALESCE(web_account_id::text, uuid::text)` 回退） |
+| 积分归属 | 已聚合按 account 分组；`score_ledger` 待建时直接加 `owner_account_id` |
 
 ## 4. 依赖的其他服务
 
@@ -193,14 +202,10 @@ async def update_player(uuid, body, _=Depends(require_role("admin", "owner"))):
 ## 7. 增量日志
 
 **2026-07-19（v0.8.0，身份主锚升级 R-5 落地）**：
-- 新表 `web_accounts`（id/username/password_hash/role/wiki_user_id/display_name/timestamps；CHECK：NULL=临时账号）+ `bind_tokens`（双向短码；direction/game_init/web_init 一致性 CHECK；部分索引）
-- `players.web_account_id` 外键（首次 `!!PCH login` 自动建临时账号挂接）
-- 6 条新端点：`POST /auth/login`（密码登录）+ `POST /web-accounts/register`（临时→永久）+ `GET /web-accounts/me` + `POST /bind/token`（game_init）+ `POST /bind/issue`（web_init）+ `POST /bind/confirm` + `POST /bind/consume` + `POST /bind/claim`（临时挂接永久）
-- JWT `sub` 由 `player_uuid` 改 `web_account_id`（**破坏性变更**，现有会话全失效需重登）
-- `role` 权威源迁 account 级（未绑玩家回退 `player.role`）
-- 聚合查询按 `web_account_id` 分组（`sheet_repo.list_sheets` 参与优先 / `notification_repo.pending` / `aggregate_contributor_totals` 归档排行）
-- 积分归属已落地：`score_ledger` 待建时直接加 `owner_account_id`（不再待确认）
-- bcrypt 哈希密码（SHA256 预哈希规避 72 字节限制）+ 6 位 Crockford Base32 短码（剔除易混字符 0/O/1/I/L/U）
+- 新表 `web_accounts`（CHECK：NULL=临时账号）+ `bind_tokens`（双向短码，一致性 CHECK + 部分索引）；`players.web_account_id` 外键（首次 `!!PCH login` 自动建临时账号挂接）
+- 7 条新端点（auth/login / web-accounts/register+me / bind token+issue+confirm+consume+claim）
+- JWT `sub` 改 `web_account_id`（破坏性，见 §3.6）；RBAC 权威源迁 account 级
+- bcrypt 密码哈希（SHA256 预哈希规避 72 字节限制）+ 6 位 Crockford Base32 短码（剔除易混字符 0/O/1/I/L/U）
 
 ---
 

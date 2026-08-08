@@ -5,7 +5,7 @@
 
 ---
 
-## 1. 概述
+## 1. 流程概述
 
 上传 Minecraft 投影文件（`.litematic` 或 Create 模组 `.nbt` 蓝图）→ 后端解析材料清单 → 翻译成中文 → 返回分组预览（**不落库、不持久化文件**）。前端预览确认后，按材料清单调 [`POST /sheets/from-items`](./sheets.md#51-表级) 生成在线表格（`mode` 默认 `lock`），随后即可走现成 sheets 协作流（认领·交付·解除·打回）。
 
@@ -16,12 +16,12 @@
 
 ---
 
-## 2. 端点
+## 2. HTTP 端点
 
 | 方法 | 路径 | 鉴权 | body | 成功 | 说明 |
 |---|---|---|---|---|---|
-| POST | `/parsing/batch` | `get_current_player`（JWT·Web） | `multipart/form-data`：`files`（1..N 个 `.litematic`/`.nbt`，可混合） | 200 `BatchParsedPreview` | **唯一解析端点**（2026-07-24 起单/多文件统一入口，原 `/parsing/litematic` + `/parsing/nbt` 已删除）：一次上传 1~N 文件 → 每文件独立预览（成功/失败隔离）。后端**只解析、不收 multiplier**——倍数与跨文件聚合在前端做（便于随时调倍数无需重传）。单文件等价于批量 1 个文件。见 §8 |
-| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 一次性建表 + 批量行（mode 默认 lock）。**现透传 `registry_id`**（= `PreviewItem.item_id`），写入 `sheet_rows.registry_id`（迁移 0010）；`item_name` 缺失时后端翻译补中文名。**迁移 0012 起**：`SheetItemIn` schema 现接受可选 `parent_row_id`/`qty_per_unit`（子物品嵌套字段，投影解析流程不发送，仅手动录入时使用）；每条均为新建，**禁止携带 `row_id`**（否则 422）。见 [`sheets.md`](./sheets.md) |
+| POST | `/parsing/batch` | `get_current_player`（JWT·Web） | `multipart/form-data`：`files`（1..N 个 `.litematic`/`.nbt`，可混合） | 200 `BatchParsedPreview` | 唯一解析端点：一次上传多文件 → 每文件独立预览。后端只解析不收 multiplier（详细契约见 §8） |
+| POST | `/sheets/from-items` | `get_current_player` | `SheetFromItemsRequest{title, items[]}` | 201 `SheetDetail` | 批量建表 + 行（mode 默认 lock），透传 `registry_id`、翻译补名。详见 [`sheets.md`](./sheets.md) |
 
 - 上限：`.litematic` ≤ `LITEMATIC_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`.nbt` ≤ `NBT_MAX_UPLOAD_BYTES`（默认 50MB，经 `.env` 可调）；`items` ≤ 2000（schema 限）。`/parsing/batch` 额外：文件数 ≤ `PARSING_BATCH_MAX_FILES`（默认 10）、全部文件字节之和 ≤ `PARSING_BATCH_TOTAL_MAX_BYTES`（默认 100MB，单文件 50MB 上限之上的整请求二次护栏）。
 - 解析为 CPU 密集，跑在 `asyncio.to_thread`（RS-7，不阻塞事件循环）。
@@ -61,18 +61,14 @@ class ParsedMaterialPreview(BaseModel):
 
 ## 4. 架构（ABC，可扩展）
 
-```
-上传 bytes
-   │  MaterialParser(ABC)              app/services/parsing/parsers/
-   ▼   ├─ LitematicParser（litemapy）      base.py / litematic.py
-   │   └─ NbtParser（nbtlib）               base.py / nbt.py
-ParsedMaterialList(blocks, container_items, meta)   # 纯 registry id + count
-   │  ItemTranslator(ABC)             app/services/parsing/translators/
-   ▼   └─ LangJsonTranslator（内置 lang JSON）   base.py / lang_json.py
-PreviewItem(item_id, item_name, count) + untranslated[]
-   │  前端预览 → 确认（生成表时透传 registry_id = PreviewItem.item_id）
-   ▼
-POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id，迁移 0010）
+```mermaid
+flowchart TD
+    A["上传 bytes"] --> B["MaterialParser (ABC)<br/>LitematicParser · NbtParser"]
+    B --> C["ParsedMaterialList<br/>blocks + container_items + meta<br/>纯 registry id + count"]
+    C --> D["ItemTranslator (ABC)<br/>LangJsonTranslator"]
+    D --> E["PreviewItem<br/>item_id + item_name + count<br/>+ untranslated[]"]
+    E --> F["前端预览 → 确认<br/>透传 registry_id"]
+    F --> G["POST /sheets/from-items<br/>→ sheets 协作流"]
 ```
 
 - `MaterialParser`（`parsers/base.py`）：文件字节 → 分组清单（**不翻译**）。换格式（`.schem` / `.nbt`）新增子类。
@@ -118,7 +114,7 @@ POST /sheets/from-items   →   sheets 协作流（写入 sheet_rows.registry_id
 
 ## 7. 文件清单
 
-```
+```text
 Backend/app/services/parsing/
 ├── __init__.py
 ├── models.py                 # frozen dataclass：MaterialEntry / ParseMeta / ParsedMaterialList

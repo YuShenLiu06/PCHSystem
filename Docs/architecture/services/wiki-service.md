@@ -17,7 +17,7 @@
 
 **定位**：归档 markdown 的「发布渠道」之一。后端 `archive` 服务渲染并原子落盘后，本服务的 publisher **best-effort** 把整目录推到独立 wiki 内容 git 仓；wiki.js 与该远端双向同步渲染。**业务库（PG）才是权威源**，wiki 是投影。
 
-**与原 GraphQL 方案的关系（R-8 重写）**：早期架构设想的「后端 → wiki.js GraphQL 单向同步」**已废弃**。新方案以 git 仓为 wiki 内容权威源，支持双向回流 + PR 审查 + 人类编辑。原 GraphQL 客户端代码（`pages.*` / `groups.*` / `users.*` CRUD）**不在 publisher 路径上**；wiki.js 侧 Page Rules 仅在需要更细粒度的编辑权限时按需补充（见 §4）。
+**与原 GraphQL 方案的关系**：早期「后端 → wiki.js GraphQL 单向同步」**已废弃**（R-8 重写）。新方案以 git 仓为权威源，支持双向回流 + PR 审查。原 GraphQL 客户端代码（`pages.*` / `groups.*` / `users.*` CRUD）不在 publisher 路径上；wiki.js 侧 Page Rules 按需补充（见 §4）。
 
 ---
 
@@ -147,6 +147,4 @@ wiki 内容 git 仓的 host 由部署方决定，**文档记为可配置远端�
 | GitHub Wiki 无 PR | 编辑无审查 | 用独立 repo（非 repo 自带 wiki）作为 wiki.js 远端 |
 | 双向同步冲突 | 人类编辑与 publisher 同时改 | git 三方合并；publisher 覆盖整 `projects/<id>/` 目录，人类编辑若在同目录需走 PR 协调 |
 
-> **业务库不回写（R-1 强调）**：wiki 是人类可读可编辑的**投影**。拥有者在 wiki.js 的编辑、git PR 的改动**只回流到 wiki 内容 git 仓**，**绝不写回** `sheets` / `sheet_rows` / `score_ledger` 等业务表。业务表以 PostgreSQL 为唯一权威源。
->
 > 待确认：① wiki 内容 git 仓 host 选型（GitHub/Gitea/GitLab）；② 拥有者 wiki 编辑权限自动授予的实现路径（OIDC/SSO 或后端建号映射，本期仅设计不实现）；③ 是否启用 wiki.js 侧 Page Rules 补充 host 分支保护。

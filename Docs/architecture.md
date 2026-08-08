@@ -1,3 +1,4 @@
+<!-- omit in toc -->
 # HTCMC PCHSystem 架构文档（统一总览）
 
 > 本文件是**顶层索引**——只讲全局架构与跨服务关系，**不含实现细节**（时序图 / SQL / 端点表 / 表结构 / ADR 论证一律在各子文档）。
@@ -5,7 +6,7 @@
 
 ---
 
-## 1. 项目定位
+## 1. 项目定位：白名单生电协作玩法
 
 白名单生电社区服 · 项目制工程协作玩法 · 纯荣誉激励（积分无实际价值）。三端联动：**游戏内端**（MCDR 命令交互）+ **网页后台端**（项目管理 / 积分 / 权限）+ **Wiki 端**（归档沉淀 / 荣誉榜单）。详细玩法见 [`guide.md`](./guide.md)。
 
@@ -23,10 +24,10 @@ flowchart LR
     API -->|git push 归档| WK[wiki.js / Wiki git 仓]
 ```
 
-- **后端**：FastAPI 模块化单体（单库单服务，schema 隔离），是**唯一业务数据拥有者**（R-1）
-- **MCDR 插件**：纯游戏内客户端，只做命令交互 / 箱子扫描 / UUID 推导 / HTTP 上报（R-7）
-- **Web 后台**：Vue3 + Element Plus，权限仅可见性（R-9）
-- **wiki.js**：经独立 wiki 内容 git 仓双向同步（R-8），独立部署、不入本仓 compose
+- **后端**：唯一业务数据拥有者（R-1），模块化单体
+- **MCDR 插件**：纯游戏内客户端——命令交互 / 箱子扫描 / UUID 推导 / HTTP 上报（R-7）
+- **Web 后台**：权限仅可见性（R-9）
+- **wiki.js**：经独立 wiki 内容 git 仓双向同步（R-8），独立部署
 
 > v0.8.0 起前端默认由 compose `web` 服务（nginx）托管，`/api/` 反代 backend。
 
@@ -48,7 +49,7 @@ flowchart LR
 
 ---
 
-## 4. 部署
+## 4. 部署（Docker Compose）
 
 Docker Compose 三服务（postgres + backend + 可选 web），开发态源码挂载热重载。完整部署 / 排错 / 回滚见 [`runbook.md`](./runbook.md)；一键脚本见 [`Scripts/`](../Scripts/)。
 
@@ -117,7 +118,7 @@ Docker Compose 三服务（postgres + backend + 可选 web），开发态源码�
 
 ---
 
-## 10. 待确认
+## 10. 待确认：参数与选型
 
 - 积分公式参数：`k`（负责人增发）/ `α`·`β`（A 类加权）/ `r`（称号指数）/ 赛季周期
 - 施工统计：方块过滤规则、防刷阈值、MCDR 方块放置事件 API（S-1 待联网核实 docs.mcdreforged.com）

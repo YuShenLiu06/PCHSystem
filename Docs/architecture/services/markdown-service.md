@@ -11,7 +11,7 @@ markdown_render 是后端**通用的结构化 markdown 文档渲染抽象**。�
 
 > **把一份 markdown 文档拆成若干有序「分节」（section），每节由独立 renderer 按 order 渲染，编排层过滤空白后用 `\n\n` 拼接。**
 
-它是「项目归档生成 markdown 落盘」（迁移 0009）催生的第一套文档渲染基础设施。在此之前仓库没有任何 markdown / 模板渲染代码。本服务把渲染能力抽成**可复用的扩展点**——「支持新增一种内容」= 注册一个新的 `SectionRenderer`，未来榜单 / 报表 / wiki 同步等消费者注册不同分节集合即可复用同一抽象。
+「支持新增一种内容」= 注册一个新的 `SectionRenderer`。榜单 / 报表 / wiki 同步等消费者注册不同分节集合即可复用同一抽象。
 
 | 管 | 不管 |
 |---|---|
@@ -27,17 +27,12 @@ markdown_render 是后端**通用的结构化 markdown 文档渲染抽象**。�
 
 ### 2.1 设计取舍
 
-原架构讨论曾评估「完整镜像用户自有 PromptStore 的不可变 register + 有序聚合架构」，经审核定为**过度设计**——PromptStore 为 LLM prompt 拼装设计的若干机制在「结构化 markdown 渲染」场景没有对应用例：
+评估过完整镜像 PromptStore 的不可变 register + 有序聚合架构，定其为**过度设计**。Route C = 保留有价值的机制，抛弃不适配的：
 
-| PromptStore 机制 | 是否保留 | 理由 |
+| 机制 | 取舍 | 理由 |
 |---|---|---|
-| 不可变 frozen + `register` 返回新对象 + 有序聚合 + 同名 override | ✅ **保留** | 真正有价值的架构风格；对齐项目 `Notifier` Protocol 范式（RS-9） |
-| `template` 调度维度（prompt 模板 A/B 变体） | ❌ 抛弃 | 归档只有一种渲染，无模板变体 |
-| `dispatch` 二级仲裁 / WILD_CARD 全局注入 | ❌ 抛弃 | section 内不该制造冲突；无「每 section 都插同一段」用例 |
-| body fallback（缺 section 静默回退到 body） | ❌ 抛弃 | section 缺失应渲染空 + warning，不应静默回退 |
-| `{placeholder}` 自研占位符引擎 | ❌ 抛弃 | 材料表是 N 行循环 + 条件分支，占位符引擎会把循环逻辑推给调用方、fragment 退化成单占位符；直接用 Python 函数 10 行搞定 |
-
-> **结论**：Route C = 保留「不可变 register + 有序聚合 + Protocol 扩展点」，抛弃不适配机制。静态与动态统一在 `SectionRenderer.render(context) -> str` 接口下（静态 section = 永远返回同字符串的函数；动态 section 是其退化特例的对偶——动态是主，静态是退化特例）。
+| 不可变 frozen + `register` 返回新对象 + 有序聚合 + 同名 override | ✅ 保留 | 对齐 `Notifier` Protocol 范式（RS-9） |
+| `template` A/B 变体 / `dispatch` 仲裁 / WILD_CARD 注入 / body fallback / `{placeholder}` 引擎 | ❌ 抛弃 | 归档无模板变体、无 section 冲突仲裁用例；循环/条件用 Python 函数更直接 |
 
 ### 2.2 模块结构
 

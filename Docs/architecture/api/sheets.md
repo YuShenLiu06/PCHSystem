@@ -1,4 +1,33 @@
-# sheets API 参考
+<!-- omit in toc -->
+# sheets API 参考 
+- [1. 概述](#1-%E6%A6%82%E8%BF%B0)
+- [2. 鉴权](#2-%E9%89%B4%E6%9D%83)
+- [3. 数据模型](#3-%E6%95%B0%E6%8D%AE%E6%A8%A1%E5%9E%8B)
+  - [`sheets.sheets`（表主记录）](#sheetssheets%E8%A1%A8%E4%B8%BB%E8%AE%B0%E5%BD%95)
+  - [`sheets.sheet_rows`（行 = 物品条目）](#sheetssheetrows%E8%A1%8C--%E7%89%A9%E5%93%81%E6%9D%A1%E7%9B%AE)
+  - [`sheets.sheet_row_contributors`（progress 行的贡献者聚合表）](#sheetssheetrowcontributorsprogress-%E8%A1%8C%E7%9A%84%E8%B4%A1%E7%8C%AE%E8%80%85%E8%81%9A%E5%90%88%E8%A1%A8)
+- [4. 行状态机（3 态）](#4-%E8%A1%8C%E7%8A%B6%E6%80%81%E6%9C%BA3-%E6%80%81)
+  - [4.1 项目阶段状态机（3 阶段，迁移 0009）](#41-%E9%A1%B9%E7%9B%AE%E9%98%B6%E6%AE%B5%E7%8A%B6%E6%80%81%E6%9C%BA3-%E9%98%B6%E6%AE%B5%E8%BF%81%E7%A7%BB-0009)
+- [5. HTTP 端点](#5-http-%E7%AB%AF%E7%82%B9)
+  - [5.1 项目 CRUD（表级端点）](#51-%E9%A1%B9%E7%9B%AE-crud%E8%A1%A8%E7%BA%A7%E7%AB%AF%E7%82%B9)
+  - [5.2 项目阶段流转与归档（迁移 0009）](#52-%E9%A1%B9%E7%9B%AE%E9%98%B6%E6%AE%B5%E6%B5%81%E8%BD%AC%E4%B8%8E%E5%BD%92%E6%A1%A3%E8%BF%81%E7%A7%BB-0009)
+  - [5.3 行级协作端点](#53-%E8%A1%8C%E7%BA%A7%E5%8D%8F%E4%BD%9C%E7%AB%AF%E7%82%B9)
+  - [5.4 全量 CSV 导出](#54-%E5%85%A8%E9%87%8F-csv-%E5%AF%BC%E5%87%BA)
+  - [5.5 玩家最近查看（last\_sheet，迁移 0011）](#55-%E7%8E%A9%E5%AE%B6%E6%9C%80%E8%BF%91%E6%9F%A5%E7%9C%8Blastsheet%E8%BF%81%E7%A7%BB-0011)
+  - [5.6 项目协管员（manager，account 锚定）](#56-%E9%A1%B9%E7%9B%AE%E5%8D%8F%E7%AE%A1%E5%91%98manager-account-%E9%94%9A%E5%AE%9A)
+- [6. 请求 / 响应模型](#6-%E8%AF%B7%E6%B1%82--%E5%93%8D%E5%BA%94%E6%A8%A1%E5%9E%8B)
+- [7. 权限矩阵](#7-%E6%9D%83%E9%99%90%E7%9F%A9%E9%98%B5)
+  - [7.1 权限契约表（M01–M26，三端权限对账权威）](#71-%E6%9D%83%E9%99%90%E5%A5%91%E7%BA%A6%E8%A1%A8m01%E2%80%93m26%E4%B8%89%E7%AB%AF%E6%9D%83%E9%99%90%E5%AF%B9%E8%B4%A6%E6%9D%83%E5%A8%81)
+- [8. 错误码](#8-%E9%94%99%E8%AF%AF%E7%A0%81)
+- [9. CSV 导出列](#9-csv-%E5%AF%BC%E5%87%BA%E5%88%97)
+- [10. 迁移](#10-%E8%BF%81%E7%A7%BB)
+- [11. MCDR `!!PCH sheet` 命令映射表](#11-mcdr-pch-sheet-%E5%91%BD%E4%BB%A4%E6%98%A0%E5%B0%84%E8%A1%A8)
+- [12. 通知端点（service-token 鉴权）](#12-%E9%80%9A%E7%9F%A5%E7%AB%AF%E7%82%B9service-token-%E9%89%B4%E6%9D%83)
+- [13. 设计待办：MCDR 指令组对齐「项目」语义](#13-%E8%AE%BE%E8%AE%A1%E5%BE%85%E5%8A%9Emcdr-%E6%8C%87%E4%BB%A4%E7%BB%84%E5%AF%B9%E9%BD%90%E9%A1%B9%E7%9B%AE%E8%AF%AD%E4%B9%89)
+  - [13.1 现状（不对齐）](#131-%E7%8E%B0%E7%8A%B6%E4%B8%8D%E5%AF%B9%E9%BD%90)
+  - [13.2 提议（迁移期设计）](#132-%E6%8F%90%E8%AE%AE%E8%BF%81%E7%A7%BB%E6%9C%9F%E8%AE%BE%E8%AE%A1)
+  - [13.3 风险与约束](#133-%E9%A3%8E%E9%99%A9%E4%B8%8E%E7%BA%A6%E6%9D%9F)
+- [14. 增量日志（registry\_id 配套）](#14-%E5%A2%9E%E9%87%8F%E6%97%A5%E5%BF%97registryid-%E9%85%8D%E5%A5%97)
 
 > 后端在线表格子服务的 HTTP API 权威参考（`Backend/app/api/sheets/` 包，2026-07-09 由原 `sheets.py` 1215 行包化拆分而来）。
 > OpenAPI 工件：[`Backend/openapi.json`](../../../Backend/openapi.json)；schema：[`Backend/app/schemas/sheet.py`](../../../Backend/app/schemas/sheet.py)。
@@ -16,7 +45,7 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 >
 > **批量提交（二次开发）**：`POST /sheets/{id}/submit-batch` 的程序化提交入口（信任边界 / 双鉴权 / 典型场景 / 回执解读）见 [`submit-extension.md`](./submit-extension.md)。
 
-**项目三阶段生命周期**：每个 sheet（项目）有阶段状态 `collecting`（材料收集，默认）→ `constructing`（施工占位）→ `archived`（只读终态）。owner/admin 经 `POST /sheets/{id}/advance` 流转阶段；进入 `archived` 时后端渲染 markdown 归档 + 贡献占比饼图原子落盘到 `ARCHIVE_ROOT/projects/<id>/`（DB 存相对路径 `archived_path`，为 wiki-service git publisher 同步入口），任意登录玩家可 `GET /sheets/{id}/archive` 取回 markdown、`GET /sheets/{id}/archive/assets/{filename}` 取回归档资产（如饼图 PNG）。详见 §4.1「项目阶段状态机」。
+**项目三阶段生命周期**：`collecting`（默认）→ `constructing` → `archived`（只读终态），经 `POST /sheets/{id}/advance` 流转。归档时渲染 markdown + 饼图落盘。详见 §4.1。
 
 ---
 
@@ -85,13 +114,13 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 
 ## 4. 行状态机（3 态）
 
-```
-        claim（任意登录玩家）            set_delivery delivered≥need（认领人）
-  open ──────────────────────▶ claimed ──────────────────────────▶ done
-   ▲ ▲                            │  ▲                                │
-   │ │   release（认领人/拥有者）  │  │  reject delivered=0（认领人/拥有者）│
-   │ └───────────────────────────┘  └────────────────────────────────┘ │
-   └──────────── release（拥有者，从 done 直接释放）───────────────────┘
+```mermaid
+stateDiagram-v2
+    open --> claimed: claim（任意玩家）
+    claimed --> done: delivery ≥ need
+    claimed --> open: release
+    done --> claimed: reject（delivered=0）
+    done --> open: release（owner）
 ```
 
 | 转移 | 端点 | 触发者 | 副作用 |
@@ -99,21 +128,50 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 | open→claimed | `POST .../claim` | 任意登录玩家 | 置 claimant=self、delivered=0 |
 | claimed/done→done/claimed | `PATCH .../delivery` | 认领人 | 设 delivered；`≥need`→done，`<need`→claimed |
 | claimed/done→open | `POST .../release` | 认领人自放 或 拥有者 | 清 claimant、delivered=0 |
-| done→claimed | `POST .../reject` | 认领人 或 拥有者 | delivered 归零，claimant 保留重做（认领人自取消备齐 / 拥有者打回，效果一致，已合并） |
+| done→claimed | `POST .../reject` | 认领人 / owner | delivered=0，claimant 保留 |
 
-- **lock 模式**：认领人「标备齐」= 一次性 `delivered=need`→done；「取消备齐」= `delivered=0`→claimed。
-- **progress 模式（多人贡献者）**：`claimant_uuid` 恒 null，`status` 完全由 `delivered_qty` 推导（0→open / 0<x<need→claimed / ≥need→done）。任意登录玩家经 `POST .../contribute` 上报 `qty`，后端 `delivered += qty`（不封顶），同时幂等插入 `sheet_row_contributors(row_id, player_uuid)`；`delivered≥need` 时自动转 `done`。owner 可 `PATCH .../progress` 直接覆写 `delivered_qty`（绝对值，可增可减、不动贡献者列表，用于修正/回退进度），或 `POST .../release` 重置：清 `delivered=0` + 清空该行 `sheet_row_contributors` + `status=open`。progress 行对 `claim`/`delivery`/`reject` 一律返 409。
-- **拥有者改 need_qty（upsert）时已认领**：`delivered` 按新 need 封顶；`delivered≥新need` 且状态∈{claimed,done}→done；原 done 但 `delivered<新need`→claimed。（progress 行：`delivered` 不回退，仅按新 need 重算 status。）
-- 并发由 `select ... with_for_update()` 行锁兜底；非法转移抛 `SheetRowConflict`→409。
+> 上图为 **lock 模式**状态机；**progress 模式**不使用 claim/delivery/reject，详见下表。
+
+**lock vs progress 模式速查**
+
+| | lock（mode=0） | progress（mode=1） |
+|---|---|---|
+| **认领人** | 单人 `claimant_uuid` | 恒 null（多人贡献） |
+| **状态来源** | 状态机转移（上图） | `delivered_qty` 推导（0→open / <need→claimed / ≥need→done） |
+| **上报** | `PATCH /delivery`（认领人，绝对值） | `POST /contribute`（任意玩家，`delivered += qty` 不封顶，幂等加贡献者） |
+| **备齐** | deliver=need → done | delivered≥need 自动 done |
+| **进度修正** | — | owner `PATCH /progress` 覆写绝对值（不动贡献者列表） |
+| **重置** | `release` → open | `release`(owner) → open（清 delivered + 清空贡献者列表） |
+| **打回** | `reject`（done→claimed） | → 409 |
+| **跨模式调用** | contribute → 409 | claim/delivery/reject → 409 |
+
+**owner 改 need_qty 时 status 重算**
+
+```mermaid
+flowchart TD
+    A["owner 改 need_qty"] --> B{已认领?}
+    B -->|否| C["仅改 need_qty"]
+    B -->|是| D{模式?}
+    D -->|lock| E["delivered 按新 need 封顶"]
+    D -->|progress| F["delivered 不回退"]
+    E --> G{"delivered ≥ 新 need?"}
+    F --> G
+    G -->|"是, status∈{claimed,done}"| H["→ done"]
+    G -->|"否, 原 done"| I["→ claimed"]
+    G -->|"否, 其他"| J["status 不变"]
+```
+
+- **并发**：`SELECT ... FOR UPDATE` 行锁兜底；非法转移 → `SheetRowConflict` → 409。
 
 ### 4.1 项目阶段状态机（3 阶段，迁移 0009）
 
 > 与 §4「行级状态机」是**两个正交状态**：行级 `status`（open/claimed/done）描述单条物品的认领协作进度；项目级 `status`（collecting/constructing/archived）描述整个项目（sheet）的生命周期阶段。
 
-```
-   advance(to=constructing)        advance(to=archived，写盘+通知)
-collecting ─────────────────────▶ constructing ─────────────────────▶ archived
-    └────────── advance(to=archived，跳过施工，写盘+通知) ──────────────▶▲
+```mermaid
+stateDiagram-v2
+    collecting --> constructing: advance(to=constructing)
+    collecting --> archived: advance(to=archived) 直跳
+    constructing --> archived: advance(to=archived)
 ```
 
 | 转移 | 端点 | 触发者 | 副作用 |
@@ -132,9 +190,9 @@ collecting ─────────────────────▶ co
 
 ---
 
-## 5. 端点
+## 5. HTTP 端点
 
-### 5.1 表级
+### 5.1 项目 CRUD（表级端点）
 
 | 方法 | 路径 | 鉴权 | body / query | 成功 | 说明 |
 |---|---|---|---|---|---|
@@ -145,19 +203,17 @@ collecting ─────────────────────▶ co
 | PATCH | `/sheets/{sheet_id}` | JWT·**owner** 或 service-token+UUID·owner | `SheetPatchRequest{title}` | 200 `SheetDetail` | 改标题。MCDR 同上 |
 | DELETE | `/sheets/{sheet_id}` | JWT·**owner** 或 service-token+UUID·owner | — | 204 | 删表（级联 rows + 认领）。MCDR 同上；**archived 态 → 409**（先 advance 不可逆，不能直接删） |
 
-### 5.2 项目阶段生命周期（迁移 0009）
+### 5.2 项目阶段流转与归档（迁移 0009）
 
 | 方法 | 路径 | 鉴权 | query | 成功 | 说明 |
 |---|---|---|---|---|---|
-| POST | `/sheets/{sheet_id}/advance` | JWT·**owner/admin**（`to=archived`）或 owner/admin/**manager**（`to=constructing`，tier B）或 service-token+UUID·同左 | `?to=constructing\|archived`（缺省按状态机推进下一态） | 200 `SheetDetail` | 阶段流转。`to=archived` 走归档服务：渲染 md → 写盘 → DB 置 archived + 广播 `category=sheet_archived` 给全体参与者（触发者同 account 跳过）→ 内部 commit；`to=constructing` repo `advance_sheet` + 广播 `category=sheet_advanced_constructing` 给全体参与者（触发者同 account 跳过）+ api 层 commit。允许 `collecting → archived` 直跳。MCDR `!!PCH sheet advance` 同上 |
+| POST | `/sheets/{sheet_id}/advance` | JWT·**owner/admin**（`to=archived`）或 owner/admin/**manager**（`to=constructing`，tier B）或 service-token+UUID·同左 | `?to=constructing\|archived`（缺省按状态机推进下一态） | 200 `SheetDetail` | 阶段流转，允许 `collecting → archived` 直跳。转移规则与副作用见 §4.1 状态机表。MCDR `!!PCH sheet advance` 同上 |
 | GET | `/sheets/{sheet_id}/archive` | JWT 或 service-token+UUID | — | 200 `text/markdown` | 读归档 markdown 文件内容。未归档 / 文件缺失 → 404。归档原文（前端 `<pre>` 预览；MCDR 不拉 md，回执仅给相对路径让玩家去 Web 看） |
 | GET | `/sheets/{sheet_id}/archive/assets/{filename}` | JWT 或 service-token+UUID | — | 200 `image/png` | 读归档资产（如 `contributions.png` 贡献占比饼图）。**basename 白名单 + 路径穿越守卫**：`filename` 只允许纯文件名（`/`/`\`/`..` 拒绝），仅解析 `ARCHIVE_ROOT/projects/<sheet_id>/<filename>`；非法名或文件缺失 → 404。鉴权 `get_current_player`，任意登录玩家可读（与 `GET /archive` 一致）。用于前端归档预览内嵌饼图 |
 
-- **事务边界**：`to=constructing` 路径在 api 层 commit；`to=archived` 路径由归档服务 `archive_sheet` 内部 commit（先写盘后置 DB，commit 失败 cleanup 孤儿文件 + rollback）。
-- **归档产物结构**：每项目独立文件夹 `projects/<sheet_id>/`，含 `index.md`（归档正文）+ `contributions.png`（matplotlib 贡献占比饼图，CJK 字体 Noto Sans CJK SC，≤5 人全显 / >5 人 top5+其他）。`index.md` 的 📊 section 以 `![贡献占比](contributions.png)` 引用同目录 PNG。
-- **状态机与错误码**：详见 §4.1 状态机小节 + §8 错误码。
+> 状态机转移规则、归档产物结构、事务边界详见 §4.1；错误码见 §8。
 
-### 5.3 行级
+### 5.3 行级协作端点
 
 | 方法 | 路径 | 鉴权 | body | 成功 | 说明 |
 |---|---|---|---|---|---|
@@ -172,7 +228,7 @@ collecting ─────────────────────▶ co
 
 > **子物品（迁移 0012）复用上述端点**：`PUT /rows` 携带 `parent_row_id` 即新建子行（须同时给 `registry_id` + `qty_per_unit`>0，`need_qty` 由后端 `ceil(qty_per_unit × 父行 need_qty)` 派生、请求值被忽略；`mode` 缺省继承父行）；claim / delivery / contribute / release / reject / progress 对子行**同样生效**——传子行 `row_id` 即可，子行按自身 `mode`/`status` 参与协作（其 `mode` 由父行继承、`need_qty` 派生）。不变量（单层 / 模式继承 / 级联重算 / 删父 CASCADE）见 §3。
 
-### 5.4 导出
+### 5.4 全量 CSV 导出
 
 | 方法 | 路径 | 鉴权 | 成功 | 说明 |
 |---|---|---|---|---|
@@ -188,7 +244,7 @@ collecting ─────────────────────▶ co
 
 > 端点位于 `top_router`（与 `/me`、`/auth/*` 同级），**不在 sheets 子路由内**；schema 见 `Backend/app/schemas/auth.py::LastSheetResponse`。响应模型 `{sheet_id: int | None}`。
 
-### 5.6 项目协管员（manager，迁移 `0016_sheet_managers`；**account 锚定**，2026-07-19 merge 升 R-5）
+### 5.6 项目协管员（manager，account 锚定）
 
 > **account 锚定**：SheetManager 锚 `web_account_id`——同一 Web 账号下任一 UUID 都继承 manager。授予目标必须已绑 Web 账号（未绑 → 422，B7）；与 owner 同账号拒（409 `SheetOwnerCannotBeManager`，B7）。manager 列表元素含 `member_uuids`，客户端（前端 / MCDR）用 `managers[].member_uuids ∩ viewer_uuids` 判定 `is_manager`，无需感知 account_id。
 

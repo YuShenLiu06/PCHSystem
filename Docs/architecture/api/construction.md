@@ -1,3 +1,4 @@
+<!-- omit in toc -->
 # 施工进度上报 · 端点参考
 
 > `POST /v1/construction/report`：施工方（MCDR / 服务端 mod / 玩家客户端 mod）上报
@@ -10,6 +11,28 @@
 本文「默认追踪器实现契约」段是其实现的对照基线。
 
 ---
+
+- [1. 鉴权矩阵（信任边界 = 是否在 MC 服务端）](#1-%E9%89%B4%E6%9D%83%E7%9F%A9%E9%98%B5%E4%BF%A1%E4%BB%BB%E8%BE%B9%E7%95%8C--%E6%98%AF%E5%90%A6%E5%9C%A8-mc-%E6%9C%8D%E5%8A%A1%E7%AB%AF)
+- [2. 端点速查（19 个，前缀 `/v1/construction`）](#2-%E7%AB%AF%E7%82%B9%E9%80%9F%E6%9F%A519-%E4%B8%AA%E5%89%8D%E7%BC%80-v1construction)
+- [3. 上报（`POST /v1/construction/report`）](#3-%E4%B8%8A%E6%8A%A5post-v1constructionreport)
+  - [3.1 严格单源（C-7，用户拍板）](#31-%E4%B8%A5%E6%A0%BC%E5%8D%95%E6%BA%90c-7%E7%94%A8%E6%88%B7%E6%8B%8D%E6%9D%BF)
+  - [3.2 方块清单校验（迭代 2）](#32-%E6%96%B9%E5%9D%97%E6%B8%85%E5%8D%95%E6%A0%A1%E9%AA%8C%E8%BF%AD%E4%BB%A3-2)
+  - [3.3 按材料封顶（迭代 4，迁移 0022 回填）](#33-%E6%8C%89%E6%9D%90%E6%96%99%E5%B0%81%E9%A1%B6%E8%BF%AD%E4%BB%A3-4%E8%BF%81%E7%A7%BB-0022-%E5%9B%9E%E5%A1%AB)
+- [4. 归因查询与进度展示（GET 端点）](#4-%E5%BD%92%E5%9B%A0%E6%9F%A5%E8%AF%A2%E4%B8%8E%E8%BF%9B%E5%BA%A6%E5%B1%95%E7%A4%BAget-%E7%AB%AF%E7%82%B9)
+  - [4.1 时序快照（迭代 2，迁移 0018）](#41-%E6%97%B6%E5%BA%8F%E5%BF%AB%E7%85%A7%E8%BF%AD%E4%BB%A3-2%E8%BF%81%E7%A7%BB-0018)
+  - [4.2 加入施工端点行为（迭代 4，迁移 0021）](#42-%E5%8A%A0%E5%85%A5%E6%96%BD%E5%B7%A5%E7%AB%AF%E7%82%B9%E8%A1%8C%E4%B8%BA%E8%BF%AD%E4%BB%A3-4%E8%BF%81%E7%A7%BB-0021)
+  - [4.3 个人查询端点行为（迭代 2 + 迭代 5）](#43-%E4%B8%AA%E4%BA%BA%E6%9F%A5%E8%AF%A2%E7%AB%AF%E7%82%B9%E8%A1%8C%E4%B8%BA%E8%BF%AD%E4%BB%A3-2--%E8%BF%AD%E4%BB%A3-5)
+- [5. 默认追踪器实现契约（供 MCDR PR 照实现）](#5-%E9%BB%98%E8%AE%A4%E8%BF%BD%E8%B8%AA%E5%99%A8%E5%AE%9E%E7%8E%B0%E5%A5%91%E7%BA%A6%E4%BE%9B-mcdr-pr-%E7%85%A7%E5%AE%9E%E7%8E%B0)
+- [6. 切源端点（D9）](#6-%E5%88%87%E6%BA%90%E7%AB%AF%E7%82%B9d9)
+- [7. 归档 / 结算接入契约（D8，本轮仅固化接口 + hook）](#7-%E5%BD%92%E6%A1%A3--%E7%BB%93%E7%AE%97%E6%8E%A5%E5%85%A5%E5%A5%91%E7%BA%A6d8%E6%9C%AC%E8%BD%AE%E4%BB%85%E5%9B%BA%E5%8C%96%E6%8E%A5%E5%8F%A3--hook)
+- [8. admin 设置（system.settings）](#8-admin-%E8%AE%BE%E7%BD%AEsystemsettings)
+- [9. HTTP 错误码与处理](#9-http-%E9%94%99%E8%AF%AF%E7%A0%81%E4%B8%8E%E5%A4%84%E7%90%86)
+- [10. 示例（service-token 上报参考）](#10-%E7%A4%BA%E4%BE%8Bservice-token-%E4%B8%8A%E6%8A%A5%E5%8F%82%E8%80%83)
+- [11. 数据模型（迭代 4-5 新增）](#11-%E6%95%B0%E6%8D%AE%E6%A8%A1%E5%9E%8B%E8%BF%AD%E4%BB%A3-4-5-%E6%96%B0%E5%A2%9E)
+  - [11.1 `sheets.sheets.constructing_at`（迁移 0020）](#111-sheetssheetsconstructingat%E8%BF%81%E7%A7%BB-0020)
+  - [11.2 `construction.participants`（迁移 0021）](#112-constructionparticipants%E8%BF%81%E7%A7%BB-0021)
+  - [11.3 `construction.report_events`（迁移 0023）](#113-constructionreportevents%E8%BF%81%E7%A7%BB-0023)
+
 
 ## 1. 鉴权矩阵（信任边界 = 是否在 MC 服务端）
 
@@ -103,6 +126,13 @@ admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-
   `客户端模组上报已被服主关闭` / `方块不在项目材料清单内`（迭代 2 新增，见 §3.2）/
   **`已达材料上限`（迭代 4 新增，见 §3.3）**。
 
+### 3.1 严格单源（C-7，用户拍板）
+
+**每玩家同时仅一个活跃上报源**（防多源重复计数）：
+- 玩家无 `player_sources` 记录时，默认活跃 = `{mcdr, official}`（仅当 `official_tracker_enabled=true`；否则无默认 → 任何上报 skip `玩家当前无活跃上报源`）。
+- **`/report` 不隐式切源**：上报方 ≠ 玩家当前活跃源 → 该玩家 entries 全 skip（reason `玩家当前由其他源上报`）。切源只走显式端点（§6）。
+- 落库按 `(sheet_id, account_id, registry_id)` upsert 聚合：`net_qty += placed-broken`（允许负）。`account_id = player.web_account_id`（R-5，离线改名/换 UUID 不丢）。
+
 ### 3.2 方块清单校验（迭代 2）
 
 **迭代 2 在后端加一道防线**：每条 placement 落库前，校验 `registry_id` 必须在该 sheet 的收集清单内——
@@ -141,19 +171,7 @@ admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-
 
 ---
 
-### 3.1 严格单源（C-7，用户拍板）
-
-**每玩家同时仅一个活跃上报源**（防多源重复计数）：
-- 玩家无 `player_sources` 记录时，默认活跃 = `{mcdr, official}`（仅当 `official_tracker_enabled=true`；
-  否则无默认 → 任何上报 skip `玩家当前无活跃上报源`）。
-- **`/report` 不隐式切源**：上报方 ≠ 玩家当前活跃源 → 该玩家 entries 全 skip
-  （reason `玩家当前由其他源上报`）。切源只走显式端点（§6）。
-- 落库按 `(sheet_id, account_id, registry_id)` upsert 聚合：`net_qty += placed-broken`
-  （允许负）。`account_id = player.web_account_id`（R-5，离线改名/换 UUID 不丢）。
-
----
-
-## 4. 归因查询 + 进度（GET）
+## 4. 归因查询与进度展示（GET 端点）
 
 **`GET /active-sheets`** → `{sheets: [{id, title}], heuristic_eligible: bool}`。
 `heuristic_eligible=true`（恰 1 个 constructing）→ 追踪器可不带 `sheet_id` 上报。
@@ -175,7 +193,7 @@ admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-
   - 子物品：按子行 `registry_id` 单列一项，`need_qty = ceil(qty_per_unit × 父行 need_qty)`（与 [sheets.md](./sheets.md) §14 子物品不变量对齐）。
 - `timeline`（**迭代 2 新增**）：时序快照——按 `construction.placement_snapshots` 表升序 limit 200，结构 `[{account_id, total_net, recorded_at}]`，每次 report 落库后为「本轮 accepted 的 account」各写一条（详见 §6.1）。
   - 展示用、非权威：失败仅日志、不阻断 report；缺数据时前端按 `account_totals` 兜底（折线退化为单点）。
-- `construction_started_at` / `archived_at`（**迭代 4 新增**，迁移 0020 加 `sheets.sheets.constructing_at`）：分别取施工开始时间 + 归档时间。供前端折线图 xAxis 范围（左沿贴施工开始；右沿停在归档或当前时间）+ 归档 timeline 点亮「进入施工」段。直跳归档（`collecting → archived` 跳过 constructing）时 `construction_started_at = null`。迁移 0020 回填：已 `status='constructing'` 的行近似取 `updated_at`，已 `archived` 的行不回填（timeline 退化到「创建 → 归档」，与原行为一致）。
+- `construction_started_at` / `archived_at`（**迭代 4 新增**，迁移 0020 加 `sheets.sheets.constructing_at`）：分别取施工开始时间 + 归档时间。供前端折线图 xAxis 范围（左沿贴施工开始；右沿停在归档或当前时间）+ 归档 timeline 点亮「进入施工」段。直跳归档（`collecting → archived` 跳过 constructing）时 `construction_started_at = null`。回填策略见 §11.1。
 
 ### 4.1 时序快照（迭代 2，迁移 0018）
 
@@ -208,17 +226,9 @@ admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-
 
 ---
 
-### 4.2 加入施工端点（迭代 4，迁移 0021）
+### 4.2 加入施工端点行为（迭代 4，迁移 0021）
 
-5 个端点（前缀 `/v1/construction`）：
-
-| 方法 | 路径 | 鉴权 | 用途 |
-|---|---|---|---|
-| GET | `/me/construction` | 任意 auth player | 查自己当前活跃加入的施工项目（Me.vue「当前施工项目」卡片） |
-| POST | `/me/join` | 任意 auth player（须绑账号） | 手动加入 sheet |
-| POST | `/me/switch` | 任意 auth player（须绑账号） | 切换到指定 sheet（leave 旧 + join 新同事务） |
-| POST | `/me/leave` | 任意 auth player | 退出当前活跃加入（幂等空态） |
-| POST | `/active-by-uuids` | service-token 单头 | 批量 UUID → 活跃 sheet_id（tracker 按玩家路由用，非敏感） |
+端点速查见 §2。以下详述各端点行为。
 
 **响应**（`/me/construction` / `/me/join` / `/me/switch` / `/me/leave`）：`MyConstructionResult`：
 ```json
@@ -247,12 +257,9 @@ admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-
 
 ---
 
-### 4.3 个人查询端点（迭代 2 + 迭代 5）
+### 4.3 个人查询端点行为（迭代 2 + 迭代 5）
 
-| 方法 | 路径 | 鉴权 | 用途 |
-|---|---|---|---|
-| GET | `/me/reports` | 任意 auth player（须绑账号） | 个人上报历史（迭代 2，`placement_snapshots` 投影） |
-| GET | `/me/report-events` | 任意 auth player（须绑账号） | 个人完整事件流水（迭代 5，`report_events` 投影） |
+端点速查见 §2。以下详述各端点行为。
 
 两端点均查 `limit`（默认 50，`1..200`），按时间倒序，跨所有项目。归因锚 account（R-5）：未绑 Web 账号 → 403。展示用，非权威源（权威仍是 `placement_records` 聚合）。
 
@@ -279,9 +286,7 @@ admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-
 - `action ∈ {accepted, skipped}`；`reason`：`accepted=""`；`skipped` 为中文 reason（如 `已达材料上限` / `方块不在项目材料清单内` / `玩家当前由其他源上报` / `客户端模组上报已被服主关闭` 等，全集见 §3）。
 - `net_delta`：accepted=本次计入；skipped=被拒/尝试量（部分接受场景的 over 部分）。
 
-**两者区别**：
-- `reports` = **已接受**上报的累计快照（按 account 一条），折线图源；
-- `report_events` = **每条** outcome 都落（accepted + 所有 skip reason），让玩家看到「为什么我的上报被拒」。
+两者数据语义对比见 §11.3「与 `placement_snapshots` 的区别」。
 
 > 仅 bound 玩家（`web_account_id` 非空）落 `report_events`（`account_id` 是查询锚）；未绑玩家不落事件——`/me/report-events` 对未绑账号返 403。
 
@@ -383,7 +388,7 @@ PATCH 用 `exclude_unset=True`：仅写客户端实际提供的键；`anti_cheat
 
 ---
 
-## 9. 错误码
+## 9. HTTP 错误码与处理
 
 | HTTP | 场景 | 调用方处理 |
 |---|---|---|
@@ -395,7 +400,7 @@ PATCH 用 `exclude_unset=True`：仅写客户端实际提供的键；`anti_cheat
 
 ---
 
-## 10. 示例
+## 10. 示例（service-token 上报参考）
 
 见 [`Scripts/test-construction-report.py`](../../../Scripts/test-construction-report.py)（零依赖 Python，
 **兼上报源参考实现**）：bootstrap 玩家+项目 → service-token 多玩家上报 → JWT[mod_id] 上报 → 进度查询。
@@ -491,6 +496,12 @@ MCDR 默认追踪器实现见 §5（待 S-1 单独 PR）。
 
 迭代 2 增量（2026-07-27）：§3.2 方块清单校验（清单外 skip）+ §4 `material_completion` 材料完成度 / `timeline` 时序快照字段 + §4.1 时序快照表（迁移 0018）+ §6 `dormant_sources` 休眠源查询。*
 
-迭代 3 增量（2026-07-28）：`server_mod_sources` 加 `enabled` 字段（迁移 0019）+ §2 `PATCH /mod-sources/{name}` 逐源启停端点；`get_construction_reporter`（service-token+X-Source-Id）与 `switch-server` 校验 `enabled=true`（停用 → 403/422）；原 `allow_server_mods` 全局开关从未强制，schema 字段保留默认 true 不删；§4.1 `timeline` 改取**最近** 200 点（原取最早）。前端：折线前向填充（`utils/timelineFill.ts`，不再断线）+ 材料完成度分页排序（`utils/materialSort.ts`，「我贡献优先」按账号聚合 R-5）+ 数量用 `formatQty`（个/组/盒）+ `/register` 需登录守卫（避免 401 missing authorization）。管理员面板重构为「服务器上报源（插件）」卡片网格（官方追踪器降为默认插件 + 第三方 mod 逐卡启停）。*
+迭代 3 增量（2026-07-28）：
+- 后端：`server_mod_sources` 加 `enabled` 字段（迁移 0019）+ §2 `PATCH /mod-sources/{name}` 逐源启停端点；`get_construction_reporter` 与 `switch-server` 校验 `enabled=true`（停用 → 403/422）；§4.1 `timeline` 改取**最近** 200 点。
+- 前端：折线前向填充（`utils/timelineFill.ts`）+ 材料完成度排序（`utils/materialSort.ts`，「我贡献优先」按账号聚合 R-5）+ 数量用 `formatQty`（个/组/盒）+ 管理员面板重构为卡片网格（官方追踪器降为默认插件 + 第三方 mod 逐卡启停）。*
 
-迭代 4-5 增量（2026-07-28）：§2 端点表扩 19 个（新增 `/me/construction`·`/me/join`·`/me/switch`·`/me/leave`·`/me/report-events`·`/active-by-uuids`，路由顺序前置避让 `{sheet_id}`）+ §3.3 按材料封顶（跨账号合计 net 不得超过 sum(need)，部分接受 emit 双 outcome；迁移 0022 回填 clamp）+ §4 进度端点加 `construction_started_at`/`archived_at`（迁移 0020 `sheets.sheets.constructing_at`）+ §4.2 加入施工端点（manual join/switch/leave + 自动 join + active-by-uuids）+ §4.3 个人查询端点（`/me/reports` + `/me/report-events`）+ §5 追加 C-11/C-12/C-13 三项默认 tracker 实现契约 + §7 归档经 `close_all_participants` 批量退出活跃参与者 + §8 admin 设置加第 6 项 `enforce_single_construction`（默认 True，仅约束默认 tracker + Web/MCDR join 流程，`POST /report` 零 project 校验不变）+ §9 错误码补 409 `ParticipantConflict` / 422 active-by-uuids + §11 数据模型（迁移 0020/0021/0023 表 + 索引 + 不变量）。*
+迭代 4-5 增量（2026-07-28）：
+- 端点：§2 扩至 19 个（新增 `/me/construction`·`join`·`switch`·`leave`·`report-events`·`/active-by-uuids`，路由顺序前置避让 `{sheet_id}`）。
+- 后端：§3.3 按材料封顶（跨账号合计 net ≤ sum(need)，部分接受 emit 双 outcome；迁移 0022 回填 clamp）+ §4 进度加 `construction_started_at`/`archived_at`（迁移 0020）+ §5 追加 C-11/C-12/C-13 契约 + §7 归档经 `close_all_participants` 批量退出。
+- 设置：§8 加 `enforce_single_construction`（默认 True，仅约束默认 tracker + Web/MCDR join 流程）。
+- 数据模型：§11 新增迁移 0020/0021/0023（表 + 索引 + 不变量）。*

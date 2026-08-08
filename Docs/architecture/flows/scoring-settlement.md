@@ -1,3 +1,4 @@
+<!-- omit in toc -->
 # 积分结算 · 端到端流程指南（设计契约）
 
 > 本文件是积分结算层的**设计契约**：积分怎么算、怎么记、谁来调。本层 🚧 规划中（未实现），本文是后续实现的对照基线。
@@ -8,6 +9,27 @@
 **状态**：🚧 规划中。旧规划 [`../services/scoring-service.md`](../services/scoring-service.md)（即时记账 + per-UUID）已归档，**关键决策在此推翻**（见 §1.1）。
 
 ---
+
+- [1. 一句话定位 + 关键决策翻转](#1-%E4%B8%80%E5%8F%A5%E8%AF%9D%E5%AE%9A%E4%BD%8D--%E5%85%B3%E9%94%AE%E5%86%B3%E7%AD%96%E7%BF%BB%E8%BD%AC)
+  - [1.1 旧规划 → 现设计（必读）](#11-%E6%97%A7%E8%A7%84%E5%88%92-%E2%86%92-%E7%8E%B0%E8%AE%BE%E8%AE%A1%E5%BF%85%E8%AF%BB)
+- [2. 目标流程（终算制）](#2-%E7%9B%AE%E6%A0%87%E6%B5%81%E7%A8%8B%E7%BB%88%E7%AE%97%E5%88%B6)
+- [3. 鉴权矩阵（信任边界 = 是否在 MC 服务端）](#3-%E9%89%B4%E6%9D%83%E7%9F%A9%E9%98%B5%E4%BF%A1%E4%BB%BB%E8%BE%B9%E7%95%8C--%E6%98%AF%E5%90%A6%E5%9C%A8-mc-%E6%9C%8D%E5%8A%A1%E7%AB%AF)
+- [4. 核心抽象：ScoreCalculator Strategy Protocol](#4-%E6%A0%B8%E5%BF%83%E6%8A%BD%E8%B1%A1scorecalculator-strategy-protocol)
+  - [4.1 三个内置 Calculator](#41-%E4%B8%89%E4%B8%AA%E5%86%85%E7%BD%AE-calculator)
+  - [4.2 服主自定义公式（服主权，非 API 能力）](#42-%E6%9C%8D%E4%B8%BB%E8%87%AA%E5%AE%9A%E4%B9%89%E5%85%AC%E5%BC%8F%E6%9C%8D%E4%B8%BB%E6%9D%83%E9%9D%9E-api-%E8%83%BD%E5%8A%9B)
+- [5. 统一记账入口：score\_service.write\_ledger](#5-%E7%BB%9F%E4%B8%80%E8%AE%B0%E8%B4%A6%E5%85%A5%E5%8F%A3scoreservicewriteledger)
+- [6. 数据模型（R-1 全 DB）](#6-%E6%95%B0%E6%8D%AE%E6%A8%A1%E5%9E%8Br-1-%E5%85%A8-db)
+- [7. 多平台客户端（OpenAPI 优先）](#7-%E5%A4%9A%E5%B9%B3%E5%8F%B0%E5%AE%A2%E6%88%B7%E7%AB%AFopenapi-%E4%BC%98%E5%85%88)
+  - [7.1 spec 优先，不手写 SDK](#71-spec-%E4%BC%98%E5%85%88%E4%B8%8D%E6%89%8B%E5%86%99-sdk)
+  - [7.2 as-is 顺带发 Java 客户端（不保证质量）](#72-as-is-%E9%A1%BA%E5%B8%A6%E5%8F%91-java-%E5%AE%A2%E6%88%B7%E7%AB%AF%E4%B8%8D%E4%BF%9D%E8%AF%81%E8%B4%A8%E9%87%8F)
+  - [7.3 服务端 mod SDK（若生态需要）](#73-%E6%9C%8D%E5%8A%A1%E7%AB%AF-mod-sdk%E8%8B%A5%E7%94%9F%E6%80%81%E9%9C%80%E8%A6%81)
+- [8. 二次开发指南](#8-%E4%BA%8C%E6%AC%A1%E5%BC%80%E5%8F%91%E6%8C%87%E5%8D%97)
+  - [8.1 加一个 Calculator](#81-%E5%8A%A0%E4%B8%80%E4%B8%AA-calculator)
+  - [8.2 改公式参数](#82-%E6%94%B9%E5%85%AC%E5%BC%8F%E5%8F%82%E6%95%B0)
+  - [8.3 生成多平台客户端](#83-%E7%94%9F%E6%88%90%E5%A4%9A%E5%B9%B3%E5%8F%B0%E5%AE%A2%E6%88%B7%E7%AB%AF)
+- [9. 红线速查](#9-%E7%BA%A2%E7%BA%BF%E9%80%9F%E6%9F%A5)
+- [10. 待确认（实现前必拍）](#10-%E5%BE%85%E7%A1%AE%E8%AE%A4%E5%AE%9E%E7%8E%B0%E5%89%8D%E5%BF%85%E6%8B%8D)
+
 
 ## 1. 一句话定位 + 关键决策翻转
 

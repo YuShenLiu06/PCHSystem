@@ -1,8 +1,51 @@
+<!-- omit in toc -->
 # 全局数据模型（data-model）
 
 > **统一总览**：[`../architecture.md`](../architecture.md) §6
 > 本文档定义后端唯一数据库 **PostgreSQL** 的全部表结构、约束与索引。
 > 模块化单体内按 **schema 隔离**各领域模块（部署仍是单库）。
+
+---
+
+- [0. 设计约定](#0-%E8%AE%BE%E8%AE%A1%E7%BA%A6%E5%AE%9A)
+- [1. 全局 ER 图](#1-%E5%85%A8%E5%B1%80-er-%E5%9B%BE)
+- [2. `users` schema —— 身份核心](#2-users-schema--%E8%BA%AB%E4%BB%BD%E6%A0%B8%E5%BF%83)
+  - [2.1 `players`（玩家）✅ 已实现（迁移 `0001_users_players` + `0011_players_last_sheet_id`）](#21-players%E7%8E%A9%E5%AE%B6%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0%E8%BF%81%E7%A7%BB-0001usersplayers--0011playerslastsheetid)
+  - [2.2 `auth_tokens`（一次性登录令牌）✅ 已实现（迁移 `0002_auth_jwt` + `0003_auth_tokens_revoked_at`）](#22-authtokens%E4%B8%80%E6%AC%A1%E6%80%A7%E7%99%BB%E5%BD%95%E4%BB%A4%E7%89%8C%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0%E8%BF%81%E7%A7%BB-0002authjwt--0003authtokensrevokedat)
+  - [2.3 `jwt_revocations`（JWT 吊销表）✅ 已实现（迁移 `0002_auth_jwt`）](#23-jwtrevocationsjwt-%E5%90%8A%E9%94%80%E8%A1%A8%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0%E8%BF%81%E7%A7%BB-0002authjwt)
+  - [2.4 `web_accounts`（Web 账号）✅ 已实现（迁移 0014 + 0015）](#24-webaccountsweb-%E8%B4%A6%E5%8F%B7%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0%E8%BF%81%E7%A7%BB-0014--0015)
+  - [2.5 `bind_tokens`（双向绑定短码）✅ 已实现（迁移 0014）](#25-bindtokens%E5%8F%8C%E5%90%91%E7%BB%91%E5%AE%9A%E7%9F%AD%E7%A0%81%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0%E8%BF%81%E7%A7%BB-0014)
+- [3. `projects` schema —— 项目与材料](#3-projects-schema--%E9%A1%B9%E7%9B%AE%E4%B8%8E%E6%9D%90%E6%96%99)
+  - [3.1 `projects`（项目）](#31-projects%E9%A1%B9%E7%9B%AE)
+  - [3.2 `material_lists`（材料清单 —— 来自 .litematic 解析）](#32-materiallists%E6%9D%90%E6%96%99%E6%B8%85%E5%8D%95--%E6%9D%A5%E8%87%AA-litematic-%E8%A7%A3%E6%9E%90)
+- [4. `scoring` schema —— 提交、放置、流水](#4-scoring-schema--%E6%8F%90%E4%BA%A4%E6%94%BE%E7%BD%AE%E6%B5%81%E6%B0%B4)
+  - [4.1 `submissions`（材料提交记录）](#41-submissions%E6%9D%90%E6%96%99%E6%8F%90%E4%BA%A4%E8%AE%B0%E5%BD%95)
+  - [4.2 `placement_records`（A 类放置贡献）](#42-placementrecordsa-%E7%B1%BB%E6%94%BE%E7%BD%AE%E8%B4%A1%E7%8C%AE)
+  - [4.3 `score_ledger`（积分流水 —— append-only）](#43-scoreledger%E7%A7%AF%E5%88%86%E6%B5%81%E6%B0%B4--append-only)
+- [5. `titles` schema —— 称号体系](#5-titles-schema--%E7%A7%B0%E5%8F%B7%E4%BD%93%E7%B3%BB)
+  - [5.1 `titles`（称号定义）](#51-titles%E7%A7%B0%E5%8F%B7%E5%AE%9A%E4%B9%89)
+  - [5.2 `player_titles`（玩家已解锁称号）](#52-playertitles%E7%8E%A9%E5%AE%B6%E5%B7%B2%E8%A7%A3%E9%94%81%E7%A7%B0%E5%8F%B7)
+- [6. `wiki` schema —— wiki.js 同步](#6-wiki-schema--wikijs-%E5%90%8C%E6%AD%A5)
+  - [6.1 `wiki_sync_log`（同步日志 / 幂等表）](#61-wikisynclog%E5%90%8C%E6%AD%A5%E6%97%A5%E5%BF%97--%E5%B9%82%E7%AD%89%E8%A1%A8)
+- [7. `alerts` schema —— 风控告警](#7-alerts-schema--%E9%A3%8E%E6%8E%A7%E5%91%8A%E8%AD%A6)
+  - [7.1 `alerts`（异常事件）](#71-alerts%E5%BC%82%E5%B8%B8%E4%BA%8B%E4%BB%B6)
+- [8. 关键查询模式（索引依据）](#8-%E5%85%B3%E9%94%AE%E6%9F%A5%E8%AF%A2%E6%A8%A1%E5%BC%8F%E7%B4%A2%E5%BC%95%E4%BE%9D%E6%8D%AE)
+- [9. 迁移与种子](#9-%E8%BF%81%E7%A7%BB%E4%B8%8E%E7%A7%8D%E5%AD%90)
+- [10. ✅ 已实现 schema 附录：`sheets` —— 在线协作表格](#10-%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0-schema-%E9%99%84%E5%BD%95sheets--%E5%9C%A8%E7%BA%BF%E5%8D%8F%E4%BD%9C%E8%A1%A8%E6%A0%BC)
+  - [10.1 `sheets`（表格主表）](#101-sheets%E8%A1%A8%E6%A0%BC%E4%B8%BB%E8%A1%A8)
+  - [10.2 `sheet_rows`（表格行）](#102-sheetrows%E8%A1%A8%E6%A0%BC%E8%A1%8C)
+  - [10.3 `sheet_row_contributors`（progress 行贡献者，迁移 0007 + 0008）](#103-sheetrowcontributorsprogress-%E8%A1%8C%E8%B4%A1%E7%8C%AE%E8%80%85%E8%BF%81%E7%A7%BB-0007--0008)
+  - [10.5 `sheet_managers`（项目协管员，迁移 0016）✅ 已实现](#105-sheetmanagers%E9%A1%B9%E7%9B%AE%E5%8D%8F%E7%AE%A1%E5%91%98%E8%BF%81%E7%A7%BB-0016%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0)
+  - [10.4 项目生命周期状态机（迁移 0009）](#104-%E9%A1%B9%E7%9B%AE%E7%94%9F%E5%91%BD%E5%91%A8%E6%9C%9F%E7%8A%B6%E6%80%81%E6%9C%BA%E8%BF%81%E7%A7%BB-0009)
+- [11. ✅ 已实现 schema 附录：`notifications`（迁移 `0006_notifications`）](#11-%E2%9C%85-%E5%B7%B2%E5%AE%9E%E7%8E%B0-schema-%E9%99%84%E5%BD%95notifications%E8%BF%81%E7%A7%BB-0006notifications)
+  - [11.1 `notifications`（通知记录）](#111-notifications%E9%80%9A%E7%9F%A5%E8%AE%B0%E5%BD%95)
+- [12. 增量日志](#12-%E5%A2%9E%E9%87%8F%E6%97%A5%E5%BF%97)
+  - [2026-07-19：迁移链重编号 + Web 账号主锚 + sheet\_managers 升 account 级](#2026-07-19%E8%BF%81%E7%A7%BB%E9%93%BE%E9%87%8D%E7%BC%96%E5%8F%B7--web-%E8%B4%A6%E5%8F%B7%E4%B8%BB%E9%94%9A--sheetmanagers-%E5%8D%87-account-%E7%BA%A7)
+  - [2026-07-09：子物品嵌套 + sheets API 包化重构](#2026-07-09%E5%AD%90%E7%89%A9%E5%93%81%E5%B5%8C%E5%A5%97--sheets-api-%E5%8C%85%E5%8C%96%E9%87%8D%E6%9E%84)
+  - [2026-07-03：项目三阶段生命周期 + 归档自动化](#2026-07-03%E9%A1%B9%E7%9B%AE%E4%B8%89%E9%98%B6%E6%AE%B5%E7%94%9F%E5%91%BD%E5%91%A8%E6%9C%9F--%E5%BD%92%E6%A1%A3%E8%87%AA%E5%8A%A8%E5%8C%96)
+  - [2026-07-03：sheet registry\_id + 一键提交](#2026-07-03sheet-registryid--%E4%B8%80%E9%94%AE%E6%8F%90%E4%BA%A4)
+  - [2026-07-06：sheet 快速重开 + list 增强](#2026-07-06sheet-%E5%BF%AB%E9%80%9F%E9%87%8D%E5%BC%80--list-%E5%A2%9E%E5%BC%BA)
+
 
 ## 0. 设计约定
 
@@ -387,10 +430,11 @@ erDiagram
 
 > 与 §10.2「行级双模式不变量」**正交**：行级 `status`（open/claimed/done）描述单条物品的认领协作；项目级 `status`（collecting/constructing/archived）描述整个 sheet（项目）的生命周期。
 
-```
-   advance(to=constructing)        advance(to=archived，写盘+通知)
-collecting ─────────────────────▶ constructing ─────────────────────▶ archived
-    └────────── advance(to=archived，跳过施工，写盘+通知) ──────────────▶▲
+```mermaid
+stateDiagram-v2
+    collecting --> constructing: "advance(to=constructing)"
+    collecting --> archived: "advance(to=archived) 跳过施工"
+    constructing --> archived: "advance(to=archived) 写盘+通知"
 ```
 
 | 转移 | 触发者 | 副作用 |
@@ -442,49 +486,27 @@ collecting ─────────────────────▶ co
 
 ## 12. 增量日志
 
-### 2026-07-19：迁移链重编号 + Web 账号主锚落地 + sheet_managers 升 account 级
+> 只记录迁移链顺序与不在表结构中的代码/服务层变更；表结构详情见对应 §节。
 
-**迁移链**：`0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（单 head 0016）。
+### 2026-07-19：迁移链重编号 + Web 账号主锚 + sheet_managers 升 account 级
 
-**身份主锚升级（R-5 落地）**：
-- **Web 账号成为身份主锚**（§0 改）：`users.web_accounts`（迁移 0014，新增 `id` / `username UNIQUE NULL` / `password_hash NULL` / `role` / `wiki_user_id` / `display_name`（迁移 0015） / timestamps）。CHECK `((username IS NULL) = (password_hash IS NULL))` → NULL = 临时账号（`!!PCH login` 自动创建，后续可升级），非 NULL = 永久账号（可登录）。
-- **MC UUID 降级为子身份**（§0 改）：离线模式下 UUID 由玩家名确定性推导，改名即换身份；但 Web 账号不变（积分不丢）。
-- **players.web_account_id**（§2.1 改）：BIGINT FK→web_accounts.id ON DELETE SET NULL；**不回填历史数据**，首次 `!!PCH login` 自动建临时账号挂接。NULL = 未绑定。
-- **bind_tokens 表**（§2.5 改）：双向绑定短码（`direction` ∈ `game_init`|`web_init`；方向一致性 CHECK；`short_code` 6 位 Crockford Base32 剔除易混字符；部分索引 `ix_bind_tokens_active WHERE used_at IS NULL`）。支持游戏内 `!!PCH bind` 出短码与 Web 端绑定双向发起。
+迁移链 `0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（head = 0016）。身份主锚升级（R-5）落地：详见 §0、§2.1（`web_account_id`）、§2.4（`web_accounts`）、§2.5（`bind_tokens`）。`sheet_managers` PK 变 account 级：详见 §10.5；权限矩阵变化（`advance ?to=constructing` 改 tier B）见 [`api/sheets.md`](./api/sheets.md) §7.1。
 
-**sheet_managers 升 account 级（R-5 一致）**：
-- **PK 变更**（§10.5 改）：`PRIMARY KEY (sheet_id, web_account_id)` 替代原 `player_uuid`（迁移 0016）。
-- **语义变更**：**同账号任一 UUID 继承 manager 权限**（不再 per-UUID，per-account）。`web_accounts` 删除 → `sheet_managers` CASCADE → 该账号所有 UUID 立即失权（E5）。
-- **API 响应结构**：`SheetManagerEntry = {web_account_id, display_name, member_uuids, granted_at}`（与 `RowContributor` 对齐）。
-- **权限矩阵**：tier A 高危（删项目/改名/授权/归档）仅 owner/superuser；tier B 常规（增删改行/子物品/进度/解除/打回/进入施工）含 manager。**行为变化**：`advance ?to=constructing` 由原 tier A 改采 tier B（manager 也能推进施工）。详见 [`api/sheets.md`](./api/sheets.md) §7.1。
+### 2026-07-09：子物品嵌套 + sheets API 包化重构
 
-**架构文档同步**：本文档 §0/§2.1/§2.4/§2.5/§10.5 已同步为「✅ 已实现」；`web_accounts` / `bind_tokens` / `sheet_managers` 从「🚧 规划中」移除。
-
-### 2026-07-09：子物品嵌套 + sheets.py 包化重构
-
-**迁移 0012_issue_19_sub_items**：`sheet_rows` 加 `parent_row_id`（FK 自引用 ON DELETE CASCADE，NULL = 顶层行）+ `qty_per_unit`（numeric(10,2)，迁移 0013 放宽小数支持）。**单层**：子物品只能挂顶层行下（repo 校验 `parent.parent_row_id IS NULL`）。**模式继承**：父行 lock→子行只能 lock；父行 progress→子行可 lock/progress（默认继承）。**级联重算**：子行 `need_qty = ceil(qty_per_unit × 父行 need_qty)`。部分唯一索引：顶层 `uq_sheet_rows_top_name`(sheet_id+item_name WHERE parent_row_id IS NULL) / 子行 `uq_sheet_rows_sub_registry`(parent_row_id+registry_id WHERE parent_row_id NOT NULL)。
-
-**Phase 1 重构**：`Backend/app/api/sheets/` 包（`__init__.py` + `_shared.py` + `sheets_crud.py` + `rows.py` + `collab.py` + `lifecycle.py`）。新增 `app/services/translation.py`（`get_translator()` / `resolve_item_name()`）。修正 sheets→parsing 反向依赖。
+迁移 `0012`（`parent_row_id` + `qty_per_unit`）+ `0013`（qty_per_unit 放宽小数）。表结构详见 §10.2。**代码重构**：`Backend/app/api/sheets/` 包化拆分（`_shared.py` / `sheets_crud.py` / `rows.py` / `collab.py` / `lifecycle.py`）；新增 `app/services/translation.py`（`get_translator()` / `resolve_item_name()`）；修正 sheets→parsing 反向依赖。
 
 ### 2026-07-03：项目三阶段生命周期 + 归档自动化
 
-**迁移 0009_sheets_lifecycle**：`sheets.sheets` 加 `status` ∈ collecting/constructing/archived + `archived_path`/`archived_at`（双 CHECK `ck_sheets_status_*` + 索引 `ix_sheets_status`）。`archived` = **终态只读**（repo `_assert_writable` 统一守卫 → 409）。
+迁移 `0009`（`status` + `archived_path`/`archived_at`）。表结构与状态机详见 §10.1/§10.4。**归档服务**：`services/archive/archive_sheet()` → markdown 渲染（`SectionRenderer` Protocol + `TemplateSection`/`FunctionSection` frozen + `MarkdownDocument` 不可变）→ matplotlib 饼图（CJK 字体 Noto Sans CJK SC）→ 原子写盘 + `sheet_archived` 通知。**wiki git publisher**（默认 off）：归档后 `git commit + push` 整目录到独立 wiki 内容仓（subprocess git，token 内嵌 push URL 不落盘）。
 
-**归档服务**：`services/archive/archive_sheet()` 渲染 md（`services/markdown_render/` 抽象：`SectionRenderer` Protocol + `TemplateSection`/`FunctionSection` frozen + `MarkdownDocument` 不可变）→ matplotlib 渲染 `contributions.png`（CJK 字体 **Noto Sans CJK SC**）→ 原子写盘 `ARCHIVE_ROOT/projects/{id}/index.md` → DB 置 archived 三字段 + `notify(category="sheet_archived")` → commit；**失败 cleanup + rollback**。归档产物 = 每项目独立文件夹（`index.md` + `contributions.png`）。**wiki git publisher**（默认 off，best-effort）：归档成功后把 `projects/<id>/` 整目录 `git commit + push` 到独立 wiki 内容 git 仓（subprocess git，token 内嵌 push URL 不落盘）。
+### 2026-07-03：sheet registry_id + 一键提交
 
-### 2026-07-03：sheet registry_id 字段 + 一键提交
-
-**迁移 0010**：`sheet_rows.registry_id TEXT NULL`（隐式可空；`item_name` / `registry_id` 至少一个非空，否则 422）。**一键提交按此精确匹配**（`scanner.py` 扫背包含潜影盒嵌套）。block→item 归一化集中在 project-service（R-6 不覆盖 sheets）。
+迁移 `0010`（`registry_id TEXT NULL`）。表结构详见 §10.2。一键提交按 `registry_id` 精确匹配（`scanner.py` 扫背包含潜影盒嵌套）；block→item 归一化集中在 project-service。
 
 ### 2026-07-06：sheet 快速重开 + list 增强
 
-**迁移 0011**：`users.players` 加 `last_sheet_id INTEGER NULL`（**故意无 FK**，表删后自然失效）。`GET /me/last_sheet`（双通道鉴权）。MCDR `!!PCH sheet last` 无参重开上次。
-
-**list_sheets 加 `player_uuid` 过滤**：参与优先排序（owner / lock 行 claimant / progress 行 contributor / sheet_managers 4 源 UNION 置顶）。`status` 过滤（默认 `active`=collecting+constructing）。MCDR `sheet list` 简写旗标（`-m`(mine)/`-c`(collecting)/`-t`(constructing)/`-a`(archived)/`-l`(all)）。
-
-### 2026-07-19：Web 账号绑定多 MC UUID + 完善 `!!PCH bind`
-
-**本节内容已归档至「2026-07-19：迁移链重编号 + Web 账号主锚落地 + sheet_managers 升 account 级」，条目合并**。
+迁移 `0011`（`players.last_sheet_id`）。表结构详见 §2.1。`list_sheets` 加参与优先排序（owner / claimant / contributor / manager 4 源 UNION）；MCDR `sheet list` 简写旗标（`-m`/`-c`/`-t`/`-a`/`-l`）。
 
 ---
 
