@@ -2,5 +2,9 @@
   "clones": 1291,
   "uniques": 432,
   "updated_at": "2026-08-08",
-  "note": "Initial values offset +1000 clones / +300 uniques to compensate for lost traffic data (07-01 to 07-24). Repohistory tracks incremental growth from here."
+  "last_recorded_window": {
+    "clones": 329,
+    "uniques": 135
+  },
+  "note": "Initial values offset +1000 clones / +300 uniques to compensate for lost traffic data (07-01 to 07-24). Auto-updated by clone-stats.yml workflow."
 }
