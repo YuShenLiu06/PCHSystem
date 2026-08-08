@@ -2,7 +2,6 @@ name: Clone Stats Update
 
 on:
   schedule:
-    # 每天 UTC 00:00 执行
     - cron: "0 0 * * *"
   workflow_dispatch:
 
@@ -13,28 +12,37 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # 用 GitHub App 生成短期 installation token（1h 自动过期）
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-administration: read
+          permission-contents: write
+
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Fetch clone stats & update JSON
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
 
           # 读取当前存档基数
           PREV_CLONES=$(jq -r '.clones' .github/clone-stats.json)
           PREV_UNIQUES=$(jq -r '.uniques' .github/clone-stats.json)
-          PREV_UPDATED=$(jq -r '.updated_at' .github/clone-stats.json)
 
           # 调用 GitHub Traffic API（最近 14 天）
           API_RESP=$(gh api "repos/${{ github.repository }}/traffic/clones?per=day")
 
-          # 计算 14 天窗口内的增量：
-          # 拿当前 API 总数，减去上次已记录窗口的值（首次运行时 last_recorded 缺失则取全量）
+          # 当前 API 总数
           CURR_CLONES=$(echo "$API_RESP" | jq -r '.count')
           CURR_UNIQUES=$(echo "$API_RESP" | jq -r '.uniques')
 
-          # 用 .last_recorded_window 记录上次抓取时的 API 原始值，用于差值计算
+          # 差值计算：用 .last_recorded_window 记录上次 API 原始值
           LAST_RECORDED_CLONES=$(jq -r '.last_recorded_window.clones // empty' .github/clone-stats.json)
           LAST_RECORDED_UNIQUES=$(jq -r '.last_recorded_window.uniques // empty' .github/clone-stats.json)
 
@@ -71,8 +79,8 @@ jobs:
 
       - name: Commit changes
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git add .github/clone-stats.json
           git commit -m "chore: update clone stats" || echo "No changes to commit"
           git push
