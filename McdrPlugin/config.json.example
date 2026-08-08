@@ -9,5 +9,6 @@
   "construction_flush_interval_seconds": 30.0,
   "world_stats_dir": "world/stats",
   "construction_max_batch": 1900,
-  "construction_track_breaking": false
+  "construction_track_breaking": false,
+  "backoff_max_seconds": 60.0
 }

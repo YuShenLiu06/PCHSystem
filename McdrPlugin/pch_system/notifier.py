@@ -18,10 +18,14 @@ import uuid_api_remake  # RS-8
 from mcdreforged.api.decorator import new_thread
 
 from . import sheet_client
+from .backoff import backoff_interval
 from .config import PchSystemConfig
 from .messages import format_notification
 
 _log = logging.getLogger("pch_system.notifier")
+# run() 启动时替换为 server.logger（同 construction_tracker 模式：
+# 裸 Python logger 无 handler → MCDR.log 看不到）。
+_LOGGER = _log
 
 # 模块级在线玩家字典：name -> uuid（由事件维护 + rcon 初始化）
 _online_players: dict = {}
@@ -121,17 +125,23 @@ def configure(cfg: PchSystemConfig) -> None:
     _CURRENT_CFG = cfg
 
 
-def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: PchSystemConfig) -> None:
-    """拉一次 pending，逐条 tell，成功后一次 ack。失败静默（避免刷屏）。"""
+def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: PchSystemConfig) -> bool:
+    """拉一次 pending，逐条 tell，成功后一次 ack。
+
+    返回 True = HTTP 调用完成（后端可达，不论有无通知）；
+    返回 False = 网络失败（None，后端不可达）。
+    """
     outcome = sheet_client.pending_notifications(cfg, player_uuid, cfg.notify_max_per_poll)
+    if outcome is None:
+        return False
     if not isinstance(outcome, list) or not outcome:
-        return
+        return True
     ids = []
     for n in outcome:
         try:
             server.tell(player_name, format_notification(n))
         except Exception as e:  # noqa: BLE001 - 单条渲染失败不影响其余
-            _log.warning("tell notification failed for %s: %s", player_name, e)
+            _LOGGER.warning("tell notification failed for %s: %s", player_name, e)
         nid = n.get("id")
         if nid is not None:
             ids.append(nid)
@@ -141,23 +151,53 @@ def _deliver_for_player(server, player_name: str, player_uuid: str, cfg: PchSyst
         # （曾因 body 缺 player_uuid 致 422，delivered_at 永不置位 → 通知刷屏）。
         ack_outcome = sheet_client.ack_notifications(cfg, player_uuid, ids)
         if not isinstance(ack_outcome, dict):
-            _log.warning("ack failed for %s (ids=%s): %r", player_name, ids, ack_outcome)
+            _LOGGER.warning("ack failed for %s (ids=%s): %r", player_name, ids, ack_outcome)
+    return True
 
 
 def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
     """后台轮询循环（由 __init__.py 用 @new_thread 启动）。
 
     每 cfg.notify_poll_interval_seconds 秒：遍历在线 dict，拉 pending → tell → ack。
-    网络失败静默继续下次。
+    后端连续不可达时指数退避（封顶 cfg.backoff_max_seconds），并在状态转换时
+    通过 server.logger 提示 + 指引 !!PCH status。
     """
-    interval = max(1.0, float(cfg.notify_poll_interval_seconds))
+    global _LOGGER
+    _LOGGER = server.logger
+    base_interval = max(1.0, float(cfg.notify_poll_interval_seconds))
+    backoff_max = max(base_interval, float(cfg.backoff_max_seconds))
+    consecutive_failures = 0
+
     while not stop_event.is_set():
+        interval = backoff_interval(base_interval, consecutive_failures, backoff_max)
+
         if stop_event.wait(interval):
             break  # 被唤醒（停止）
         if not server.is_server_running():
             continue
-        for name, uuid_ in _snapshot_online().items():
+
+        online = _snapshot_online()
+        if not online:
+            continue  # 无在线玩家不计数
+
+        all_failed = True
+        for name, uuid_ in online.items():
             try:
-                _deliver_for_player(server, name, uuid_, cfg)
+                if _deliver_for_player(server, name, uuid_, cfg):
+                    all_failed = False
             except Exception as e:  # noqa: BLE001 - 单玩家失败不中断整轮
-                _log.warning("deliver loop failed for %s: %s", name, e)
+                _LOGGER.warning("deliver loop failed for %s: %s", name, e)
+
+        # 退避状态机
+        if all_failed:
+            if consecutive_failures == 0:
+                _LOGGER.warning(
+                    "⚠ PCH 后端不可达：通知轮询连续网络失败，进入退避模式"
+                    "（最长 %ss）。输入 !!PCH status 查看诊断",
+                    backoff_max,
+                )
+            consecutive_failures += 1
+        else:
+            if consecutive_failures > 0:
+                _LOGGER.info("✓ PCH 后端已恢复，通知轮询恢复正常频率")
+            consecutive_failures = 0

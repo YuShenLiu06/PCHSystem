@@ -688,5 +688,84 @@ class RunLoopTest(unittest.TestCase):
         flush.assert_not_called()
 
 
+class RunBackoffTest(unittest.TestCase):
+    """run() 退避状态机：连续网络失败 → 指数增大间隔 + logger 提示；恢复 → 重置。"""
+
+    def setUp(self):
+        ct._reset()
+
+    def test_backoff_on_network_failures_and_recovery(self):
+        cfg = PchSystemConfig()
+        cfg.construction_flush_interval_seconds = 5.0
+        cfg.backoff_max_seconds = 60.0
+        server = mock.Mock()
+        server.is_server_running.return_value = True
+
+        flush_results = [
+            {"last_outcome": "fetch_failed"},
+            {"last_outcome": "fetch_failed"},
+            {"last_outcome": "ok"},
+        ]
+
+        call_count = {"n": 0}
+        intervals = []
+
+        def _fake_wait(timeout):
+            intervals.append(timeout)
+            call_count["n"] += 1
+            return call_count["n"] >= 4
+
+        stop = threading.Event()
+        stop.wait = _fake_wait
+
+        with mock.patch.object(ct, "_flush_once", side_effect=flush_results):
+            ct.run(server, cfg, stop)
+
+        # 进入退避时 warning（含「后端不可达」）
+        warning_calls = [
+            c for c in server.logger.warning.call_args_list
+            if "后端不可达" in str(c)
+        ]
+        self.assertEqual(len(warning_calls), 1)
+
+        # 恢复时 info（含「恢复」）
+        info_calls = [
+            c for c in server.logger.info.call_args_list
+            if "恢复" in str(c)
+        ]
+        self.assertEqual(len(info_calls), 1)
+
+        # 验证间隔递增：5.0(base) → 10.0(2^1) → 20.0(2^2) → 5.0(recovered)
+        self.assertAlmostEqual(intervals[0], 5.0)
+        self.assertAlmostEqual(intervals[1], 10.0)
+        self.assertAlmostEqual(intervals[2], 20.0)
+        self.assertAlmostEqual(intervals[3], 5.0)
+
+    def test_non_network_outcome_does_not_trigger_backoff(self):
+        """outcome=no_online → 非网络失败，不触发退避日志。"""
+        cfg = PchSystemConfig()
+        cfg.construction_flush_interval_seconds = 5.0
+        server = mock.Mock()
+        server.is_server_running.return_value = True
+
+        call_count = {"n": 0}
+
+        def _fake_wait(timeout):
+            call_count["n"] += 1
+            return call_count["n"] >= 2
+
+        stop = threading.Event()
+        stop.wait = _fake_wait
+
+        with mock.patch.object(ct, "_flush_once", return_value={"last_outcome": "no_online"}):
+            ct.run(server, cfg, stop)
+
+        backoff_warnings = [
+            c for c in server.logger.warning.call_args_list
+            if "后端不可达" in str(c)
+        ]
+        self.assertEqual(len(backoff_warnings), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

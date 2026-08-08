@@ -15,3 +15,5 @@ class PchSystemConfig(Serializable):
     world_stats_dir: str = "world/stats"             # stats 目录（相对服务端 cwd，或绝对路径）
     construction_max_batch: int = 1900               # 单次 POST 上限（< 后端 2000，留余量）
     construction_track_breaking: bool = False        # 挖掘预留（本期关；mined block id≠item id，开启需归一化）
+    # 退避上限：后台轮询检测到后端连续不可达时，指数增大间隔，封顶于此值
+    backoff_max_seconds: float = 60.0

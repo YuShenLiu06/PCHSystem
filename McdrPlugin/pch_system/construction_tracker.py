@@ -47,6 +47,7 @@ from typing import Optional
 from . import construction_client
 from . import notifier
 from . import stats_reader
+from .backoff import backoff_interval
 from .config import PchSystemConfig
 
 _log = logging.getLogger("pch_system.construction_tracker")
@@ -63,6 +64,9 @@ _last_result: dict = {}  # 最近一次 flush 的状态快照（给命令读）
 
 # 当前配置（由 __init__.py on_load 注入；_flush_once 也接受 cfg 参数便于测试驱动）
 _CURRENT_CFG: PchSystemConfig = PchSystemConfig()
+
+# _flush_once 的 outcome 值中表示后端不可达（网络层失败）
+_NETWORK_FAILURE_OUTCOMES = frozenset({"fetch_failed", "report_failed"})
 
 
 def configure(cfg: PchSystemConfig) -> None:
@@ -88,15 +92,19 @@ def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
     """后台 flush 循环（由 ``__init__.py`` 用 ``@new_thread('pch_construction')`` 启动）。
 
     复刻 ``notifier.run`` 的 ``stop_event.wait(interval)`` 骨架；单轮失败记 warning
-    不中断。R-12：本模块不装饰 @new_thread，由调用方包。
+    不中断。后端连续不可达时指数退避（封顶 ``cfg.backoff_max_seconds``），并在状态
+    转换时通过 ``server.logger`` 提示 + 指引 ``!!PCH status``。
+    R-12：本模块不装饰 @new_thread，由调用方包。
     """
     global _LOGGER
     _reset()
     _LOGGER = server.logger  # _flush_once 读此全局 → INFO/DEBUG 经 MCDR PluginLogger 落 MCDR.log
-    interval = max(5.0, float(cfg.construction_flush_interval_seconds))
+    base_interval = max(5.0, float(cfg.construction_flush_interval_seconds))
+    backoff_max = max(base_interval, float(cfg.backoff_max_seconds))
+    consecutive_failures = 0
     server.logger.info(
         "construction_tracker 启动：interval=%.0fs stats_dir=%s track_breaking=%s",
-        interval, cfg.world_stats_dir, cfg.construction_track_breaking,
+        base_interval, cfg.world_stats_dir, cfg.construction_track_breaking,
     )
     # 启动时校验 stats 目录（运行中每轮由 _flush_once 再判，这里仅 best-effort 提示）
     if not os.path.isdir(cfg.world_stats_dir):
@@ -104,14 +112,31 @@ def run(server, cfg: PchSystemConfig, stop_event: threading.Event) -> None:
             "construction_tracker: world_stats_dir 不是目录：%r", cfg.world_stats_dir
         )
     while not stop_event.is_set():
+        interval = backoff_interval(base_interval, consecutive_failures, backoff_max)
+
         if stop_event.wait(interval):
             break  # 被唤醒（停止）
         if not server.is_server_running():
             continue
         try:
-            _flush_once(cfg)
+            result = _flush_once(cfg)
         except Exception as e:  # noqa: BLE001 - 单轮失败不中断整个循环
             _LOGGER.warning("construction_tracker flush failed: %s", e)
+            continue
+
+        outcome = result.get("last_outcome") if isinstance(result, dict) else None
+        if outcome in _NETWORK_FAILURE_OUTCOMES:
+            if consecutive_failures == 0:
+                _LOGGER.warning(
+                    "⚠ PCH 后端不可达：施工追踪器网络失败（%s），进入退避模式"
+                    "（最长 %ss）。输入 !!PCH status 查看诊断",
+                    outcome, backoff_max,
+                )
+            consecutive_failures += 1
+        else:
+            if consecutive_failures > 0:
+                _LOGGER.info("✓ PCH 后端已恢复，施工追踪器恢复正常频率")
+            consecutive_failures = 0
 
 
 def _flush_once(cfg: PchSystemConfig) -> dict:
