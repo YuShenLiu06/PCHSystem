@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: clone-stats
+  cancel-in-progress: true
+
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -37,4 +41,5 @@ jobs:
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git add .github/clone-stats.json
           git commit -m "chore: update clone stats" || echo "No changes to commit"
+          git pull --rebase
           git push
