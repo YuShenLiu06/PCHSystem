@@ -28,54 +28,8 @@ jobs:
       - name: Fetch clone stats & update JSON
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-
-          # 读取当前存档基数
-          PREV_CLONES=$(jq -r '.clones' .github/clone-stats.json)
-          PREV_UNIQUES=$(jq -r '.uniques' .github/clone-stats.json)
-
-          # 调用 GitHub Traffic API（最近 14 天）
-          API_RESP=$(gh api "repos/${{ github.repository }}/traffic/clones?per=day")
-
-          # 当前 API 总数
-          CURR_CLONES=$(echo "$API_RESP" | jq -r '.count')
-          CURR_UNIQUES=$(echo "$API_RESP" | jq -r '.uniques')
-
-          # 差值计算：用 .last_recorded_window 记录上次 API 原始值
-          LAST_RECORDED_CLONES=$(jq -r '.last_recorded_window.clones // empty' .github/clone-stats.json)
-          LAST_RECORDED_UNIQUES=$(jq -r '.last_recorded_window.uniques // empty' .github/clone-stats.json)
-
-          if [ -n "$LAST_RECORDED_CLONES" ]; then
-            # 差值 = 当前 API 值 - 上次 API 值（正值才加，负值说明窗口滚动丢数据，跳过）
-            DELTA_CLONES=$(( CURR_CLONES - LAST_RECORDED_CLONES ))
-            DELTA_UNIQUES=$(( CURR_UNIQUES - LAST_RECORDED_UNIQUES ))
-            [ "$DELTA_CLONES" -gt 0 ] && NEW_CLONES=$(( PREV_CLONES + DELTA_CLONES )) || NEW_CLONES=$PREV_CLONES
-            [ "$DELTA_UNIQUES" -gt 0 ] && NEW_UNIQUES=$(( PREV_UNIQUES + DELTA_UNIQUES )) || NEW_UNIQUES=$PREV_UNIQUES
-          else
-            # 首次运行：当前 JSON 已含手动补值基数，直接用
-            NEW_CLONES=$PREV_CLONES
-            NEW_UNIQUES=$PREV_UNIQUES
-          fi
-
-          TODAY=$(date -u +%Y-%m-%d)
-
-          # 写回 JSON
-          jq -n \
-            --arg clones "$NEW_CLONES" \
-            --arg uniques "$NEW_UNIQUES" \
-            --arg today "$TODAY" \
-            --arg rc "$CURR_CLONES" \
-            --arg ru "$CURR_UNIQUES" \
-            '{
-              clones: ($clones | tonumber),
-              uniques: ($uniques | tonumber),
-              updated_at: $today,
-              last_recorded_window: { clones: ($rc | tonumber), uniques: ($ru | tonumber) },
-              note: "Initial values offset +1000 clones / +300 uniques to compensate for lost traffic data (07-01 to 07-24). Auto-updated by clone-stats.yml workflow."
-            }' > .github/clone-stats.json
-
-          cat .github/clone-stats.json
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/clone-stats.py
 
       - name: Commit changes
         run: |
