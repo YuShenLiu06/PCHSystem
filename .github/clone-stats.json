@@ -2,9 +2,67 @@
   "clones": 1291,
   "uniques": 432,
   "updated_at": "2026-08-09",
-  "last_recorded_window": {
-    "clones": 329,
-    "uniques": 135
+  "base_offset": {
+    "clones": 962,
+    "uniques": 258,
+    "note": "补偿 07-01~07-24 丢失数据 + 按 daily 存储前已累计的差值"
   },
-  "note": "Initial values offset +1000 clones / +300 uniques to compensate for lost traffic data (07-01 to 07-24). Auto-updated by clone-stats.yml workflow."
+  "daily": {
+    "2026-07-25": {
+      "clones": 55,
+      "uniques": 35
+    },
+    "2026-07-26": {
+      "clones": 118,
+      "uniques": 54
+    },
+    "2026-07-27": {
+      "clones": 9,
+      "uniques": 6
+    },
+    "2026-07-28": {
+      "clones": 54,
+      "uniques": 28
+    },
+    "2026-07-29": {
+      "clones": 3,
+      "uniques": 3
+    },
+    "2026-07-30": {
+      "clones": 0,
+      "uniques": 0
+    },
+    "2026-07-31": {
+      "clones": 1,
+      "uniques": 1
+    },
+    "2026-08-01": {
+      "clones": 2,
+      "uniques": 1
+    },
+    "2026-08-02": {
+      "clones": 0,
+      "uniques": 0
+    },
+    "2026-08-03": {
+      "clones": 1,
+      "uniques": 1
+    },
+    "2026-08-04": {
+      "clones": 2,
+      "uniques": 2
+    },
+    "2026-08-05": {
+      "clones": 4,
+      "uniques": 4
+    },
+    "2026-08-06": {
+      "clones": 30,
+      "uniques": 13
+    },
+    "2026-08-07": {
+      "clones": 50,
+      "uniques": 26
+    }
+  }
 }
