@@ -29,7 +29,7 @@ def fetch_traffic_daily(repo: str) -> list[dict]:
     每个元素形如 ``{"timestamp": "2026-08-09T00:00:00Z", "count": 10, "uniques": 5}``。
     """
     result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/traffic/clones", "-f", "per=day"],
+        ["gh", "api", f"repos/{repo}/traffic/clones?per=day"],
         capture_output=True,
         text=True,
         check=True,
