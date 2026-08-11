@@ -32,7 +32,7 @@ Vue 3 + Element Plus 后台，三端架构中的网页端：管理员/负责人�
 
 | # | 红线 | 说明 |
 |---|---|---|
-| **RS-1** | **测试阶段保持精简甚至简陋** | 测试阶段不要新增过多美观元素，仅保留最基本能完成测试的功能性内容。Element Plus 用最少必要组件（`el-button / el-card / el-result / el-message`），不追求视觉打磨；样式/布局/响应式优化一律延后到测试通过后。理由：避免功能未稳时浪费精力打磨 UI，便于快速发现链路问题。 |
+| **RS-1** | **视觉规范以 wiki 令牌为准** | 色值权威源：`PCHSystem-wiki/src/styles/custom.css`（深板岩灰 + 草方块绿）；改色先改 wiki 再同步前端 `styles/tokens.css`，避免单边漂移。**禁止硬编码色值 / 内联 style**（`#aaa`/`color: #666` 等暗色下不可读）。主题机制：`useTheme` 跟随 `prefers-color-scheme` + 手动切换 + `localStorage` 持久化；外观切换由 `tokens.css` 的 `:root`/`:root[data-theme='light']` 完成，业务代码不写颜色逻辑。品牌资产（logo/favicon）与 wiki 同源，勿自造变体。 |
 | **RS-2** | 遵守 R-9 前端权限仅可见性 | 任何按钮/页面的禁用、隐藏、置灰都只是 UX，**不构成权限**。后端 RBAC 拒绝才算真拒绝；前端不写"应该不能"的乐观逻辑。 |
 | **RS-3** | App.vue 必须含 `<router-view />` | F1 脚手架阶段曾把 App.vue 当占位模板（`<h1>...</h1><el-button>...</el-button>`），F3 加路由时漏改，导致路由匹配但页面不渲染（V1 验收时发现）。任何带路由的项目，App.vue 只能是 `<router-view />` + 必要的全局 layout 包裹。 |
 | **RS-4** | JWT 存 localStorage 是 XSS 妥协 | localStorage 可被 XSS 偷，配合 CSP + 输入转义缓解；不存更敏感数据。后续若改 HttpOnly cookie 需重做鉴权链路。 |

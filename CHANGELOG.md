@@ -15,7 +15,7 @@
 
 ### Added
 
-- _暂无_
+- **前端视觉统一（frontend）**：与 wiki 统一深板岩 + 草方块绿令牌系统（`styles/tokens.css`），主题跟随系统 + 手动切换（顶栏 ◐/☀/☾ 三态循环）。应用外壳：顶栏导航 + BrandLogo + 用户区（当前身份 + 登出，未登录页不显导航）；≤1024px 折叠为抽屉。库存记数排版：材料表「换算」列按盒/组/个精确分段（`QtyValue`），「交付进度」列组刻度条（`StackProgress`，≤32 组显刻度）。路由体验：catch-all 404、`document.title` 自动设置。图表主题：ECharts 随亮/暗切换，Minecraft 材质色色板（草/钻石/铜/金/红石/石头）。空态/骨架屏/错误态统一，DRY 收口反馈文案（`useNotify`/`useConfirm`）。品牌资产与 wiki 同源（`logo.svg`/`logo-dark.svg`/`favicon.svg`）。
 
 ### Fixed
 
