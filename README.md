@@ -113,7 +113,7 @@
   </tr>
   <tr>
     <td><img alt="数量换算" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-mc-amounts.png"></td>
-    <td><img alt="子物品提交" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-web-sub.png"></td>
+    <td><img alt="子物品提交" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-web-sub.gif"></td>
   </tr>
   <tr>
     <td align="center"><b>项目归档</b></td>
