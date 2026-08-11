@@ -111,12 +111,9 @@ const totalNeed = computed(() =>
       </div>
     </template>
 
-    <div v-if="!hasData" style="color: #999;">
+    <div v-if="!hasData" class="pch-muted">
       暂无施工记录（constructing 期内由追踪器上报累计）。
-      <div
-        v-if="errorMsg"
-        style="font-size: 12px; color: #f56c6c; margin-top: 4px;"
-      >
+      <div v-if="errorMsg" class="pch-note pch-text-danger" style="margin-top: var(--pch-space-1);">
         最近一次加载失败：{{ errorMsg }}
       </div>
     </div>

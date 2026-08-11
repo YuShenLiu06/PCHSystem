@@ -1,0 +1,244 @@
+/* ============================================================
+   Element Plus → PCH 令牌单向映射
+   规则：只把 --el-* 指向 --pch-*，绝不反向；组件级样式一律写在此文件，
+   业务 .vue 里不再出现色值字面量。
+   ============================================================ */
+
+/*
+ * 选择器用 `html:root`（特异度 0,1,1）而非 `:root`（0,1,0）：
+ * EP 的 dark/css-vars.css 用 `.dark`（0,1,0）、基础皮用 `:root`（0,1,0），与 `:root` 同级 →
+ * 谁赢取决于 <style> 注入顺序，而 Vite dev 下第三方 CSS 与本地 CSS 的注入顺序不保证
+ * （实测 dev 里 EP 后注入，主色被打回默认蓝）。抬一级特异度即与顺序无关。
+ *
+ * 只需一套 --el-* 映射：值指向 --pch-*，亮/暗切换由 tokens.css 换 --pch-* 完成，
+ * EP 变量自动跟随。
+ */
+html:root {
+  /* 主色：绿 accent。EP 默认蓝会与草方块绿打架 */
+  --el-color-primary: var(--pch-accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--pch-accent) 70%, var(--pch-bg));
+  --el-color-primary-light-5: color-mix(in srgb, var(--pch-accent) 50%, var(--pch-bg));
+  --el-color-primary-light-7: color-mix(in srgb, var(--pch-accent) 30%, var(--pch-bg));
+  --el-color-primary-light-8: color-mix(in srgb, var(--pch-accent) 20%, var(--pch-bg));
+  --el-color-primary-light-9: var(--pch-accent-low);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--pch-accent) 85%, black);
+
+  /* 语义色：success 复用 accent（同一绿），warning 用 dirt，danger 用 redstone */
+  --el-color-success: var(--pch-accent);
+  --el-color-warning: var(--pch-dirt);
+  --el-color-danger: var(--pch-redstone);
+  --el-color-error: var(--pch-redstone);
+  --el-color-info: var(--pch-gray-3);
+
+  /* 文字 */
+  --el-text-color-primary: var(--pch-text-strong);
+  --el-text-color-regular: var(--pch-text);
+  --el-text-color-secondary: var(--pch-text-muted);
+  --el-text-color-placeholder: var(--pch-gray-3);
+  --el-text-color-disabled: var(--pch-gray-4);
+
+  /* 背景与边框 */
+  --el-bg-color: var(--pch-bg-panel);
+  --el-bg-color-page: var(--pch-bg);
+  --el-bg-color-overlay: var(--pch-bg-raised);
+  --el-border-color: var(--pch-hairline);
+  --el-border-color-light: var(--pch-hairline-light);
+  --el-border-color-lighter: var(--pch-hairline-light);
+  --el-border-color-extra-light: var(--pch-hairline-light);
+  --el-border-color-darker: var(--pch-gray-4);
+  --el-border-color-hover: var(--pch-gray-4);
+  --el-fill-color: var(--pch-bg-raised);
+  --el-fill-color-light: var(--pch-bg-raised);
+  --el-fill-color-lighter: var(--pch-bg-panel);
+  --el-fill-color-blank: var(--pch-bg-panel);
+  --el-mask-color: rgb(8 17 29 / 72%);
+
+  --el-font-family: var(--pch-font-sans);
+  --el-font-size-base: var(--pch-text-base);
+  --el-border-radius-base: var(--pch-radius-md);
+  --el-border-radius-small: var(--pch-radius-sm);
+  --el-box-shadow-light: var(--pch-shadow-panel);
+}
+
+html:root[data-theme='light'] {
+  --el-mask-color: rgb(255 255 255 / 78%);
+}
+
+/* ---------- 卡片：wiki 规格（14px 圆角 + hairline 边框 + hover 上浮） ---------- */
+.el-card {
+  background-color: var(--pch-bg-panel);
+  border: 1px solid var(--pch-hairline);
+  border-radius: var(--pch-radius-lg);
+  transition:
+    transform var(--pch-dur-base) var(--pch-ease),
+    box-shadow var(--pch-dur-base) var(--pch-ease),
+    border-color var(--pch-dur-base) var(--pch-ease);
+}
+
+.el-card__header {
+  border-bottom: 1px solid var(--pch-hairline);
+  padding: var(--pch-space-3) var(--pch-space-4);
+  font-weight: 500;
+  color: var(--pch-text-strong);
+}
+
+/* ---------- 表格：台账主体，去斑马纹用 hairline 分隔 ---------- */
+.el-table {
+  --el-table-border-color: var(--pch-hairline);
+  --el-table-header-bg-color: var(--pch-bg-raised);
+  --el-table-header-text-color: var(--pch-text-muted);
+  --el-table-row-hover-bg-color: var(--pch-accent-low);
+  --el-table-bg-color: var(--pch-bg-panel);
+  --el-table-tr-bg-color: var(--pch-bg-panel);
+}
+
+.el-table th.el-table__cell {
+  font-weight: 500;
+  font-size: var(--pch-text-xs);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* 数量/注册名列等宽 + 位数纵向对齐（signature 的一部分） */
+.el-table .pch-num-col .cell,
+.el-table .pch-mono-col .cell {
+  font-family: var(--pch-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--pch-text-sm);
+}
+
+/* ---------- 状态 tag：plain effect + 令牌色，禁用 EP 默认饱和底 ---------- */
+.el-tag {
+  border-radius: var(--pch-radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 输入与按钮 ---------- */
+.el-button {
+  font-weight: 500;
+  transition:
+    background-color var(--pch-dur-fast) var(--pch-ease),
+    border-color var(--pch-dur-fast) var(--pch-ease),
+    color var(--pch-dur-fast) var(--pch-ease);
+}
+
+/* 实心 primary 按钮：绿底配反色文字（比 EP 默认白更精确）。
+   plain 按钮不加此覆盖——走 EP 默认 --el-button-text-color = --el-color-primary = --pch-accent，
+   暗色模式绿字 on 深绿底、亮色模式深绿字 on 浅绿底，两个模式均可读。 */
+.el-button--primary:not(.is-plain) {
+  color: var(--pch-text-invert);
+}
+
+.el-input__wrapper,
+.el-textarea__inner {
+  background-color: var(--pch-bg-raised);
+  box-shadow: 0 0 0 1px var(--pch-hairline) inset;
+}
+
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--pch-accent) inset;
+}
+
+/* 短码/注册名输入用等宽（BindConfirm / ClaimBind 的 6 位码） */
+.pch-input-code .el-input__inner {
+  font-family: var(--pch-font-mono);
+  font-size: var(--pch-text-md);
+  letter-spacing: 0.24em;
+  text-align: center;
+}
+
+/* ---------- 浮层：EP 挂 body，必须全局覆盖（否则暗色下残留浅底） ---------- */
+.el-popper,
+.el-select-dropdown,
+.el-dropdown__popper,
+.el-picker__popper,
+.el-autocomplete-suggestion {
+  background-color: var(--pch-bg-raised) !important;
+  border-color: var(--pch-hairline) !important;
+}
+
+.el-popper.is-light .el-popper__arrow::before {
+  background-color: var(--pch-bg-raised) !important;
+  border-color: var(--pch-hairline) !important;
+}
+
+.el-select-dropdown__item.is-hovering {
+  background-color: var(--pch-accent-low);
+}
+
+.el-dialog,
+.el-drawer,
+.el-message-box {
+  background-color: var(--pch-bg-panel);
+  border: 1px solid var(--pch-hairline);
+  border-radius: var(--pch-radius-lg);
+}
+
+.el-drawer {
+  border-radius: 0;
+}
+
+.el-message {
+  background-color: var(--pch-bg-raised);
+  border-color: var(--pch-hairline);
+}
+
+/* ---------- Alert：EP 按 type 色染标题，info 映射到 gray-3 后标题比正文更暗
+             （层级倒挂）。改为中性抬升面板 + 标题用强文字色。 ---------- */
+.el-alert {
+  border: 1px solid var(--pch-hairline);
+  border-radius: var(--pch-radius-md);
+  background-color: var(--pch-bg-raised);
+}
+
+.el-alert__title {
+  color: var(--pch-text-strong);
+  font-weight: 500;
+}
+
+.el-alert__description {
+  color: var(--pch-text);
+  margin: var(--pch-space-1) 0 0;
+}
+
+.el-alert .el-alert__icon {
+  color: var(--pch-text-muted);
+}
+
+/* 警示/危险 alert 保留语义色边框，底仍用中性抬升面板（不糊成大色块） */
+.el-alert.el-alert--warning {
+  border-color: var(--pch-dirt);
+}
+
+.el-alert.el-alert--warning .el-alert__icon {
+  color: var(--pch-dirt);
+}
+
+.el-alert.el-alert--error {
+  border-color: var(--pch-redstone);
+}
+
+.el-alert.el-alert--error .el-alert__icon {
+  color: var(--pch-redstone);
+}
+
+.el-alert.el-alert--success .el-alert__icon {
+  color: var(--pch-accent);
+}
+
+.el-tabs__item {
+  color: var(--pch-text-muted);
+}
+
+.el-tabs__item.is-active {
+  color: var(--pch-accent);
+}
+
+.el-tabs__active-bar {
+  background-color: var(--pch-accent);
+}
+
+.el-skeleton {
+  --el-skeleton-color: var(--pch-bg-raised);
+  --el-skeleton-to-color: var(--pch-hairline-light);
+}

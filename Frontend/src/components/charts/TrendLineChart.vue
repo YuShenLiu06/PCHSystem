@@ -19,6 +19,7 @@ import type {
 import type { ProgressTimelinePoint } from '../../api/construction'
 import { forwardFillTimeline } from '../../utils/timelineFill'
 import { formatQty } from '../../utils/qty'
+import { useChartTheme } from '../../composables/useChartTheme'
 
 // 按需注册（模块级，只跑一次）：renderer + line + grid/tooltip/legend
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
@@ -48,6 +49,9 @@ const grouped = computed(() =>
   forwardFillTimeline(props.points, props.startTime, props.endTime),
 )
 
+// 主题随 data-theme 切换（option 是 computed → 依赖 appearance，切主题原地重算）
+const theme = useChartTheme()
+
 const option = computed<Option>(() => {
   const series: LineSeriesOption[] = []
   grouped.value.forEach((data, accountId) => {
@@ -63,7 +67,10 @@ const option = computed<Option>(() => {
     })
   })
   return {
+    color: [...theme.value.palette],
+    textStyle: theme.value.textStyle,
     tooltip: {
+      ...theme.value.tooltip,
       trigger: 'axis',
       // 每条线的累计净放置用 formatQty 显单位（个/组/盒），复用公共方法
       formatter: (params: unknown) => {
@@ -84,19 +91,26 @@ const option = computed<Option>(() => {
         return header ? `${header}<br/>${body}` : body
       },
     },
-    legend: { type: 'scroll', top: 0 },
+    legend: { ...theme.value.legend, type: 'scroll', top: 0 },
     grid: { left: 40, right: 20, top: 40, bottom: 30, containLabel: true },
     // xAxis 范围 = 施工开始 → 当前/归档：min/max 由父组件透传（null/undefined 时自动）
     xAxis: {
+      ...theme.value.axis,
       type: 'time',
       min: props.startTime ?? undefined,
       max: props.endTime ?? undefined,
+      // 时序轴不画横向分隔虚线（与 yAxis 的重叠成网格噪声）
+      splitLine: { show: false },
     },
     yAxis: {
+      ...theme.value.axis,
       type: 'value',
       name: '累计净放置',
-      // 左侧轴刻度同样用 formatQty 显单位
-      axisLabel: { formatter: (v: number) => formatQty(v) },
+      // 左侧轴刻度同样用 formatQty 显单位（覆盖 theme.axis.axisLabel 的纯样式）
+      axisLabel: {
+        ...(theme.value.axis.axisLabel as object),
+        formatter: (v: number) => formatQty(v),
+      },
     },
     series,
   }

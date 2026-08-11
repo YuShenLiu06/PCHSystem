@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { register } from '../../api/identity'
 import { useAuthStore } from '../../stores/auth'
 import { extractApiError } from '../../utils/error'
+import BrandLogo from '../../components/BrandLogo.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -64,44 +65,75 @@ function goToClaim(): void {
 </script>
 
 <template>
-  <el-card header="注册永久账号" style="max-width: 480px; margin: 40px auto;">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 16px;"
-    >
-      <template #title>注册需先在游戏内建立账号</template>
-      <div style="font-size: 12px; line-height: 1.6;">
-        网页不支持单独注册。请先在游戏内执行 <strong>!!PCH login</strong>，
-        经回链拿到临时会话后，再在此设置用户名/密码转为永久账号。
-      </div>
-    </el-alert>
-    <el-form label-width="80px">
-      <el-form-item label="用户名">
-        <el-input
-          v-model="username"
-          placeholder="3-32 位，字母/数字/下划线/连字符"
-          maxlength="32"
-          show-word-limit
-          @keyup.enter="onRegister"
-        />
-      </el-form-item>
-      <el-form-item label="密码">
-        <el-input
-          v-model="password"
-          type="password"
-          placeholder="8-128 位"
-          maxlength="128"
-          show-password
-          @keyup.enter="onRegister"
-        />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" :loading="loading" @click="onRegister">注册</el-button>
-        <el-button @click="goToClaim">已有账号？绑定</el-button>
-        <el-button text @click="router.push('/login')">返回登录</el-button>
-      </el-form-item>
-    </el-form>
-  </el-card>
+  <div class="pch-register">
+    <BrandLogo class="pch-register__logo" :height="40" />
+    <el-card>
+      <template #header>注册永久账号</template>
+      <el-alert type="info" :closable="false" show-icon class="pch-register__notice">
+        <template #title>先在游戏内建立账号</template>
+        <div class="pch-register__notice-body">
+          网页不支持单独注册。先在游戏内执行 <code>!!PCH login</code>，经回链拿到临时会话后，
+          在此设置用户名/密码转为永久账号。
+        </div>
+      </el-alert>
+      <el-form label-width="72px">
+        <el-form-item label="用户名">
+          <el-input
+            v-model="username"
+            placeholder="3-32 位，字母/数字/下划线/连字符"
+            maxlength="32"
+            show-word-limit
+            autocomplete="username"
+            @keyup.enter="onRegister"
+          />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="password"
+            type="password"
+            placeholder="8-128 位"
+            maxlength="128"
+            show-password
+            autocomplete="new-password"
+            @keyup.enter="onRegister"
+          />
+        </el-form-item>
+        <el-form-item>
+          <div class="pch-register__actions">
+            <el-button type="primary" :loading="loading" @click="onRegister">注册</el-button>
+            <el-button @click="goToClaim">已有账号？绑定</el-button>
+            <el-button text @click="router.push('/login')">返回登录</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </div>
 </template>
+
+<style scoped>
+.pch-register {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pch-space-4);
+}
+
+.pch-register__logo {
+  align-self: center;
+}
+
+.pch-register__notice {
+  margin-bottom: var(--pch-space-4);
+}
+
+.pch-register__notice-body {
+  font-size: var(--pch-text-xs);
+  line-height: 1.65;
+}
+
+.pch-register__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pch-space-2);
+  align-items: center;
+}
+</style>

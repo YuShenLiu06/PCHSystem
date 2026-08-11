@@ -205,7 +205,7 @@ onMounted(() => {
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span>服务器上报源（插件）</span>
-          <span style="color: #999; font-size: 12px;">
+          <span class="pch-note">
             {{ enabledPluginCount }} / {{ totalPluginCount }} 启用
           </span>
         </div>

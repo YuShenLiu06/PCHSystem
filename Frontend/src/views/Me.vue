@@ -328,11 +328,11 @@ onMounted(() => {
         </p>
         <el-button type="danger" plain size="small" :loading="leavingConstruction" @click="onLeaveConstruction">退出施工</el-button>
       </div>
-      <div v-else-if="myConstruction" style="color: #999;">
+      <div v-else-if="myConstruction" class="pch-muted">
         当前未加入任何施工项目。在项目备货/施工页点击「加入施工」，或游戏内执行
         <code>!!PCH construction join</code> 加入。
       </div>
-      <div v-else style="color: #999;">加载中...</div>
+      <div v-else class="pch-muted">加载中...</div>
     </el-card>
 
     <!-- 施工上报源（玩家自助切：影响「由谁替你统计施工方块净放置」） -->
@@ -389,7 +389,7 @@ onMounted(() => {
                 placement="top"
               >
                 {{ (h.from_type ?? '无') }} → <strong>{{ h.to_type }}{{ h.to_id ? '/' + h.to_id : '' }}</strong>
-                <span v-if="h.reason" style="color: #999;">（{{ h.reason }}）</span>
+                <span v-if="h.reason" class="pch-muted">（{{ h.reason }}）</span>
               </el-timeline-item>
             </el-timeline>
           </el-collapse-item>
@@ -405,7 +405,7 @@ onMounted(() => {
           <el-button size="small" link :loading="reportEventsLoading" @click="loadReportEvents">刷新</el-button>
         </div>
       </template>
-      <div v-if="reportEvents.length === 0" style="color: #999;">
+      <div v-if="reportEvents.length === 0" class="pch-muted">
         暂无上报事件（含成功与被拒记录）。
       </div>
       <el-timeline v-else>
@@ -414,15 +414,15 @@ onMounted(() => {
           :key="idx"
           :timestamp="formatTime(r.recorded_at)"
           placement="top"
-          :color="r.action === 'accepted' ? '#67c23a' : '#f56c6c'"
+          :color="r.action === 'accepted' ? 'var(--pch-accent)' : 'var(--pch-redstone)'"
         >
           <strong>{{ r.sheet_title || (r.sheet_id ? '项目 #' + r.sheet_id : '未归因') }}</strong>
           <template v-if="r.action === 'accepted'">
-            <span style="margin-left: 8px; color: #67c23a;">+{{ r.net_delta ?? 0 }}</span>
+            <span class="pch-inline-gap pch-text-accent">+{{ r.net_delta ?? 0 }}</span>
           </template>
           <template v-else>
-            <span style="margin-left: 8px; color: #f56c6c;">被拒：{{ r.reason }}</span>
-            <span v-if="r.net_delta !== null && r.net_delta !== 0" style="margin-left: 8px; color: #999;">（尝试 {{ r.net_delta }}）</span>
+            <span class="pch-inline-gap pch-text-danger">被拒：{{ r.reason }}</span>
+            <span v-if="r.net_delta !== null && r.net_delta !== 0" class="pch-note pch-inline-gap">（尝试 {{ r.net_delta }}）</span>
           </template>
           <el-tooltip v-if="r.registry_id" :content="r.registry_id" placement="top">
             <el-tag size="small" type="info" style="margin-left: 8px;">{{ r.registry_id }}</el-tag>
@@ -433,7 +433,7 @@ onMounted(() => {
 
     <!-- 绑定新身份对话框（game_init：游戏 !!PCH bind 出码 → Web 输码） -->
     <el-dialog v-model="showBindDialog" title="绑定新游戏身份" width="460px">
-      <p style="margin-bottom: 12px; color: #666;">
+      <p class="pch-muted pch-lead">
         请在游戏内执行 <code>!!PCH bind</code> 获取绑定码，然后输入下方完成绑定：
       </p>
       <el-form label-width="72px">

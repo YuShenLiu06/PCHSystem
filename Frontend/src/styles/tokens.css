@@ -1,0 +1,115 @@
+/* ============================================================
+   PCHSystem 设计令牌 · 像素矿井
+   色值权威源：PCHSystem-wiki/src/styles/custom.css
+   改色先改 wiki 再同步此处，勿单边漂移。
+   ============================================================ */
+
+/* ---------- Dark（默认，与 wiki 一致） ---------- */
+:root {
+  /* 草方块绿 accent */
+  --pch-accent-low: #173322;
+  --pch-accent: #4ade80;
+  --pch-accent-high: #b9f4cf;
+
+  /* 深板岩灰阶 */
+  --pch-gray-1: #cbd5e1;
+  --pch-gray-2: #94a3b8;
+  --pch-gray-3: #64748b;
+  --pch-gray-4: #3f4c63;
+  --pch-gray-5: #273449;
+  --pch-gray-6: #131c2e;
+  --pch-gray-7: #0e1626;
+
+  --pch-bg: #0b1220;
+  --pch-bg-panel: #0e1626;
+  --pch-bg-raised: #131c2e;
+  --pch-hairline: #1f2d44;
+  --pch-hairline-light: #273449;
+
+  --pch-text: #cbd5e1;
+  --pch-text-strong: #f1f5f9;
+  --pch-text-muted: #94a3b8;
+  --pch-text-invert: #08111d;
+
+  /* 功能色：dirt 取自 logo 泥土多边形；redstone 为系统唯一暖色告警 */
+  --pch-dirt: #7c5a3c;
+  --pch-dirt-soft: #2a2019;
+  --pch-redstone: #dc5b4a;
+  --pch-redstone-soft: #331a17;
+
+  --pch-shadow-accent: 0 10px 30px -14px rgb(74 222 128 / 22%);
+  --pch-shadow-panel: 0 8px 24px -16px rgb(0 0 0 / 60%);
+}
+
+/* ---------- Light（wiki 同款：更深祖母绿保对比度） ---------- */
+:root[data-theme='light'] {
+  --pch-accent-low: #d5f3e0;
+  --pch-accent: #15803d;
+  --pch-accent-high: #14532d;
+
+  --pch-gray-1: #1e293b;
+  --pch-gray-2: #475569;
+  --pch-gray-3: #64748b;
+  --pch-gray-4: #94a3b8;
+  --pch-gray-5: #e2e8f0;
+  --pch-gray-6: #f1f5f9;
+  --pch-gray-7: #f8fafc;
+
+  --pch-bg: #fbfcfe;
+  --pch-bg-panel: #ffffff;
+  --pch-bg-raised: #f8fafc;
+  --pch-hairline: #e2e8f0;
+  --pch-hairline-light: #eceff4;
+
+  --pch-text: #334155;
+  --pch-text-strong: #0f172a;
+  --pch-text-muted: #64748b;
+  --pch-text-invert: #f8fafc;
+
+  --pch-dirt: #6b4c33;
+  --pch-dirt-soft: #f4ece3;
+  --pch-redstone: #b3402f;
+  --pch-redstone-soft: #fbeae7;
+
+  --pch-shadow-accent: 0 10px 30px -14px rgb(21 128 61 / 20%);
+  --pch-shadow-panel: 0 8px 24px -18px rgb(15 23 42 / 18%);
+}
+
+/* ---------- 排版 · 间距 · 动效（与模式无关） ---------- */
+:root {
+  /* 不引 CJK webfont：自托管体积 + 离线可用。个性来自处理方式，非字体本身 */
+  --pch-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --pch-font-mono: ui-monospace, 'SF Mono', SFMono-Regular, 'JetBrains Mono',
+    Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* 比例 1.2（密集台账，非营销页 1.5） */
+  --pch-text-2xs: 11px;
+  --pch-text-xs: 12px;
+  --pch-text-sm: 13px;
+  --pch-text-base: 14px;
+  --pch-text-md: 17px;
+  --pch-text-lg: 20px;
+  --pch-text-xl: 24px;
+  --pch-text-2xl: 29px;
+
+  /* 间距：wiki 像素网格 26px 的约数族 */
+  --pch-space-1: 4px;
+  --pch-space-2: 8px;
+  --pch-space-3: 13px;
+  --pch-space-4: 20px;
+  --pch-space-5: 26px;
+  --pch-space-6: 39px;
+  --pch-space-7: 52px;
+
+  --pch-radius-sm: 4px;
+  --pch-radius-md: 8px;
+  --pch-radius-lg: 14px; /* wiki 卡片规格 */
+
+  --pch-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --pch-dur-fast: 150ms; /* 链接 */
+  --pch-dur-base: 180ms; /* 卡片 */
+
+  --pch-header-h: 56px;
+  --pch-content-max: 1440px;
+}

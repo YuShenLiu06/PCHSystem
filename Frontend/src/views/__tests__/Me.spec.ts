@@ -237,10 +237,10 @@ describe('Me.vue · 我的上报历史（事件流水，迭代 5）', () => {
     expect(text).toContain('中央塔楼')
     expect(text).toContain('+7')
     expect(text).toContain('minecraft:stone')
-    // accepted 颜色 = 绿色 #67c23a
+    // accepted 颜色 = accent 绿
     const items = wrapper.findAll('.stub-timeline-item')
     expect(items.length).toBe(1)
-    expect(items[0].attributes('data-color')).toBe('#67c23a')
+    expect(items[0].attributes('data-color')).toBe('var(--pch-accent)')
   })
 
   it('skipped 事件红色 + reason + 尝试量', async () => {
@@ -261,10 +261,10 @@ describe('Me.vue · 我的上报历史（事件流水，迭代 5）', () => {
     const text = wrapper.text()
     expect(text).toContain('被拒：已达材料上限')
     expect(text).toContain('尝试 3')
-    // skipped 颜色 = 红色 #f56c6c
+    // skipped 颜色 = redstone 红
     const items = wrapper.findAll('.stub-timeline-item')
     expect(items.length).toBe(1)
-    expect(items[0].attributes('data-color')).toBe('#f56c6c')
+    expect(items[0].attributes('data-color')).toBe('var(--pch-redstone)')
   })
 
   it('未归因事件（sheet_id=null）显示「未归因」回退文案', async () => {
