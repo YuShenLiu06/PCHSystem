@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { claimBind } from '../../api/identity'
 import { useAuthStore } from '../../stores/auth'
 import { extractApiError } from '../../utils/error'
+import BrandLogo from '../../components/BrandLogo.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -55,33 +56,64 @@ function goToRegister(): void {
 </script>
 
 <template>
-  <el-card header="绑定已有账号" style="max-width: 480px; margin: 40px auto;">
-    <p style="margin-bottom: 16px; color: #666;">
-      将当前临时会话绑定到已有永久账号
-    </p>
-    <el-form label-width="80px">
-      <el-form-item label="用户名">
-        <el-input
-          v-model="username"
-          placeholder="3-32 位，字母/数字/下划线/连字符"
-          maxlength="32"
-          @keyup.enter="onClaim"
-        />
-      </el-form-item>
-      <el-form-item label="密码">
-        <el-input
-          v-model="password"
-          type="password"
-          placeholder="8-128 位"
-          maxlength="128"
-          show-password
-          @keyup.enter="onClaim"
-        />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" :loading="loading" @click="onClaim">绑定</el-button>
-        <el-button @click="goToRegister">注册新账号</el-button>
-      </el-form-item>
-    </el-form>
-  </el-card>
+  <div class="pch-claim">
+    <BrandLogo class="pch-claim__logo" :height="40" />
+    <el-card>
+      <template #header>绑定已有账号</template>
+      <p class="pch-claim__lead">把当前临时会话挂接到已有的永久账号。</p>
+      <el-form label-width="72px">
+        <el-form-item label="用户名">
+          <el-input
+            v-model="username"
+            placeholder="3-32 位，字母/数字/下划线/连字符"
+            maxlength="32"
+            autocomplete="username"
+            @keyup.enter="onClaim"
+          />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="password"
+            type="password"
+            placeholder="8-128 位"
+            maxlength="128"
+            show-password
+            autocomplete="current-password"
+            @keyup.enter="onClaim"
+          />
+        </el-form-item>
+        <el-form-item>
+          <div class="pch-claim__actions">
+            <el-button type="primary" :loading="loading" @click="onClaim">绑定</el-button>
+            <el-button text @click="goToRegister">改为注册新账号</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </div>
 </template>
+
+<style scoped>
+.pch-claim {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pch-space-4);
+}
+
+.pch-claim__logo {
+  align-self: center;
+}
+
+.pch-claim__lead {
+  margin-bottom: var(--pch-space-4);
+  color: var(--pch-text-muted);
+  font-size: var(--pch-text-sm);
+}
+
+.pch-claim__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pch-space-2);
+  align-items: center;
+}
+</style>

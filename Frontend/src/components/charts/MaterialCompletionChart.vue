@@ -17,6 +17,7 @@ import {
   type MaterialWithMine,
 } from '../../utils/materialSort'
 import { formatQty } from '../../utils/qty'
+import { useChartTheme } from '../../composables/useChartTheme'
 
 // 按需注册（模块级，只跑一次）
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
@@ -84,8 +85,12 @@ const axisLabels = computed(() =>
   ),
 )
 
+const theme = useChartTheme()
+
 const option = computed<Option>(() => ({
+  textStyle: theme.value.textStyle,
   tooltip: {
+    ...theme.value.tooltip,
     trigger: 'item',
     formatter: (params: unknown) => {
       // echarts tooltip formatter 回调类型过宽，运行时从 data 字段安全读取
@@ -101,22 +106,34 @@ const option = computed<Option>(() => ({
   },
   grid: { left: 40, right: 20, top: 20, bottom: 60, containLabel: true },
   xAxis: {
+    ...theme.value.axis,
     type: 'category',
     data: axisLabels.value,
-    axisLabel: { rotate: 30 },
+    axisLabel: { ...(theme.value.axis.axisLabel as object), rotate: 30 },
+    splitLine: { show: false },
   },
-  yAxis: { type: 'value', name: '完成度 %', max: 100 },
+  yAxis: { ...theme.value.axis, type: 'value', name: '完成度 %', max: 100 },
   series: [
     {
       type: 'bar',
       data: chartData.value,
-      itemStyle: { color: '#409EFF' },
-      // 完成度 100% 视觉提示（绿色）/ 不足保持蓝色
+      // 单一草方块绿：完成状态已由排序位置编码（未完成在前），再按色分组是冗余
+      itemStyle: { color: theme.value.palette[0] },
       markLine: {
         silent: true,
         symbol: 'none',
-        lineStyle: { color: '#67C23A', type: 'dashed' },
-        data: [{ yAxis: 100, label: { formatter: '满', position: 'end' } }],
+        // 「满」参考线用中性色，不与柱体绿抢注意力
+        lineStyle: { color: theme.value.palette[5], type: 'dashed' },
+        data: [
+          {
+            yAxis: 100,
+            label: {
+              formatter: '满',
+              position: 'end',
+              color: theme.value.textStyle.color as string,
+            },
+          },
+        ],
       },
     },
   ],

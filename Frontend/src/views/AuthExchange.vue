@@ -6,6 +6,7 @@ import { exchangeToken } from '../api/identity'
 import { resolveDisplayName } from '../utils/identity'
 import { isNoBackendError } from '../utils/http-error'
 import { useAuthStore } from '../stores/auth'
+import BrandLogo from '../components/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -58,6 +59,30 @@ onMounted(async () => {
 </script>
 
 <template>
-  <el-result v-if="status === 'error'" icon="error" title="登录失败" :sub-title="errorMsg" />
-  <el-result v-else icon="info" title="正在登录..." />
+  <div class="pch-exchange">
+    <BrandLogo :height="40" />
+    <el-result
+      v-if="status === 'error'"
+      icon="error"
+      title="登录失败"
+      :sub-title="errorMsg"
+    />
+    <!-- 兑换中：不用 spinner 图标，一行状态文字足够（页面停留通常 <1s） -->
+    <p v-else class="pch-exchange__status">正在验证登录凭证…</p>
+  </div>
 </template>
+
+<style scoped>
+.pch-exchange {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pch-space-4);
+  padding-top: var(--pch-space-7);
+}
+
+.pch-exchange__status {
+  color: var(--pch-text-muted);
+  font-size: var(--pch-text-sm);
+}
+</style>

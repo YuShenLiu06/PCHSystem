@@ -10,11 +10,12 @@ import {
   type MyConstructionResult,
 } from '../../api/construction'
 import { extractApiError } from '../../utils/error'
-import { formatQty } from '../../utils/qty'
 import { useAuthStore } from '../../stores/auth'
 import { useSheetStore } from '../../stores/sheet'
 import { useSheetDetail } from '../../composables/useSheetDetail'
 import ConstructionProgress from './ConstructionProgress.vue'
+import QtyValue from '../../components/QtyValue.vue'
+import StackProgress from '../../components/StackProgress.vue'
 import {
   MODE_LOCK,
   MODE_PROGRESS,
@@ -323,9 +324,9 @@ watch(sheetId, () => {
       -->
       <template v-if="!showTabs">
       <!-- 协管员列表（全员可见；授予/撤销仅 owner/超管，RS-1 精简：输入 UUID） -->
-      <div v-if="!isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: #666; font-size: 13px;">
+      <div v-if="!isReadOnly" class="pch-toolbar">
         <span>协管员：</span>
-        <span v-if="sheet.managers.length === 0" style="color: #aaa;">（无）</span>
+        <span v-if="sheet.managers.length === 0" class="pch-dash">（无）</span>
         <el-tag
           v-for="m in sheet.managers"
           :key="m.web_account_id"
@@ -348,7 +349,7 @@ watch(sheetId, () => {
             <template #default="{ item }">
               <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
                 <span>{{ item.display_name }}</span>
-                <span v-if="item.display_name !== item.player_name" style="color: #999; font-size: 12px;">{{ item.player_name }}</span>
+                <span v-if="item.display_name !== item.player_name" class="pch-note">{{ item.player_name }}</span>
               </div>
             </template>
           </el-autocomplete>
@@ -398,8 +399,8 @@ watch(sheetId, () => {
               maxlength="128"
               size="small"
             />
-            <span v-else-if="row.registry_id" style="color: #999; font-size: 12px;">{{ row.registry_id }}</span>
-            <span v-else style="color: #ccc;">—</span>
+            <span v-else-if="row.registry_id" class="pch-note">{{ row.registry_id }}</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
 
@@ -431,13 +432,14 @@ watch(sheetId, () => {
               />
               <span v-else>{{ row.qty_per_unit }}</span>
             </template>
-            <span v-else style="color: #ccc;">—</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="换算" :width="columnWidths['换算'] ?? 80">
+        <!-- 换算列：库存记数排版（盒/组/个精确分段，等宽对齐），非 formatQty 的单一近似量级 -->
+        <el-table-column label="换算" :width="columnWidths['换算'] ?? 108" class-name="pch-num-col">
           <template #default="{ row }">
-            {{ formatQty(row.need_qty) }}
+            <QtyValue :value="row.need_qty" />
           </template>
         </el-table-column>
 
@@ -470,11 +472,11 @@ watch(sheetId, () => {
                   {{ c.display_name }}
                 </el-tag>
               </template>
-              <span v-else style="color: #aaa;">—</span>
+              <span v-else class="pch-dash">—</span>
             </template>
             <template v-else>
               <span v-if="row.claimant_name">{{ row.claimant_name }}</span>
-              <span v-else style="color: #aaa;">—</span>
+              <span v-else class="pch-dash">—</span>
             </template>
           </template>
         </el-table-column>
@@ -489,18 +491,20 @@ watch(sheetId, () => {
         </el-table-column>
 
         <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 120">
+        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 168">
           <template #default="{ row }">
             <template v-if="row.mode === MODE_PROGRESS">
-              <span style="font-size: 12px;">{{ row.delivered_qty }}/{{ row.need_qty }}</span>
-              <el-progress
-                :percentage="row.need_qty > 0 ? Math.min(Math.round((row.delivered_qty / row.need_qty) * 100), 100) : 0"
-                :stroke-width="8"
-                :show-text="false"
-                style="margin-top: 2px;"
-              />
+              <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
+              <div class="pch-delivery">
+                <span class="pch-delivery__nums">
+                  <QtyValue :value="row.delivered_qty" />
+                  <span class="pch-delivery__sep">/</span>
+                  <QtyValue :value="row.need_qty" muted />
+                </span>
+                <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
+              </div>
             </template>
-            <span v-else style="color: #aaa;">—</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
 
@@ -563,7 +567,7 @@ watch(sheetId, () => {
                       size="small"
                     />
                     <div style="display: flex; gap: 8px; align-items: center;">
-                      <span style="font-size: 12px; color: #666;">倍数：</span>
+                      <span class="pch-note">倍数：</span>
                       <el-input-number
                         v-model="newSubRow[row.id].qty_per_unit"
                         :min="0.01"
@@ -580,7 +584,7 @@ watch(sheetId, () => {
                       <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
                     </el-select>
                     <div style="display: flex; gap: 8px; align-items: center;">
-                      <span style="font-size: 12px; color: #666;">排序：</span>
+                      <span class="pch-note">排序：</span>
                       <el-input-number
                         v-model="newSubRow[row.id].sort_order"
                         :min="0"
@@ -603,7 +607,7 @@ watch(sheetId, () => {
               <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
               <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
             </template>
-            <span v-else style="color: #aaa;">—</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -621,9 +625,9 @@ watch(sheetId, () => {
       <el-tabs v-else v-model="activeTab">
         <el-tab-pane label="材料清单" name="materials">
       <!-- 协管员列表（全员可见；授予/撤销仅 owner/超管，RS-1 精简：输入 UUID） -->
-      <div v-if="!isReadOnly" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: #666; font-size: 13px;">
+      <div v-if="!isReadOnly" class="pch-toolbar">
         <span>协管员：</span>
-        <span v-if="sheet.managers.length === 0" style="color: #aaa;">（无）</span>
+        <span v-if="sheet.managers.length === 0" class="pch-dash">（无）</span>
         <el-tag
           v-for="m in sheet.managers"
           :key="m.web_account_id"
@@ -646,7 +650,7 @@ watch(sheetId, () => {
             <template #default="{ item }">
               <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
                 <span>{{ item.display_name }}</span>
-                <span v-if="item.display_name !== item.player_name" style="color: #999; font-size: 12px;">{{ item.player_name }}</span>
+                <span v-if="item.display_name !== item.player_name" class="pch-note">{{ item.player_name }}</span>
               </div>
             </template>
           </el-autocomplete>
@@ -696,8 +700,8 @@ watch(sheetId, () => {
               maxlength="128"
               size="small"
             />
-            <span v-else-if="row.registry_id" style="color: #999; font-size: 12px;">{{ row.registry_id }}</span>
-            <span v-else style="color: #ccc;">—</span>
+            <span v-else-if="row.registry_id" class="pch-note">{{ row.registry_id }}</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
 
@@ -729,13 +733,14 @@ watch(sheetId, () => {
               />
               <span v-else>{{ row.qty_per_unit }}</span>
             </template>
-            <span v-else style="color: #ccc;">—</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="换算" :width="columnWidths['换算'] ?? 80">
+        <!-- 换算列：库存记数排版（盒/组/个精确分段，等宽对齐），非 formatQty 的单一近似量级 -->
+        <el-table-column label="换算" :width="columnWidths['换算'] ?? 108" class-name="pch-num-col">
           <template #default="{ row }">
-            {{ formatQty(row.need_qty) }}
+            <QtyValue :value="row.need_qty" />
           </template>
         </el-table-column>
 
@@ -768,11 +773,11 @@ watch(sheetId, () => {
                   {{ c.display_name }}
                 </el-tag>
               </template>
-              <span v-else style="color: #aaa;">—</span>
+              <span v-else class="pch-dash">—</span>
             </template>
             <template v-else>
               <span v-if="row.claimant_name">{{ row.claimant_name }}</span>
-              <span v-else style="color: #aaa;">—</span>
+              <span v-else class="pch-dash">—</span>
             </template>
           </template>
         </el-table-column>
@@ -787,18 +792,20 @@ watch(sheetId, () => {
         </el-table-column>
 
         <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 120">
+        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 168">
           <template #default="{ row }">
             <template v-if="row.mode === MODE_PROGRESS">
-              <span style="font-size: 12px;">{{ row.delivered_qty }}/{{ row.need_qty }}</span>
-              <el-progress
-                :percentage="row.need_qty > 0 ? Math.min(Math.round((row.delivered_qty / row.need_qty) * 100), 100) : 0"
-                :stroke-width="8"
-                :show-text="false"
-                style="margin-top: 2px;"
-              />
+              <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
+              <div class="pch-delivery">
+                <span class="pch-delivery__nums">
+                  <QtyValue :value="row.delivered_qty" />
+                  <span class="pch-delivery__sep">/</span>
+                  <QtyValue :value="row.need_qty" muted />
+                </span>
+                <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
+              </div>
             </template>
-            <span v-else style="color: #aaa;">—</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
 
@@ -861,7 +868,7 @@ watch(sheetId, () => {
                       size="small"
                     />
                     <div style="display: flex; gap: 8px; align-items: center;">
-                      <span style="font-size: 12px; color: #666;">倍数：</span>
+                      <span class="pch-note">倍数：</span>
                       <el-input-number
                         v-model="newSubRow[row.id].qty_per_unit"
                         :min="0.01"
@@ -878,7 +885,7 @@ watch(sheetId, () => {
                       <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
                     </el-select>
                     <div style="display: flex; gap: 8px; align-items: center;">
-                      <span style="font-size: 12px; color: #666;">排序：</span>
+                      <span class="pch-note">排序：</span>
                       <el-input-number
                         v-model="newSubRow[row.id].sort_order"
                         :min="0"
@@ -901,7 +908,7 @@ watch(sheetId, () => {
               <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
               <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
             </template>
-            <span v-else style="color: #aaa;">—</span>
+            <span v-else class="pch-dash">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -936,5 +943,24 @@ watch(sheetId, () => {
 :deep(.tree-name-col .cell .el-input) {
   flex: 1;
   min-width: 0;
+}
+
+/* 交付进度单元：记数行 + 刻度条两行 */
+.pch-delivery {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pch-delivery__nums {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: var(--pch-text-xs);
+}
+
+.pch-delivery__sep {
+  color: var(--pch-text-muted);
+  opacity: 0.6;
 }
 </style>

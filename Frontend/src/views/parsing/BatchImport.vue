@@ -205,7 +205,7 @@ function onGenerate(): void {
             {{ formatQty(file.preview.meta.total_blocks) }}<span style="color: #bbb;">（{{ file.preview.meta.total_blocks }}）</span>
           </span>
           <template v-if="file.status === 'ok'">
-            <span style="font-size: 12px; color: #666; margin-left: 8px;">建造份数（倍数）</span>
+            <span class="pch-note pch-inline-gap">建造份数（倍数）</span>
             <el-input-number
               v-model="multipliers[idx]"
               :min="1"
@@ -229,7 +229,7 @@ function onGenerate(): void {
         <el-table :data="perFileBlocks[idx]" border size="small" :max-height="TABLE_MAX_HEIGHT" style="margin-bottom: 8px;">
           <el-table-column label="方块" min-width="200">
             <template #default="{ row }">
-              <span style="color: #999; font-size: 12px;">{{ row.item_id }}</span>
+              <span class="pch-note">{{ row.item_id }}</span>
               <span style="margin-left: 6px;">{{ row.item_name }}</span>
             </template>
           </el-table-column>
@@ -251,7 +251,7 @@ function onGenerate(): void {
         >
           <el-table-column label="容器物品" min-width="200">
             <template #default="{ row }">
-              <span style="color: #999; font-size: 12px;">{{ row.item_id }}</span>
+              <span class="pch-note">{{ row.item_id }}</span>
               <span style="margin-left: 6px;">{{ row.item_name }}</span>
             </template>
           </el-table-column>
@@ -289,7 +289,7 @@ function onGenerate(): void {
       <el-table v-else :data="aggregated" border :max-height="TABLE_MAX_HEIGHT">
         <el-table-column label="registry id" width="220">
           <template #default="{ row }">
-            <span style="color: #999; font-size: 12px;">{{ row.item_id }}</span>
+            <span class="pch-note">{{ row.item_id }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="item_name" label="中文名" min-width="160" />

@@ -10,6 +10,8 @@ import type { PieSeriesOption } from 'echarts/charts'
 import type { TooltipComponentOption, LegendComponentOption } from 'echarts/components'
 import type { ProgressAccountTotal } from '../../api/construction'
 import { formatQty } from '../../utils/qty'
+import { useChartTheme } from '../../composables/useChartTheme'
+import { useTheme } from '../../composables/useTheme'
 
 // 按需注册（模块级，只跑一次）
 use([CanvasRenderer, PieChart, TooltipComponent, LegendComponent])
@@ -40,7 +42,9 @@ const isEmpty = computed(
 )
 
 // 「未完成」扇区用灰色区分（账号贡献用 echarts 默认配色）
-const REMAINING_COLOR = '#e5e5e5'
+// 「未完成」扇区：中性灰，随主题切换（原 #e5e5e5 在深板岩底上是一块亮斑）
+const REMAINING_COLOR_DARK = '#273449'
+const REMAINING_COLOR_LIGHT = '#E2E8F0'
 
 interface PieData {
   name: string
@@ -48,8 +52,17 @@ interface PieData {
   itemStyle?: { color: string }
 }
 
+const theme = useChartTheme()
+const { appearance } = useTheme()
+const remainingColor = computed(() =>
+  appearance.value === 'dark' ? REMAINING_COLOR_DARK : REMAINING_COLOR_LIGHT,
+)
+
 const option = computed<Option>(() => ({
+  color: [...theme.value.palette],
+  textStyle: theme.value.textStyle,
   tooltip: {
+    ...theme.value.tooltip,
     trigger: 'item',
     formatter: (params: unknown) => {
       const p = (params ?? {}) as {
@@ -61,13 +74,21 @@ const option = computed<Option>(() => ({
       return `${p.name ?? ''}: ${formatQty(p.value ?? 0)}（${pct}%）`
     },
   },
-  legend: { type: 'scroll', orient: 'vertical', left: 'left', top: 'middle' },
+  legend: {
+    ...theme.value.legend,
+    type: 'scroll',
+    orient: 'vertical',
+    left: 'left',
+    top: 'middle',
+  },
   series: [
     {
       type: 'pie',
       radius: ['40%', '70%'],
       center: ['60%', '50%'],
       avoidLabelOverlap: true,
+      // 扇区间用面板色描边，形成切口感（像素语汇：块与块之间有缝）
+      itemStyle: { borderColor: theme.value.panel, borderWidth: 2 },
       data: [
         ...positive.value.map<PieData>((t) => ({
           name: t.display_name,
@@ -78,12 +99,12 @@ const option = computed<Option>(() => ({
               {
                 name: '未完成',
                 value: remaining.value,
-                itemStyle: { color: REMAINING_COLOR },
+                itemStyle: { color: remainingColor.value },
               },
             ]
           : []),
       ],
-      label: { show: true, formatter: '{b}: {d}%' },
+      label: { show: true, formatter: '{b}: {d}%', color: theme.value.textStyle.color as string },
     },
   ],
 }))
