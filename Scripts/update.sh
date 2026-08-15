@@ -30,6 +30,7 @@ FORCE=0
 FORCE_FRONTEND=0
 NO_MCDR=0
 NO_SYNC=0
+UPGRADE_PLUGINS=0
 MCDR_ROOT_OVERRIDE=""
 STRATEGY_OVERRIDE=""
 
@@ -45,6 +46,7 @@ PCHSystem update.sh —— 一键更新
   --force                接管非脚本安装的部署 / 跳过本地改动保护
   --frontend             强制重建前端（即使无 Frontend/ 变更）
   --no-mcdr              跳过 MCDR 插件增量更新
+  --upgrade-plugins      经 MCDR pim 升级依赖插件（latest + Python 依赖 + 提示 reload）
   --no-sync              跳过远端拉取（用当前工作树，不 fetch / 不 checkout；开发/测试用）
   --mcdr-root DIR        覆盖部署配置里的 MCDR 根目录
   -h, --help             显示本帮助
@@ -59,6 +61,7 @@ parse_args() {
             --force) FORCE=1; shift ;;
             --frontend) FORCE_FRONTEND=1; shift ;;
             --no-mcdr) NO_MCDR=1; shift ;;
+            --upgrade-plugins) UPGRADE_PLUGINS=1; shift ;;
             --no-sync) NO_SYNC=1; shift ;;
             --mcdr-root) MCDR_ROOT_OVERRIDE=$2; shift 2 ;;
             -h|--help) usage; exit 0 ;;
@@ -376,6 +379,56 @@ ensure_env_keys_update() {
 }
 
 # ---------- main ----------
+upgrade_dep_plugins() {
+    # 经 MCDR 原生 pim 升级 pch_system 的依赖插件（--upgrade-plugins）：
+    # 临时目录下载 latest → 文件名比对（资产名内嵌版本）→ 删旧换新 → pipi 装 Python 依赖
+    [[ $NO_MCDR -eq 1 ]] && { log_info "跳过依赖插件升级（--no-mcdr）"; return 0; }
+    local mcdr_root; mcdr_root="${MCDR_ROOT_OVERRIDE:-$(cfg_get PCH_MCDR_ROOT)}"
+    [[ -n "$mcdr_root" ]] || { log_info "未配置 MCDR 根目录，跳过依赖插件升级"; return 0; }
+    local plugins_dir="$mcdr_root/plugins"
+    [[ -d "$plugins_dir" ]] || { log_warn "MCDR 根目录无效: ${mcdr_root}（跳过依赖插件升级）"; return 0; }
+
+    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
+    local tmp; tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' RETURN
+
+    log_step "升级 MCDR 依赖插件（pim latest）"
+    "$pim_cmd" pim download $(mcdr_dep_plugin_ids) -o "$tmp" \
+        || { log_error "pim download 失败（网络 / 插件目录不可达？）"; return 1; }
+    # pim 对部分失败静默 exit 0（如目录无效 / 网络断），退出码拦不住，须校验产物存在
+    local -a downloaded=("$tmp"/*)
+    if (( ${#downloaded[@]} == 0 )) || [[ ! -e "${downloaded[0]}" ]]; then
+        log_error "pim download 未产出任何文件（pim 部分失败静默 exit 0，详见上方输出）"
+        return 1
+    fi
+
+    local -a changed=()
+    local f base id old
+    for f in "$tmp"/*; do
+        [[ -e "$f" ]] || continue
+        base=$(basename "$f")
+        if [[ -e "$plugins_dir/$base" ]]; then
+            log_info "已最新: $base"
+            continue
+        fi
+        id=$(mcdr_plugin_id_of "$base") || { log_warn "跳过非依赖插件文件: $base"; continue; }
+        # 先删同插件旧文件再换入，防同 id 双 .mcdr 加载冲突
+        for old in "$plugins_dir"/*; do
+            [[ -e "$old" ]] || continue
+            if mcdr_file_matches_plugin "$(basename "$old")" "$id"; then
+                log_info "移除旧版: $(basename "$old")"
+                rm -f "$old"
+            fi
+        done
+        mv "$f" "$plugins_dir/$base"
+        changed+=("$plugins_dir/$base")
+    done
+
+    ((${#changed[@]})) || { log_info "依赖插件均为最新，无需变更"; return 0; }
+    mcdr_pim_pipi "${changed[@]}" || { log_error "pim pipi 失败"; return 1; }
+    log_info "已升级: ${changed[*]}（游戏内执行 !!MCDR reload plugin 生效）"
+}
+
 main() {
     parse_args "$@"
     check_compose
@@ -388,6 +441,7 @@ main() {
     run_migrations
     update_frontend
     update_mcdr
+    [[ $UPGRADE_PLUGINS -eq 1 ]] && upgrade_dep_plugins
     verify_and_summary
 }
 

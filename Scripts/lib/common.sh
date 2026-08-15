@@ -597,6 +597,75 @@ detect_mcdr_topology() {
 }
 
 # ============================================================
+# MCDR 依赖插件（pch_system dependencies）· pim 原生安装
+# ============================================================
+# pch_system 依赖的 MCDR 插件 id 清单（与 McdrPlugin/mcdreforged.plugin.json dependencies 对应）
+mcdr_dep_plugin_ids() { echo 'chest_scanner_lib uuid_api_remake minecraft_data_api'; }
+
+# 插件 id → 空格分隔的文件名 glob 列表（各插件 .mcdr 资产命名不同）。
+# 注意：bash case 的 | 交替只对字面量模式生效，变量展开出的 | 是普通字符（永不匹配），
+# 故拆成多个单 glob，由 mcdr_file_matches_plugin 逐个 [[ == ]] 匹配。
+mcdr_dep_plugin_patterns() {
+    case "$1" in
+        chest_scanner_lib)  echo '*chest_scanner_lib*' ;;
+        uuid_api_remake)    echo '*uuid_api_remake*' ;;
+        minecraft_data_api) echo '*MinecraftDataAPI* *minecraft_data_api*' ;;
+        *) return 1 ;;
+    esac
+}
+
+# 文件名是否匹配指定依赖插件（$1=文件名 basename, $2=插件 id）
+mcdr_file_matches_plugin() {
+    local pat
+    for pat in $(mcdr_dep_plugin_patterns "$2"); do
+        # [[ ]] 内右侧裸变量按 pattern 匹配，且不做路径名展开（无 glob 副作用）
+        [[ "$1" == $pat ]] && return 0
+    done
+    return 1
+}
+
+# plugins 目录中是否已装指定依赖插件（$1=plugins 目录, $2=插件 id）
+mcdr_dep_plugin_installed() {
+    local f
+    for f in "$1"/*; do
+        [[ -e "$f" ]] || continue
+        mcdr_file_matches_plugin "$(basename "$f")" "$2" && return 0
+    done
+    return 1
+}
+
+# 文件名 → 依赖插件 id 反查（$1=文件名 basename）；非依赖插件文件返回 1
+mcdr_plugin_id_of() {
+    local id
+    for id in $(mcdr_dep_plugin_ids); do
+        mcdr_file_matches_plugin "$1" "$id" && { echo "$id"; return 0; }
+    done
+    return 1
+}
+
+# 定位 MCDR 原生 pim CLI（mcdreforged 主名，mcdr 别名兜底）
+mcdr_pim_cmd() {
+    command -v mcdreforged >/dev/null 2>&1 && { echo mcdreforged; return 0; }
+    command -v mcdr >/dev/null 2>&1 && { echo mcdr; return 0; }
+    return 1
+}
+
+# pim CLI 缺失时的手动安装指引（安装环境必有 MCDR，通常只是 PATH / venv 未激活）
+mcdr_pim_missing() {
+    log_error "未找到 mcdreforged CLI（MCDR 应已安装；检查 PATH / venv 激活）"
+    log_info "手动安装: mcdreforged pim download <插件id...> -o <plugins 目录>"
+    log_info "          mcdreforged pim pipi <下载的 .mcdr 文件>"
+}
+
+# pim pipi 包装：透传 PIP_INDEX_URL（国内 pip 镜像，与 compose_build 同约定）
+mcdr_pim_pipi() {
+    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
+    local -a args=("$@")
+    [[ -n "${PIP_INDEX_URL:-}" ]] && args+=(-a "-i ${PIP_INDEX_URL}")
+    "$pim_cmd" pim pipi "${args[@]}"
+}
+
+# ============================================================
 # compose build 封装（透传代理给 build，助 CJK 字体 wget）
 # ============================================================
 # compose_build <service>：自动透传 HTTP(S)_PROXY 与 PIP_INDEX_URL build-arg
