@@ -17,6 +17,12 @@
 
 - _暂无_
 
+### Changed
+
+- **McdrPlugin**：箱子扫描实现剥离为外部插件 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner)（`>=1.0.1`，官方插件目录收录）——`!!submitc` / `!!PCH sheet submitchest` 改经 `get_plugin_instance` 调用外部库（RCON 读箱 + 准星检测 + SNBT 解析 + **双联合并**），删除内嵌 `chest_scanner.py`；`requirements.txt` 移除 `hjson`。
+- **Scripts**：依赖插件安装改走 MCDR 原生 `pim` CLI——install.sh 检测缺失自动安装（`pim download` + `pim pipi` 装 Python 依赖，交互确认）；update.sh 新增 `--upgrade-plugins` 升级依赖插件（latest + 换文件防同 id 双载）。
+- **TestServer**：构建期改用 `pim download` + `pipi` 安装三依赖插件（版本随 latest），移除提交进 git 的两个 .mcdr 二进制与手写 pip 依赖。
+
 ### Fixed
 
 - _暂无_
