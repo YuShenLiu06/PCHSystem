@@ -35,19 +35,26 @@ declare -gA DEPLOY_CONFIG=()  # 部署配置内存映像（load_deploy_config �
 # shellcheck disable=SC2034  # 跨文件全局，install.sh 末尾读取
 RELOGIN_REQUIRED=0         # 装 docker 加组后是否需要重新登录
 
-# ---------- 常量 ----------
-PCH_REPO_URL="https://github.com/YuShenLiu06/PCHSystem.git"
+# ---------- 常量（env 可覆盖，便于 fork / 沙盒 / 离线测试）----------
+PCH_REPO_URL="${PCH_REPO_URL:-https://github.com/YuShenLiu06/PCHSystem.git}"
 PCH_DEFAULT_BRANCH="main"
+# Gitee 自动同步镜像（bootstrap.sh / bootstrap.ps1 的 clone 候选链第二名；
+# 仅用于首次 clone 的独立 URL，不参与 git insteadOf 前缀重写）
+PCH_GITEE_URL="${PCH_GITEE_URL:-https://gitee.com/yushenliu03/PCHSystem.git}"
 
 # GitHub 镜像候选：<rewrite-prefix>|<insteadOf>
 # pick_github_mirror 用 git insteadOf 重写，返回命中的 entry（或空串=直连）
-PCH_GH_MIRRORS=(
-    "https://ghfast.top/https://github.com|https://github.com"       # ghfast 
-    "https://ghproxy.com/https://github.com|https://github.com"      # ghproxy
-    "https://kkgithub.com|https://github.com"                        # kkgithub 
-    "https://gitclone.com/github.com|https://github.com"             # gitclone
-    "https://gh.zwy.one/https://github.com|https://github.com"       # gh.zwy.one
-)
+# gitclone.com 已于 2024 年停服，移除。可用 env PCH_GH_MIRRORS 覆盖（空格分隔，entry 内含 | 无空格，安全）
+if [[ -n "${PCH_GH_MIRRORS:-}" ]]; then
+    read -ra PCH_GH_MIRRORS <<<"$PCH_GH_MIRRORS"
+else
+    PCH_GH_MIRRORS=(
+        "https://ghfast.top/https://github.com|https://github.com"       # ghfast
+        "https://ghproxy.com/https://github.com|https://github.com"      # ghproxy
+        "https://kkgithub.com|https://github.com"                        # kkgithub
+        "https://gh.zwy.one/https://github.com|https://github.com"       # gh.zwy.one
+    )
+fi
 
 PCH_DOCKER_MIRRORS=(
     "https://docker.nju.edu.cn"        # 南京大学
@@ -96,7 +103,10 @@ as_root() {
 assert_root_or_sudo() {
     if [[ $EUID -eq 0 ]]; then return 0; fi
     if sudo -n true 2>/dev/null; then return 0; fi
-    die "此操作需要 root 权限或免密 sudo，请用 root 运行或配置 sudoers 后重试。"
+    # 交互式提权：输一次密码（时间戳 5-15min，覆盖后续 as_root 的 sudo 调用）。
+    # 仅在有 tty 时尝试——管道/CI 下 sudo -v 会挂死等输入，保持 die。
+    if [[ -t 0 ]] && sudo -v; then return 0; fi
+    die "此操作需要 root 权限或 sudo（可交互输密码），请用 root 运行或配置 sudoers 后重试。"
 }
 
 require_cmd() {
@@ -104,9 +114,10 @@ require_cmd() {
 }
 
 detect_os() {
-    # stdout: macos | debian | rhel | alpine | arch | unknown
-    # macOS 无 /etc/os-release，按平台探测短路返回。
+    # stdout: macos | windows | debian | rhel | alpine | arch | unknown
+    # macOS/windows(Git Bash) 无 /etc/os-release，按平台探测短路返回。
     if [[ "$PCH_OS" == "macos" ]]; then echo "macos"; return 0; fi
+    if [[ "$PCH_OS" == "windows" ]]; then echo "windows"; return 0; fi
     local id="" id_like=""
     if [[ -f /etc/os-release ]]; then
         # shellcheck disable=SC1091
@@ -156,13 +167,16 @@ ensure_docker() {
         [[ -n "$COMPOSE" ]] && return 0
         die "docker-compose-plugin 安装失败，请手动安装"
     fi
-    # 1.5) macOS：docker 命令在但 info 失败（Docker Desktop 未启动），或 docker 缺失
-    #      → 不调 get.docker.com（不支持 mac），直接指引装/启动 Docker Desktop。
-    if [[ "$PCH_OS" == "macos" ]]; then
+    # 1.5) macOS / windows：docker 命令在但 info 失败（Docker Desktop 未启动），或 docker 缺失
+    #      → 不调 get.docker.com（不支持 mac/windows），直接指引装/启动 Docker Desktop。
+    #      windows 的引导安装由 bootstrap.ps1（winget）负责，bash 侧只检测-指引。
+    if [[ "$PCH_OS" == "macos" || "$PCH_OS" == "windows" ]]; then
         if command -v docker >/dev/null 2>&1; then
-            die "检测到 docker 命令但 'docker info' 失败。macOS 上请启动 Docker Desktop 后重跑本脚本。"
+            die "检测到 docker 命令但 'docker info' 失败。请启动 Docker Desktop 后重跑本脚本。"
         fi
-        die "macOS 未检测到 docker。请安装并启动 Docker Desktop：https://www.docker.com/products/docker-desktop/ ，启动后重跑本脚本。"
+        local hint="https://www.docker.com/products/docker-desktop/"
+        [[ "$PCH_OS" == "windows" ]] && hint="${hint} （或 winget install -e --id Docker.DockerDesktop）"
+        die "${PCH_OS} 未检测到 docker。请安装并启动 Docker Desktop：${hint} ，启动后重跑本脚本。"
     fi
     # 2) docker 缺失 → 安装（仅 Linux 走此路径）
     install_docker
@@ -171,7 +185,8 @@ ensure_docker() {
 }
 
 install_docker() {
-    [[ "$PCH_OS" == "macos" ]] && die "install_docker 不支持 macOS，请手动安装 Docker Desktop。"
+    [[ "$PCH_OS" == "macos" || "$PCH_OS" == "windows" ]] \
+        && die "install_docker 不支持 macOS/Windows，请手动安装 Docker Desktop。"
     log_step "安装 Docker"
     assert_root_or_sudo
     local os; os=$(detect_os)
@@ -199,7 +214,8 @@ _ensure_curl() {
 }
 
 _install_docker_native() {
-    [[ "$PCH_OS" == "macos" ]] && die "_install_docker_native 不支持 macOS。"
+    [[ "$PCH_OS" == "macos" || "$PCH_OS" == "windows" ]] \
+        && die "_install_docker_native 不支持 macOS/Windows。"
     local os=$1
     case "$os" in
         debian) as_root apt-get update -y && as_root apt-get install -y docker.io docker-compose-plugin ;;
@@ -222,8 +238,9 @@ _install_compose_plugin() {
 }
 
 _post_install_docker() {
-    # macOS：Docker Desktop 自管理（无 systemctl / usermod / getent），整体跳过。
-    [[ "$PCH_OS" == "macos" ]] && { log_info "macOS: Docker Desktop 自管理，跳过 systemd 配置"; return 0; }
+    # macOS/windows：Docker Desktop 自管理（无 systemctl / usermod / getent），整体跳过。
+    [[ "$PCH_OS" == "macos" || "$PCH_OS" == "windows" ]] \
+        && { log_info "${PCH_OS}: Docker Desktop 自管理，跳过 systemd 配置"; return 0; }
     # 启动 docker 服务
     as_root systemctl enable --now docker 2>/dev/null \
         || as_root service docker start 2>/dev/null \
@@ -298,9 +315,10 @@ gh_git() {
 
 # 配置 Docker registry 镜像加速（best-effort，失败不阻断）
 ensure_docker_registry_mirrors() {
-    # macOS：Docker Desktop 不读 /etc/docker/daemon.json（用 GUI Settings → Docker Engine）。
-    if [[ "$PCH_OS" == "macos" ]]; then
-        log_warn "macOS: Docker Desktop 用 GUI（Settings → Docker Engine）配 registry mirrors，脚本跳过自动配置。"
+    # macOS/windows：Docker Desktop 不读 /etc/docker/daemon.json（用 GUI Settings → Docker Engine），
+    # 也不自动写 %USERPROFILE%\.docker\daemon.json（与 GUI 配置耦合，保守跳过）。
+    if [[ "$PCH_OS" == "macos" || "$PCH_OS" == "windows" ]]; then
+        log_warn "${PCH_OS}: Docker Desktop 用 GUI（Settings → Docker Engine）配 registry mirrors，脚本跳过自动配置。"
         return 0
     fi
     if [[ $EUID -ne 0 ]] && ! sudo -n true 2>/dev/null; then
@@ -621,6 +639,20 @@ compose_build() {
     [[ -n "${PIP_INDEX_URL:-}" ]] && args+=(--build-arg "PIP_INDEX_URL=$PIP_INDEX_URL")
     args+=("$service")
     dcc "${args[@]}"
+}
+
+# ============================================================
+# .env 读字段（install.sh / update.sh 共用，原两处重复定义收敛于此）
+# ============================================================
+# env_get <key>：读仓库根 .env 的键值。
+# 键缺失 / .env 缺失 / 键名非法 → 返回空串且退出码 0（非错误，调用方用 ${var:-default} / [[ -n ]] 判空）。
+# 键名白名单校验（防正则注入）：仅认 ^[A-Za-z_][A-Za-z0-9_]*$。
+# 末尾 || true：grep 无匹配返回 1，在 set -o pipefail 下会令 env_get 非零，
+# 使裸赋值 var=$(env_get K) 在 set -e 下静默退出（a022d73 同类 2>/dev/null 吞错反模式）。
+env_get() {
+    local key=$1
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
+    grep -E "^$key=" .env 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
 # ============================================================

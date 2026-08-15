@@ -40,6 +40,7 @@ usage() {
 PCHSystem install.sh —— 一键首次安装
 
 用法: bash Scripts/install.sh [选项]
+（无需先 clone 的一行安装：bash <(curl -fsSL https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh)，见 Scripts/README.md §1）
 
 选项:
   --edge                 拉 main 最新提交（默认拉最新发版 tag）
@@ -75,14 +76,6 @@ parse_args() {
     done
 }
 
-# .env 读字段（仅本仓库根 .env）
-# 键缺失 / .env 缺失 → 返回空串且退出码 0（非错误，调用方用 ${var:-default} / [[ -n ]] 判空，不依赖退出码）。
-# 末尾 || true：grep 无匹配返回 1，在 set -o pipefail 下会令 env_get 非零，
-# 使裸赋值 var=$(env_get K) 在 set -e 下静默退出（a022d73 同类 2>/dev/null 吞错反模式）。
-env_get() {
-    grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true
-}
-
 # ---------- 步骤 ----------
 check_in_repo() {
     is_in_git_repo || {
@@ -91,16 +84,19 @@ check_in_repo() {
   git clone ${PCH_REPO_URL}
   cd PCHSystem
   bash Scripts/install.sh
-（若 GitHub 直连不通，见 Scripts/README.md 的镜像 clone 命令）
+（或一行安装，无需先 clone：bash <(curl -fsSL https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh)，见 Scripts/README.md §1）
 EOF
         die "需在仓库内执行"
     }
+    # 仓库身份校验：防 bootstrap 误复用任意 git 仓库目录。只认标志文件，不认 remote URL（fork 友好）。
+    [[ -f Scripts/install.sh && -f docker-compose.yml ]] \
+        || die "当前 git 仓库不像 PCHSystem（缺 Scripts/install.sh 或 docker-compose.yml），请检查 clone 是否完整"
 }
 
 setup_mirrors() {
     local entry; entry=$(pick_github_mirror)
     GH_MIRROR_ENTRY=$entry
-    # PyPI 加速（build-arg 透传；当前 Dockerfile 未消费，留作未来兼容，无害）
+    # PyPI 加速（build-arg 透传，由 Backend/Dockerfile 的 ARG PIP_INDEX_URL 消费）
     export PIP_INDEX_URL="${PIP_INDEX_URL:-$PIP_INDEX_URL_TUNA}"
     # Docker registry 镜像加速（best-effort，失败不阻断）
     run_step --on-fail warn "配置 Docker registry 加速" ensure_docker_registry_mirrors
@@ -310,11 +306,11 @@ deploy_mcdr_plugin() {
     # 旧版插件 id 为 htcmc_auth → 先迁移（搬 config + 删旧目录，避免与新 pch_system 双注册 !!PCH）
     migrate_legacy_plugin_name "$mcdr_root"
 
-    # 拷贝插件（install 用 --delete 清旧残留）
+    # 拷贝插件（install 用 --delete 清旧残留；排除 .venv/.DS_Store——开发机源仓可能带，勿灌进 MCDR）
     if command -v rsync >/dev/null 2>&1; then
         rsync -a --delete \
             --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' --exclude='.pytest_cache' \
-            --exclude='CLAUDE.md' --exclude='docs' \
+            --exclude='CLAUDE.md' --exclude='docs' --exclude='.venv' --exclude='.DS_Store' \
             McdrPlugin/ "$mcdr_root/plugins/pch_system/"
     else
         rm -rf "$mcdr_root/plugins/pch_system"
@@ -322,8 +318,10 @@ deploy_mcdr_plugin() {
         find "$mcdr_root/plugins/pch_system" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
         find "$mcdr_root/plugins/pch_system" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
         find "$mcdr_root/plugins/pch_system" -type d -name docs -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$mcdr_root/plugins/pch_system" -type d -name .venv -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$mcdr_root/plugins/pch_system" -type f -name .DS_Store -delete 2>/dev/null || true
         rm -f "$mcdr_root/plugins/pch_system/CLAUDE.md" 2>/dev/null || true
-        log_warn "无 rsync，已用 cp -r（可能残留 __pycache__）"
+        log_warn "无 rsync，已用 cp -r + find 清理（可能残留其他无关文件）"
     fi
     log_info "插件已拷贝: $mcdr_root/plugins/pch_system/"
 
@@ -347,12 +345,18 @@ deploy_mcdr_plugin() {
                 '. + {api_url:$api, service_token:$tok}' \
                 McdrPlugin/config.json.example > "$cfg"
         else
-            python3 -c "
+            local py=""
+            py=$(find_python3) || true
+            [[ -n "$py" ]] || die "无 jq 且未找到可用 python（Windows 注意：python3 可能是 Microsoft Store 占位符）。请装其一：https://jqlang.github.io/jq/download/ 或 https://www.python.org/downloads/"
+            # 路径经 argv 传递（Windows 反斜杠路径内嵌进 python 源码串会转义出错）
+            # shellcheck disable=SC2086  # "py -3" 需按词拆分
+            $py -c "
 import json,sys
-d=json.load(open('McdrPlugin/config.json.example'))
-d['api_url']=sys.argv[1]; d['service_token']=sys.argv[2]
-json.dump(d,open('$cfg','w'),ensure_ascii=False,indent=2)
-" "$api_url" "$svc_token"
+src, dst, api, tok = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+d = json.load(open(src))
+d['api_url'] = api; d['service_token'] = tok
+json.dump(d, open(dst, 'w'), ensure_ascii=False, indent=2)
+" McdrPlugin/config.json.example "$cfg" "$api_url" "$svc_token"
         fi
         log_info "config.json 已生成: ${cfg}（api_url=${api_url}）"
     fi

@@ -67,10 +67,6 @@ parse_args() {
     done
 }
 
-# .env 读字段（键缺失 / .env 缺失 → 空串 + 退出码 0；调用方用 ${var:-default} / [[ -n ]] 判空）。
-# 末尾 || true 防 grep 无匹配在 pipefail 下令 env_get 非零 → 裸赋值 set -e 静默退出（a022d73 同类）。
-env_get() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
-
 # ---------- 步骤 ----------
 check_managed() {
     load_deploy_config
@@ -291,13 +287,16 @@ update_mcdr() {
         if command -v rsync >/dev/null 2>&1; then
             rsync -a \
                 --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' --exclude='.pytest_cache' \
-                --exclude='CLAUDE.md' --exclude='docs' \
+                --exclude='CLAUDE.md' --exclude='docs' --exclude='.venv' --exclude='.DS_Store' \
                 McdrPlugin/ "$mcdr_root/plugins/pch_system/"
         else
-            cp -r McdrPlugin/* "$mcdr_root/plugins/pch_system/" 2>/dev/null || true
+            # `McdrPlugin/.` 连隐藏文件一起拷（`*` glob 不含点开头文件）；.venv/.DS_Store 随后清理
+            cp -r McdrPlugin/. "$mcdr_root/plugins/pch_system/" 2>/dev/null || true
             find "$mcdr_root/plugins/pch_system" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
             find "$mcdr_root/plugins/pch_system" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
             find "$mcdr_root/plugins/pch_system" -type d -name docs -prune -exec rm -rf {} + 2>/dev/null || true
+            find "$mcdr_root/plugins/pch_system" -type d -name .venv -prune -exec rm -rf {} + 2>/dev/null || true
+            find "$mcdr_root/plugins/pch_system" -type f -name .DS_Store -delete 2>/dev/null || true
             rm -f "$mcdr_root/plugins/pch_system/CLAUDE.md" 2>/dev/null || true
         fi
         log_info "插件已增量同步: $mcdr_root/plugins/pch_system/"
@@ -317,7 +316,13 @@ update_mcdr() {
     if [[ -n "$env_tok" && -f "$cfg_path" ]]; then
         cfg_tok=$(jq -r .service_token "$cfg_path" 2>/dev/null || echo "")
         if [[ -z "$cfg_tok" ]]; then
-            cfg_tok=$(python3 -c "import json;print(json.load(open('$cfg_path')).get('service_token',''))" 2>/dev/null || echo "")
+            # find_python3：py -3 → python → python3（实跑验证，防 Windows Store 占位符）
+            local py=""
+            py=$(find_python3) || true
+            if [[ -n "$py" ]]; then
+                # shellcheck disable=SC2086
+                cfg_tok=$($py -c "import json,sys;print(json.load(open(sys.argv[1])).get('service_token',''))" "$cfg_path" 2>/dev/null || echo "")
+            fi
         fi
         if [[ -n "$cfg_tok" && "$env_tok" != "$cfg_tok" ]]; then
             log_warn "token 不一致：.env MCDR_SERVICE_TOKEN ≠ 插件 config.service_token。请手动同步（脚本不擅改你的 config）："
