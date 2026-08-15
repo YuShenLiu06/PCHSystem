@@ -19,7 +19,6 @@ from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.rtext import RText, RTextList, RColor, RAction
 
 from . import sheet_client, scanner
-from . import chest_scanner
 from .view_args import paginate_rows, parse_view_args
 from .config import PchSystemConfig
 from .qty import format_qty_safe
@@ -1582,7 +1581,7 @@ def _sheet_setreg(src, ctx):
 
 # === 箱子提交（issue #48）===
 
-# chest_scanner error_code → 消息常量映射
+# chest_scanner_lib error_code → 消息常量映射
 _CHEST_ERR_MSG = {
     "no_rcon": SHEET_SUBMIT_NO_RCON,
     "not_container": SHEET_SUBMIT_CHEST_NOT_CONTAINER,
@@ -1598,17 +1597,24 @@ _CHEST_ERR_MSG = {
 def _submitchest_impl(server, player_name, player_uuid, sheet_id, *, x=None, y=None, z=None):
     """箱子提交薄壳（issue #48）：读箱子 → POST /submit-batch → 渲染回执。
 
+    扫描实现由外部库插件 ``chest_scanner_lib`` 提供（YuShenLiu06/mcdr-chest-scanner，
+    ``mcdreforged.plugin.json`` dependencies 声明，运行时 ``get_plugin_instance`` 取用）。
+
     坐标模式（x/y/z 非 None）：直接读指定坐标。
-    准星模式（x/y/z 为 None）：射线检测玩家准星指向的首个容器。
+    准星模式（x/y/z 为 None）：射线检测玩家准星指向的首个容器（库内部自取 minecraft_data_api）。
 
     决策权威在后端 ``sheet_repo.batch_submit``；本端只读箱子 + 编排 items + 渲染 outcomes。
     纯申报语义（RS-3 衍生）：只读箱子 NBT，绝不 ``data merge`` 清空。
     """
+    lib = server.get_plugin_instance("chest_scanner_lib")
+    if lib is None:
+        # 理论不可达（dependencies 已声明，MCDR 加载期 DependencyWalker 校验）；防御性回执
+        server.tell(player_name, SHEET_SUBMIT_CHEST_FAIL.format(err="chest_scanner_lib 未加载"))
+        return
     if x is not None and y is not None and z is not None:
-        items, err = chest_scanner.scan_chest_rcon(server, int(x), int(y), int(z))
+        items, err = lib.scan_chest_rcon(server, int(x), int(y), int(z))
     else:
-        api = server.get_plugin_instance("minecraft_data_api")
-        items, err = chest_scanner.find_targeted_chest(api, server, player_name)
+        items, err = lib.find_targeted_chest(server, player_name)
 
     if err:
         msg_tpl = _CHEST_ERR_MSG.get(err, SHEET_SUBMIT_CHEST_FAIL)
