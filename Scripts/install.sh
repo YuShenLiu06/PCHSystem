@@ -380,13 +380,14 @@ save_state_and_summary() {
 
     echo
     log_info "====================================== 安装完成 ======================================"
-    log_info "后端健康:   curl http://127.0.0.1:8000/healthz   (期望 {\"status\":\"ok\"})"
+    local _bp; _bp=$(env_get BACKEND_PORT); _bp="${_bp:-8000}"
+    log_info "后端健康:   curl http://127.0.0.1:${_bp}/healthz   (期望 {\"status\":\"ok\"})"
     log_info "迁移版本:   $(dcc exec -T backend alembic current 2>/dev/null || echo unknown)"
     local web_port; web_port=$(env_get WEB_PORT); web_port=${web_port:-5173}
     if web_profile_active; then
         log_info "前端 Web:    http://<本机IP>:${web_port}（compose web 服务：托管 dist + 反代 /api 到 backend）"
     elif [[ -d Frontend/dist ]]; then
-        log_info "前端产物:   Frontend/dist/（web 未启用，自管 nginx 托管 + 反代 /api 到 :8000，见 Scripts/README.md §10）"
+        log_info "前端产物:   Frontend/dist/（web 未启用，自管 nginx 托管 + 反代 /api 到 :${_bp}，见 Scripts/README.md §10）"
     fi
     [[ -n "${MCDR_DEPLOYED_ROOT:-}" ]] && {
         log_info "插件已部署: ${MCDR_DEPLOYED_ROOT}/plugins/pch_system/"

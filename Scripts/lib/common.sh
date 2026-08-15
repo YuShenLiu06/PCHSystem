@@ -23,25 +23,11 @@ if (( BASH_VERSINFO[0] < 4 )); then
     exit 1
 fi
 
-# ---------- 平台探测 ----------
-# 被 ensure_docker / install_docker / ensure_docker_registry_mirrors 等的 macOS 分支使用。
-PCH_OS=""
-case "$(uname -s)" in
-    Linux)  PCH_OS="linux" ;;
-    Darwin) PCH_OS="macos" ;;
-    *)      PCH_OS="unknown" ;;
-esac
-
-# ---------- 跨平台命令探测 ----------
-# GNU timeout：macOS 无，装 coreutils 后 gtimeout 可用；都没有则降级为无超时直跑。
-if   command -v timeout  >/dev/null 2>&1; then TIMEOUT_CMD=(timeout)
-elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=(gtimeout)
-else                                          TIMEOUT_CMD=()
-fi
-# sed -i：GNU 用 `-i`，BSD/macOS 用 `-i ''`（空 backup 后缀）。
-if [[ "$PCH_OS" == "macos" ]]; then SED_I=(-i '')
-else                                SED_I=(-i)
-fi
+# ---------- 平台探测与跨平台工具 ----------
+# PCH_OS（linux/macos/windows[Git Bash]/unknown）、SED_I、TIMEOUT_CMD、
+# port_listening（三态）、listening_owner、find_python3 —— 拆分到 platform.sh。
+# shellcheck source=platform.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/platform.sh"
 
 # ---------- 全局状态 ----------
 COMPOSE=""                 # "docker compose"(v2) 或 "docker-compose"(v1)，由 detect_compose 设置
@@ -407,12 +393,15 @@ resolve_target_ref() {
 # 健康轮询
 # ============================================================
 # wait_healthy: 等待 compose 服务 Health=healthy（postgres 等有 healthcheck 的服务）
+# 用 `ps -q` + `docker inspect`（compose v1/v2 通吃；`ps --format json` 仅 v2 有，v1 下恒超时）
 wait_healthy() {
     local service=$1 timeout=${2:-120}
-    local elapsed=0
+    local elapsed=0 cid
     log_info "等待 $service 健康（超时 ${timeout}s）..."
     while (( elapsed < timeout )); do
-        if dcc ps --format json "$service" 2>/dev/null | grep -q '"Health":"healthy"'; then
+        cid=$(dcc ps -q "$service" 2>/dev/null || true)
+        if [[ -n "$cid" ]] \
+            && [[ "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || true)" == "healthy" ]]; then
             return 0
         fi
         sleep 3; elapsed=$((elapsed + 3))
@@ -583,14 +572,36 @@ run_step() {
 }
 
 # ============================================================
+# compose project 名推导
+# ============================================================
+# compose_project：推导当前仓库对应的 compose project 名，供 docker label 过滤定位本项目容器。
+# 勿硬编码 pchsystem：compose project 名默认=目录名小写，clone 目录不同名 / 沙盒（pchsandbox）
+# / 多实例共存全靠它区分——硬编码会在沙盒场景误操作生产容器。
+# 优先级：进程 env COMPOSE_PROJECT_NAME → .env 同名键 → 仓库目录 basename 小写
+# （与 compose 默认行为一致；极端目录名（空格/中文）下 compose 会再规范化 strip 非法字符，
+#  推导值匹配不到 label 时过滤结果为空=不误删，安全兜底）。
+compose_project() {
+    local p="${COMPOSE_PROJECT_NAME:-}"
+    if [[ -z "$p" && -f .env ]]; then
+        p=$(grep -E '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)
+    fi
+    if [[ -z "$p" ]]; then
+        p=$(basename "${PCH_REPO_DIR:-$(pwd)}")
+        p="${p,,}"
+    fi
+    printf '%s' "$p"
+}
+
+# ============================================================
 # MCDR 拓扑推断
 # ============================================================
 # detect_mcdr_topology <mcdr_root>: 按 MCDR 路径形态推断后端 api_url 默认值
 detect_mcdr_topology() {
     local root=$1
     if [[ "$root" == *"/var/lib/docker/volumes/"* || "$root" == *"/docker/volumes/"* ]]; then
-        # MCDR 数据在 docker named volume 挂载点 → 假设与 backend 同网络，用服务名
-        echo "http://pchsystem-backend-1:8000"
+        # MCDR 数据在 docker named volume 挂载点 → 假设与 backend 同网络，用 compose 服务名
+        #（服务名是网络的 DNS 别名，与 project 名/副本号无关，比容器名 pchsystem-backend-1 稳）
+        echo "http://backend:8000"
     else
         echo "http://127.0.0.1:8000"
     fi
@@ -628,10 +639,7 @@ web_profile_active() {
 # ============================================================
 # 重新安装：web 宿主端口冲突回收（绝不触碰 postgres / 数据卷）
 # ============================================================
-# port_listening <port>：宿主端口是否被监听（LISTEN）。ss 缺失/无权限→假（调用方兜底）。
-port_listening() {
-    ss -tlnp "sport = :$1" 2>/dev/null | grep -q 'LISTEN'
-}
+# port_listening（三态）/ listening_owner 见 lib/platform.sh。
 
 # _confirm_kill <prompt>：停掉端口占用者的显式确认。刻意不走 PCH_YES 自动 yes
 # （杀进程 / 删他人容器须亲眼确认，--yes 不代表可擅自停宿主服务）。
@@ -642,67 +650,95 @@ _confirm_kill() {
 }
 
 # reclaim_web_port <port>：web 容器宿主端口冲突回收（重新安装场景）。
-#   1) 本项目 pchsystem-web-1 残留（Created/Exited/失败）→ 自动 docker rm -f（安全，无需问）
-#   2) 仍被占 → 报告占用者（容器名 / 宿主进程 pid+comm）+ 询问是否停掉
-# 返回 0=已空闲/已清理；1=仍被占且用户拒绝。红线：只动 web 容器与明确占用者，
+#   1) 本项目 web 残留容器（Created/Exited/失败）→ 自动 docker rm -f（安全，无需问）
+#      ——按 compose project/service label 定位，不硬编码 pchsystem-web-1（clone 目录名不定）
+#   2) 仍被占 → 报告占用者（容器 / 宿主进程 pid+comm）+ 询问是否停掉
+# 返回 0=已空闲/已清理/可继续；1=仍被占且用户拒绝。红线：只动 web 容器与明确占用者，
 #                          绝不 docker compose down / down -v / rm volume / 碰 postgres。
 reclaim_web_port() {
     local port=$1
     [[ -n "$port" ]] || return 0
-    port_listening "$port" || return 0
+    local st=0
+    port_listening "$port" || st=$?
+    case $st in
+        1) return 0 ;;
+        2)
+            # 探测工具全缺：无法判断——不再误判"空闲"，跳过回收直接让 up -d 暴露真实错误
+            log_warn "无法检测宿主端口 $port 状态（缺 ss/netstat/lsof）→ 跳过自动回收，直接尝试启动（若冲突将给出指引）"
+            return 0
+            ;;
+    esac
     log_warn "宿主端口 $port 已被占用 → 排查占用者（web 容器需绑此端口）"
 
-    # 1) 本项目 pchsystem-web-1 残留（非 running）→ 自动清
-    local webc st
-    webc=$(docker ps -aq --filter 'name=^/pchsystem-web-1$' 2>/dev/null | head -1 || true)
+    # 1) 本项目 web 残留容器（非 running）→ 自动清
+    local proj webc cst
+    proj=$(compose_project)
+    webc=$(docker ps -aq --filter "label=com.docker.compose.project=${proj}" \
+                   --filter "label=com.docker.compose.service=web" 2>/dev/null | head -1 || true)
     if [[ -n "$webc" ]]; then
-        st=$(docker inspect -f '{{.State.Status}}' "$webc" 2>/dev/null || echo "")
-        if [[ "$st" != "running" ]]; then
-            log_info "  本项目残留 web 容器 pchsystem-web-1（状态=${st:-未知}）→ 自动移除"
+        cst=$(docker inspect -f '{{.State.Status}}' "$webc" 2>/dev/null || echo "")
+        if [[ "$cst" != "running" ]]; then
+            log_info "  本项目残留 web 容器 $(docker inspect -f '{{.Name}}' "$webc" 2>/dev/null || echo "$webc")（状态=${cst:-未知}）→ 自动移除"
             docker rm -f "$webc" >/dev/null 2>&1 || true
-            port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+            st=0; port_listening "$port" || st=$?
+            [[ $st -eq 1 ]] && { log_info "  端口 $port 已释放"; return 0; }
         fi
     fi
 
     # 2) 某 docker 容器占的？
-    local cname
+    local cname labels
     cname=$(docker ps -a --format '{{.Names}} {{.Ports}}' 2>/dev/null \
             | awk -v p=":$port->" 'index($0,p){print $1; exit}' || true)
     if [[ -n "$cname" ]]; then
         log_warn "  占用者：容器 $cname"
-        if [[ "$cname" == "pchsystem-web-1" ]]; then
+        labels=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}/{{ index .Config.Labels "com.docker.compose.service" }}' \
+                    "$cname" 2>/dev/null || echo "")
+        if [[ "$labels" == "${proj}/web" ]]; then
             docker rm -f "$cname" >/dev/null 2>&1 || true
-            port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+            st=0; port_listening "$port" || st=$?
+            [[ $st -eq 1 ]] && { log_info "  端口 $port 已释放"; return 0; }
             return 1
         fi
         if _confirm_kill "  停掉并移除容器 $cname 以释放端口 $port？"; then
             docker rm -f "$cname" >/dev/null 2>&1 || true
-            port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+            st=0; port_listening "$port" || st=$?
+            [[ $st -eq 1 ]] && { log_info "  端口 $port 已释放"; return 0; }
         fi
         return 1
     fi
 
-    # 3) 宿主进程（非 docker）
-    local line pid="" comm=""
-    line=$(ss -tlnp "sport = :$port" 2>/dev/null | grep 'LISTEN' | head -1 || true)
-    pid=$(printf '%s' "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2 || true)
-    [[ -n "$pid" ]] && comm=$(ps -o comm= -p "$pid" 2>/dev/null | head -1 || true)
+    # 3) 宿主进程（非 docker）——listening_owner 跨平台（Linux ss / macOS lsof / Windows netstat+tasklist）
+    local owner pid="" comm=""
+    owner=$(listening_owner "$port")
+    pid="${owner%%|*}"; comm="${owner#*|}"
     log_warn "  占用者：宿主进程 ${comm:-unknown}（pid=${pid:-未知}）"
     log_warn "  提示：可能是你之前 'npm run dev' 起的前端开发服或其他服务；停掉前请确认无影响。"
     if [[ -z "$pid" ]]; then
-        log_warn "  无法获取 pid（install.sh 需 sudo 运行才能读到进程）→ 手动停掉或改 .env 的 WEB_PORT"
+        log_warn "  无法获取 pid（可能需 sudo/管理员权限才能读到进程）→ 手动停掉或改 .env 的 WEB_PORT"
         return 1
     fi
-    if _confirm_kill "  停掉进程 ${comm}（pid=$pid）释放端口 $port？（SIGTERM，3s 未退则 SIGKILL）"; then
-        kill "$pid" 2>/dev/null || true
-        local i
-        for i in 1 2 3; do port_listening "$port" || break; sleep 1; done
-        if port_listening "$port"; then
-            log_warn "  SIGTERM 未释放，发送 SIGKILL"
-            kill -9 "$pid" 2>/dev/null || true
+    if _confirm_kill "  停掉进程 ${comm}（pid=$pid）释放端口 $port？（Linux/macOS: SIGTERM，3s 未退则 SIGKILL；Windows: taskkill /F）"; then
+        if [[ "$PCH_OS" == "windows" ]]; then
+            # Git Bash 的 kill 对 Windows 原生进程不可靠，直接 taskkill /F（引号内 /参数 不触发 MSYS 路径转换）
+            cmd //c "taskkill /F /PID $pid" >/dev/null 2>&1 || true
             sleep 1
+        else
+            kill "$pid" 2>/dev/null || true
+            local _
+            for _ in 1 2 3; do
+                st=0; port_listening "$port" || st=$?
+                [[ $st -ne 0 ]] && break
+                sleep 1
+            done
+            st=0; port_listening "$port" || st=$?
+            if [[ $st -eq 0 ]]; then
+                log_warn "  SIGTERM 未释放，发送 SIGKILL"
+                kill -9 "$pid" 2>/dev/null || true
+                sleep 1
+            fi
         fi
-        port_listening "$port" || { log_info "  端口 $port 已释放"; return 0; }
+        st=0; port_listening "$port" || st=$?
+        [[ $st -eq 1 ]] && { log_info "  端口 $port 已释放"; return 0; }
         log_error "  进程已停但端口仍被占（可能有子进程或被自动拉起）"
         return 1
     fi

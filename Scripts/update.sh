@@ -350,7 +350,7 @@ EOF
     log_info "====================================== 更新完成 ======================================"
     log_info "版本: $OLD_REF → $NEW_REF"
     log_info "迁移: $(dcc exec -T backend alembic current 2>/dev/null || echo unknown)"
-    log_info "健康: curl http://127.0.0.1:8000/healthz → ok"
+    log_info "健康: curl http://127.0.0.1:${_bp}/healthz → ok"
     log_info "======================================================================================"
 }
 
