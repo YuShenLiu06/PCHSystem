@@ -15,11 +15,21 @@
 
 ### Added
 
-- _暂无_
+- **一行安装**（`Scripts/bootstrap.sh` / `bootstrap.ps1`）：无需先 clone 仓库，下载单个脚本一条命令完成 clone + 安装；clone 源自动探测（GitHub 直连 → Gitee 自动同步镜像 → gh 镜像前缀链），参数原样透传给 install.sh，幂等可重跑。
+- **Windows 原生支持**：PowerShell 入口 bootstrap.ps1（委托 Git Bash 执行 install.sh，不做 zip 兜底、缺 Git 直接报错给指引、Docker Desktop 缺失引导 winget 安装）；install/update 的 Git Bash 路径兼容（`PCH_OS` 识别 MINGW/MSYS、python 探测实跑验证防 Store 占位符、taskkill 停占用进程）。
+- **镜像链环境变量覆盖**：`PCH_REPO_URL` / `PCH_GITEE_URL` / `PCH_GH_MIRRORS` 可覆盖源与镜像链（fork / 沙盒 / 离线测试友好）。
+- **e2e B 组**（`Scripts/e2e/TEST-MANUAL.md`）：一行安装离线验证（file:// clone、非 tty 管道、幂等重跑、非默认目录名、`--yes`）。
 
 ### Fixed
 
-- _暂无_
+- **macOS 端口探测误判**：无 `ss` 时 `port_listening` 恒判「空闲」，重装时 web 端口被占会导致 `up -d` 裸失败——改三态降级链（Linux `ss`→`netstat`、macOS `lsof`→`netstat`、Windows `netstat`），工具全缺时明确「未知」并跳过自动回收。
+- **容器名/服务名硬编码**：`reclaim_web_port` 固定 `pchsystem-web-1` 在非默认目录名 clone（沙盒/多实例）下静默失效甚至误操作——改 compose project 动态推导 + docker label 过滤；`detect_mcdr_topology` 改用 compose 服务名 `http://backend:8000`（DNS 别名，与 project 名/副本号无关）。
+- **摘要端口硬编码 8000**：install/update 完成摘要现按 `.env` 的 `BACKEND_PORT` 显示。
+- **死镜像 gitclone.com 移除**（2024 已停服）；Gitee 自动同步镜像升级为 clone 自动候选链第二名。
+- **插件拷贝灌入 `.venv`/`.DS_Store`**：rsync 排除 + cp 分支 find 清理（开发机源仓带的本地目录不再进 MCDR）；update.sh 的 `cp McdrPlugin/*` 改 `McdrPlugin/.` 连隐藏文件一起拷。
+- **`wait_healthy` compose v1 兼容**：改 `docker inspect` 读健康状态（原 `--format json` 仅 v2 有，v1 下恒超时）。
+- **`env_get` 双定义收敛**进 `lib/common.sh` 并加键名白名单校验。
+- **无免密 sudo 时可交互提权**：`sudo -v` 输一次密码（仅限有终端时；CI/管道仍 die 不挂死）。
 
 ### Security
 

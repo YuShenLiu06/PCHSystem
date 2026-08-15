@@ -140,9 +140,24 @@
 
 ## 快速开始
 
-### 一键脚本（推荐）
+### 一行安装（推荐）
 
-面向服主，一条命令完成 Docker 安装、国内网络镜像自适应、配置生成、起服务、数据库迁移、前端构建、`pch_system` 插件部署与 token 双写：
+面向服主，一条命令完成 clone、Docker 安装、国内网络镜像自适应、配置生成、起服务、数据库迁移、前端构建、`pch_system` 插件部署与 token 双写：
+
+```bash
+# macOS / Linux（海外）
+bash <(curl -fsSL https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh)
+
+# 大陆（第一跳换 Gitee raw，自动同步）
+bash <(curl -fsSL https://gitee.com/yushenliu03/PCHSystem/raw/main/Scripts/bootstrap.sh)
+```
+
+```powershell
+# Windows PowerShell（必须已装 Git；Docker Desktop 缺失会引导 winget 安装）
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.ps1))) --yes
+```
+
+### 两步脚本（备选）
 
 ```bash
 git clone https://github.com/YuShenLiu06/PCHSystem.git

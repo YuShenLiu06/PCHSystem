@@ -1,14 +1,48 @@
 # Scripts —— PCHSystem 一键安装 / 更新
 
-面向玩家/服主，在自己 Linux 服务器上一键部署与更新 PCHSystem（FastAPI 后端 + PostgreSQL + pch_system MCDR 插件 + 前端静态构建）。自动检测/安装 Docker、自适应国内网络（GitHub / Docker Hub / PyPI / npm 镜像）、智能判断是否需要重建镜像。
+面向玩家/服主，在自己 Linux / macOS / Windows 服务器上一键部署与更新 PCHSystem（FastAPI 后端 + PostgreSQL + pch_system MCDR 插件 + 前端静态构建）。自动检测/安装 Docker、自适应国内网络（GitHub / Gitee / Docker Hub / PyPI / npm 镜像）、智能判断是否需要重建镜像。
 
-- `install.sh` —— 首次安装
-- `update.sh` —— 一键更新
-- `lib/common.sh` —— 共享函数库（被上面两个脚本 source）
+- `bootstrap.sh` —— **一行安装引导**（macOS/Linux，或 Windows 的 Git Bash；clone 后委托 install.sh）
+- `bootstrap.ps1` —— 一行安装引导（Windows PowerShell；定位 Git Bash 委托 install.sh）
+- `install.sh` —— 首次安装（需在仓库内）
+- `update.sh` —— 一键更新（需在仓库内）
+- `lib/common.sh` / `lib/platform.sh` —— 共享函数库（跨平台探测 + install/update 共用逻辑）
 
 ---
 
 ## 1. 快速开始
+
+### 一行安装（推荐，无需先 clone）
+
+```bash
+# 海外（macOS / Linux）
+bash <(curl -fsSL https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh)
+
+# 大陆——第一跳换 Gitee raw（自动同步，与 GitHub 同步更新）
+bash <(curl -fsSL https://gitee.com/yushenliu03/PCHSystem/raw/main/Scripts/bootstrap.sh)
+
+# 大陆——Gitee raw 也不可达时，换 gh 镜像前缀第一跳（失效就换下一个前缀，见 §5）
+bash <(curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh)
+```
+
+```powershell
+# Windows（PowerShell 5.1+；scriptblock 形态可透传参数）
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.ps1))) --yes
+
+# 大陆第一跳换 Gitee raw
+& ([scriptblock]::Create((irm https://gitee.com/yushenliu03/PCHSystem/raw/main/Scripts/bootstrap.ps1))) --yes
+```
+
+bootstrap 只做「预检（bash 版本 / git / Docker）→ 镜像探测 clone → 委托 `install.sh`」，后续流程与 §2 完全一致：
+
+- **clone 源自动探测**：GitHub 直连 → **Gitee 自动同步镜像** → gh 镜像前缀链（`git ls-remote` 逐个探活），从 Gitee clone 后 origin 即 Gitee，后续 `update.sh` fetch 走 Gitee（大陆更快）。
+- **参数原样透传**给 install.sh：`bash <(curl -fsSL <url>) --yes --no-mcdr ...`。
+- **管道形态也可用**：`curl -fsSL <url> | bash -s -- --yes`（bootstrap 不读 stdin，委托时自动接回终端）；推荐 `bash <(curl ...)` 形态，语义更干净。
+- **Windows 前提**：必须已装 Git（含 Git Bash，缺失直接报错给指引，**不做 zip 兜底**）；Docker Desktop 缺失时引导 winget 安装并等待就绪。
+- **幂等**：目标目录（默认 `./PCHSystem`，`PCH_CLONE_DIR` 可改）已是本仓库则复用跳过 clone，重跑安全。
+- 环境变量：`PCH_CLONE_DIR` / `PCH_REPO_URL` / `PCH_GITEE_URL` / `PCH_GH_MIRRORS`（覆盖源与镜像链，格式同 §5）。
+
+### 传统两步（备选）
 
 ```bash
 # 1) 先 clone 仓库（GitHub 直连不通时用镜像，见 §5）
@@ -22,7 +56,7 @@ bash Scripts/install.sh
 bash Scripts/update.sh
 ```
 
-> install.sh / update.sh **必须在仓库内执行**（`cd PCHSystem` 之后）。脚本会自动检测/安装 Docker，但装 Docker 需要免密 sudo 或 root（详见 §6）。
+> install.sh / update.sh **必须在仓库内执行**（`cd PCHSystem` 之后）。脚本会自动检测/安装 Docker，但 Linux 装 Docker 需要免密 sudo 或 root（详见 §6）。
 
 ---
 
@@ -112,15 +146,29 @@ bash Scripts/update.sh [选项]
 
 | 类别 | 处理 |
 |---|---|
-| **GitHub**（clone/fetch） | 直连探测失败时，依次试 `ghfast.top` / `ghproxy.com` / `kkgithub.com` / `gitclone.com` / `gh.zwy.one`（用 `git insteadOf` 重写） |
-| **Docker Hub** | `get.docker.com --mirror Aliyun` 装时走阿里云；运行时写 `/etc/docker/daemon.json` 的 `registry-mirrors`（`docker.nju.edu.cn` / `docker.1ms.run` / `docker.m.daocloud.io` / `mirror.baidubce.com`） |
+| **GitHub**（clone/fetch） | 直连探测 → **Gitee 自动同步镜像**（独立 URL `gitee.com/yushenliu03/PCHSystem.git`，仅首次 clone 用；命中后后续 fetch 也走 Gitee）→ gh 镜像前缀链 `ghfast.top` / `ghproxy.com` / `kkgithub.com` / `gh.zwy.one`（用 `git insteadOf` 重写） |
+| **Docker Hub** | `get.docker.com --mirror Aliyun` 装时走阿里云；运行时写 `/etc/docker/daemon.json` 的 `registry-mirrors`（`docker.nju.edu.cn` / `docker.1ms.run` / `docker.m.daocloud.io` / `mirror.baidubce.com`）；macOS/Windows 的 Docker Desktop 需在 GUI（Settings → Docker Engine）配置，脚本跳过自动写 |
 | **PyPI**（build 时） | `PIP_INDEX_URL` 透传清华源，`Backend/Dockerfile` 经 `ARG PIP_INDEX_URL` + `pip config set global.index-url` 消费（matplotlib/numpy 等大包加速）；`HTTPS_PROXY` 透传助 CJK 字体 `wget` |
 | **npm** | `npm config set registry https://registry.npmmirror.com` |
 
-> ⚠ **公共镜像 2024–2025 大批关停**（ustc、网易、中科大、阿里云部分等）。脚本里的候选以**探测结果为准**，可能随时失效。若全失败，回退直连（慢但通常最终能成），或自行挂代理后重跑。
+> ⚠ **公共镜像 2024–2025 大批关停**（ustc、网易、中科大、阿里云部分等）。脚本里的候选以**探测结果为准**，可能随时失效。若全失败，回退直连（慢但通常最终能成），或自行挂代理后重跑。镜像链可用 env `PCH_GH_MIRRORS`（空格分隔 `<rewrite>|<insteadOf>`）覆盖。
 
-### 手动镜像 clone（install 前仓库都还没有时）
+### 一行安装第一跳变体（bootstrap 脚本本身还没 clone 到时）
+
+`raw.githubusercontent.com` 大陆常不可达——第一跳同样有变体，失效换下一个：
+
 ```bash
+# ① Gitee raw（自动同步，优先）
+https://gitee.com/yushenliu03/PCHSystem/raw/main/Scripts/bootstrap.sh
+# ② gh 镜像前缀拼在 raw URL 前
+https://ghfast.top/https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh
+https://ghproxy.com/https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/main/Scripts/bootstrap.sh
+```
+
+### 手动镜像 clone（不用一行安装时）
+```bash
+# Gitee（自动同步）
+git clone https://gitee.com/yushenliu03/PCHSystem.git
 # kkgithub（域名替换）
 git clone https://kkgithub.com/YuShenLiu06/PCHSystem.git
 # 或 ghproxy（前缀式）
@@ -132,9 +180,15 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 
 ## 6. Docker 安装说明
 
+**Linux**：
 - `install.sh` 自动用 `get.docker.com --mirror Aliyun` 装最新 Docker + Compose v2 plugin；失败回退发行版原生包（`apt`/`dnf`/`apk`/`pacman`）。
-- **需要免密 sudo 或 root**：装 Docker、写 `/etc/docker/daemon.json`、`usermod -aG docker` 这几步要提权。脚本在需要时才提权，主体不强制 root。
+- **需要免密 sudo 或 root**（有终端时也可交互输一次密码）：装 Docker、写 `/etc/docker/daemon.json`、`usermod -aG docker` 这几步要提权。脚本在需要时才提权，主体不强制 root。
 - 装完会把当前用户加入 `docker` 组，提示 `newgrp docker` 或重新登录——之后即可免 sudo 使用 docker，再重跑 `install.sh` 续装（幂等）。
+
+**macOS / Windows**（Docker Desktop）：
+- 脚本**只检测-指引，不代装**（macOS GUI 安装无法脚本化）；Windows 的一行安装（bootstrap.ps1）会引导 `winget install Docker.DockerDesktop` 并轮询就绪（≤3 分钟，首次启动需手动接受协议）。
+- Docker Desktop 自管理 docker 组与 daemon，无需 sudo/usermod/systemctl；registry mirrors 需在 GUI（Settings → Docker Engine）配置，脚本跳过自动写。
+- macOS 额外注意：`install.sh` 需要 **bash 4.0+**（系统自带 3.2 过旧）——一行安装的 bootstrap 会自动定位 `/opt/homebrew/bin/bash`（`brew install bash`）；手动跑 install.sh 请用新版 bash 完整路径执行。
 
 ---
 
@@ -152,7 +206,7 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 ### config.json 的 api_url（关键）
 插件配置 `<MCDR>/config/pch_system/config.json` 的 `api_url` 必须是**插件容器/进程能访问到后端的地址**：
 - MCDR 与后端**同机**（裸进程/systemd）→ `http://127.0.0.1:8000`
-- MCDR 与 backend **同 docker 网络** → `http://pchsystem-backend-1:8000`（需把 MCDR 容器加入 `pchsystem_default` 网络）
+- MCDR 与 backend **同 docker 网络** → `http://backend:8000`（compose **服务名**，是网络的 DNS 别名，与 project 名/副本号无关；需把 MCDR 容器加入本项目的 compose 网络——网络名含动态 project 名，`docker network ls | grep <目录名>` 查）
 - 脚本按 `--mcdr-root` 路径形态推断默认（路径含 `/var/lib/docker/volumes/` 视为 docker 化），**务必核对**。
 
 > `config.json.example` 里的 `api_url` 是容器服务名，仅在「MCDR 容器 + 同网络」时可达——脚本不会照抄，会按拓扑覆盖。

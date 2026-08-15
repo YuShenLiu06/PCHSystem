@@ -56,6 +56,79 @@ ss -ltn | grep -E ':8100|:15433|:6173' && echo "⚠ 占用，先释放" || echo 
 
 ---
 
+# ═══════════════════════ bootstrap 一行安装测试组 ═══════════════════════
+
+> 验证 `Scripts/bootstrap.sh` 一行安装引导。B-1~B-3 纯离线（`file://` 源，不触网不碰 docker），macOS / Linux 均可执行；B-4 需沙盒环境。
+
+## B-0. 前置：离线源（bare 仓）
+
+```bash
+# 用当前 worktree 造 bare 仓作 file:// 源（bootstrap 从它 clone）
+rm -rf /tmp/pch-src.git /tmp/pch-boot-test
+git clone --bare -q . /tmp/pch-src.git && echo "✓ bare 源就绪"
+```
+
+## B-1. 离线 clone + 委托链（macOS/Linux）
+
+```bash
+# --bogus-flag 手法：bootstrap 会把它透传给 install.sh，install.sh 在 parse_args 即报
+# 「未知参数」退出——证明 clone→cd→exec 委托链真的发生，又不触发 docker 流程。
+cd /tmp
+PCH_REPO_URL=file:///tmp/pch-src.git PCH_CLONE_DIR=./pch-boot-test bash /path/to/worktree/Scripts/bootstrap.sh --bogus-flag
+# 期望：[bootstrap] 直连源可用 → clone 到 ./pch-boot-test → 委托 install.sh →
+#       [ERROR] 未知参数: --bogus-flag（install.sh 的报错 = 委托成功）
+ls /tmp/pch-boot-test/Scripts/install.sh && echo "✓ clone 内容完整"
+```
+
+## B-2. 非 tty 管道形态 + --help 短路
+
+```bash
+# 两种形态都应正常打出 usage（bootstrap 不读 stdin，管道不吞内容）
+cd /path/to/worktree
+cat Scripts/bootstrap.sh | bash -s -- --help >/dev/null && echo "✓ 管道形态 OK"
+bash <(cat Scripts/bootstrap.sh) --help >/dev/null && echo "✓ 进程替换形态 OK"
+# macOS 专属：bash 3.2 续命（应打出「自动改用 /opt/homebrew/bin/bash」）
+/bin/bash Scripts/bootstrap.sh --help >/dev/null && echo "✓ bash3.2 续命 OK"
+```
+
+## B-3. 幂等重跑（目录复用）
+
+```bash
+# 重跑同一目标目录：应打印「已是 PCHSystem 仓库，复用」并跳过 clone
+cd /tmp
+PCH_REPO_URL=file:///tmp/pch-src.git PCH_CLONE_DIR=./pch-boot-test bash /path/to/worktree/Scripts/bootstrap.sh --bogus-flag 2>&1 | grep -q "复用" && echo "✓ 幂等复用 OK"
+# 非 PCHSystem 的非空目录 → 应拒装
+mkdir -p /tmp/pch-junk && touch /tmp/pch-junk/x
+PCH_REPO_URL=file:///tmp/pch-src.git PCH_CLONE_DIR=/tmp/pch-junk bash /path/to/worktree/Scripts/bootstrap.sh --bogus-flag 2>&1 | grep -q "存在且非空" && echo "✓ 非空目录拒绝 OK"
+```
+
+## B-4.（可选，需沙盒）非默认目录名全流程
+
+```bash
+# 在沙盒机以非默认目录名 clone 跑完整 install（--yes 无人值守 + 偏移端口），
+# 验证 compose_project 动态推导（project=目录名小写 pch-alt）与容器 label 过滤。
+# clone 后目录名不同 → compose project = pch-alt，容器名 pch-alt-backend-1 等，
+# 绝不误碰 pchsystem-*（生产）或 pchsandbox-*。
+cd /home/yushen/opt
+PCH_REPO_URL=file:///home/yushen/opt/pchsandbox PCH_CLONE_DIR=./pch-alt \
+    BACKEND_PORT=8100 PG_PORT=15433 WEB_PORT=6173 \
+    bash pchsandbox/Scripts/bootstrap.sh --yes --mcdr-root /tmp/fake-mcdr
+docker ps --format '{{.Names}}' | grep '^pch-alt-' && echo "✓ 动态 project 生效"
+docker network ls | grep pch-alt && echo "✓ 网络名动态化"
+```
+
+## B-5.（可选）--yes 无人值守
+
+```bash
+# 无人值守（CI 形态）：无 tty 下管道跑 bootstrap，交互 read 应全取默认值
+cd /tmp
+cat /path/to/worktree/Scripts/bootstrap.sh \
+  | PCH_REPO_URL=file:///tmp/pch-src.git PCH_CLONE_DIR=./pch-boot-test bash -s -- --bogus-flag
+# 期望：[警告] 无终端可用…… → 仍完成委托（install.sh 报未知参数）
+```
+
+---
+
 # ═══════════════════════ install 测试组 ═══════════════════════
 
 ## I-1. 一键部署
