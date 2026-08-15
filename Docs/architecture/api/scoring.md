@@ -1,0 +1,216 @@
+<!-- omit in toc -->
+# scoring API · 端点参考
+
+> `POST /v1/scoring/credit` / `POST /v1/scoring/debit`：服务端组件专用的批量记账端点；
+> `POST /v1/scoring/admin/adjust`：管理员（服主）积分调控（admin 面板 / 脚本，service-token）；
+> `GET /v1/scoring/ledger`：多角色流水分页查询。全部经 `score_service.write_ledger` 落
+> append-only `scoring.score_ledger`（R-2）。settle 编排（Calculator 链、归档自动结算）未实现，
+> 设计契约见 [`../flows/scoring-settlement.md`](../flows/scoring-settlement.md)。
+
+**状态**：✅ 已实现（迁移 0024，积分层首批）
+
+---
+
+- [1. 概述与鉴权矩阵](#1-%E6%A6%82%E8%BF%B0%E4%B8%8E%E9%89%B4%E6%9D%83%E7%9F%A9%E9%98%B5)
+- [2. 端点速查（4 个，前缀 `/v1/scoring`）](#2-%E7%AB%AF%E7%82%B9%E9%80%9F%E6%9F%A54-%E4%B8%AA%E5%89%8D%E7%BC%80-v1scoring)
+- [3. credit（`POST /v1/scoring/credit`）](#3-creditpost-v1scoringcredit)
+- [4. debit（`POST /v1/scoring/debit`）](#4-debitpost-v1scoringdebit)
+- [5. admin adjust（`POST /v1/scoring/admin/adjust`）](#5-admin-adjustpost-v1scoringadminadjust)
+- [6. ledger（`GET /v1/scoring/ledger`）](#6-ledgerget-v1scoringledger)
+- [7. HTTP 错误码与处理](#7-http-%E9%94%99%E8%AF%AF%E7%A0%81%E4%B8%8E%E5%A4%84%E7%90%86)
+- [8. 示例（Python `requests`）](#8-%E7%A4%BA%E4%BE%8Bpython-requests)
+
+## 1. 概述与鉴权矩阵
+
+积分变动的 REST 写通道收敛为批量端点（逐条独立、skip 不连坐，见 §4）；内部统一经 `score_service.write_ledger` 落库（RS-9 范式：不 commit，通知同事务原子）。表结构 / 触发器 / 索引见 [`../flows/scoring-settlement.md`](../flows/scoring-settlement.md) §6。
+
+| 调用方 | 头 | 能调什么 |
+|---|---|---|
+| 服务端组件（MCDR / 服务端 mod / 服主脚本）| `X-Service-Token` | `credit` / `debit` / `admin/adjust` 批量代任意玩家记账 + `ledger` **特权**（全局 + 任意玩家）|
+| admin 面板（环境变量配置凭证的服主面板，规划中）| `X-Service-Token` | 同上——面板即服务端组件，持 token 调用（不单独发 JWT）|
+| admin / owner | `Authorization: Bearer <JWT>` | `ledger` **特权**（全局 + 任意玩家）|
+| 普通玩家 | `Authorization: Bearer <JWT>` | `ledger` **仅自己**（作用域见 §6）|
+| 玩家 JWT 调写端点 | ❌ 不开放 | credit / debit / admin/adjust 端点结构上无 Authorization 处理 → 401 |
+| 外部第三方 | ❌ 不开放 | —（YAGNI，R-11）|
+
+**H-2**：`Authorization` 头存在（即便非 Bearer/非法）只走 JWT 通道，**绝不静默降级** service-token——写端点无 JWT 通道，带该头直接 401。
+
+## 2. 端点速查（4 个，前缀 `/v1/scoring`）
+
+| 方法 | 路径 | 鉴权 | 用途 |
+|---|---|---|---|
+| POST | `/credit` | 仅 `X-Service-Token` | 批量积分新增（delta = +amount）|
+| POST | `/debit` | 仅 `X-Service-Token` | 批量积分扣除（delta = −amount；`allow_overdraft` 开关）|
+| POST | `/admin/adjust` | 仅 `X-Service-Token` | 管理员调控任意玩家积分（**方向由 reason 定**，双向；见 §5）|
+| GET | `/ledger` | 多角色（见 §1 / §6）| 流水查询（日期范围 + 分页）|
+
+## 3. credit（`POST /v1/scoring/credit`）
+
+**请求**：
+```json
+{"items": [{"player_uuid": "550e8400-...", "amount": "12.50", "reason": "collect",
+            "sheet_id": null, "operator_uuid": null,
+            "idempotency_key": "op-2026-08-15-001", "note": "月度奖励"}],
+ "notify": true}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `items` | array | 批量条目（1..100，`MAX_BATCH_ITEMS=100`；超限 422 整批拒）|
+| `items[].player_uuid` | UUID | 目标玩家；不存在 / 未绑 Web 账号 → 该条 skip（见 §4）|
+| `items[].amount` | string | **Decimal 字符串恒正**（>0、≤18 位总宽、≤2 位小数，违例 422 整批拒）；方向由端点定（credit = +，debit = −）|
+| `items[].reason` | string | credit 枚举：`collect` / `build_a` / `leader_bonus` / `settle`；越界 422 整批拒 |
+| `items[].sheet_id` | int \| null | 可选；提供时校验 sheets 存在，不存在该条 skip。**弱引用无 FK**（append-only 审计不连坐）|
+| `items[].operator_uuid` | UUID \| null | 可选；出账时记录管理员 UUID |
+| `items[].idempotency_key` | string \| null | 可选（1..128 字符）；作用域 `(account_id, key)`。同 key 同 payload（delta/reason/sheet_id）→ 回放原条目；不一致 → 该条 skip（见 §4）|
+| `items[].note` | string \| null | 可选（≤200 字符）；运维备注 |
+| `notify` | bool | 默认 true；发站内通知（category = `scoring_credit` / `scoring_debit`，**同事务原子** RS-9）；skip 条目与**幂等重放**不发（MCDR 重试语义下副作用不重复）|
+
+**响应**（200）：
+```json
+{"results": [{"player_uuid": "550e8400-...", "accepted": true, "idempotent_replay": false,
+              "entry": {"id": 1, "account_id": 7, "delta": "12.50", "reason": "collect",
+                        "balance_after": "12.50", "sheet_id": null, "operator_uuid": null,
+                        "idempotency_key": "op-2026-08-15-001", "note": "月度奖励",
+                        "created_at": "2026-08-15T10:00:00Z"},
+              "skip_reason": null}],
+ "accepted_count": 1, "skipped_count": 0}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `results` | array | 逐条结果（顺序与 `items` 一致）|
+| `results[].player_uuid` | UUID | 回显目标玩家 |
+| `results[].accepted` | bool | 该条是否落库（幂等回放同样计 accepted）|
+| `results[].idempotent_replay` | bool | true = 命中幂等键回放原条目（不重复记账）|
+| `results[].entry` | object \| null | 落库条目快照（幂等回放 = 原条目；skip = null）；字段即 `score_ledger` 列 |
+| `results[].skip_reason` | string \| null | skip 原因（全集见 §4；成功为 null）|
+| `accepted_count` / `skipped_count` | int | 计数（两者之和 = items 条数）|
+
+金额（`amount` / `delta` / `balance_after`）**一律字符串传输**（Decimal 精度）。
+
+## 4. debit（`POST /v1/scoring/debit`）
+
+请求 / 响应结构与 §3 credit 完全一致（方向翻转为 delta = −amount），仅两点差异：
+
+| 差异点 | debit 行为 |
+|---|---|
+| `items[].reason` 枚举 | `manual_adj`（手动修正，配 `operator_uuid`）/ `season_reset`（赛季重置）|
+| `allow_overdraft` | **仅 debit**，默认 false：false 且余额不足 → 该条 skip `insufficient balance`；true → 允许扣成负数（大额缴回场景）|
+
+### skip_reason 全集（credit / debit 通用）
+
+| skip_reason | 场景 | 调用方处理 |
+|---|---|---|
+| `player not found` | `player_uuid` 非已知玩家 | 校验 uuid |
+| `player not bound to a web account` | 玩家未绑 Web 账号（R-5 锚缺失）| 引导绑定 |
+| `sheet not found` | 提供了 `sheet_id` 但 sheets 无此行 | 修正或置 null |
+| `insufficient balance` | debit 且 `allow_overdraft=false` 余额不足 | 补额 / 开透支 |
+| `idempotency key conflict` | 同 `(account_id, key)` 已存在但 payload 不一致 | 检查 key 复用 |
+
+### 批量语义（逐条独立，参照 [`./construction.md`](./construction.md) §3 惯例）
+
+| 错误层级 | 例子 | 结果 |
+|---|---|---|
+| schema 级 → 整批 422 | `items` 空 / >100；`amount` 非法（≤0 / >18 位 / >2 位小数）；`reason` 越界；字段类型错 | 整批拒，0 条落库 |
+| 业务级 → 该条 skip，HTTP 恒 200 | 上表 5 类 skip_reason | 仅该条不落库，其余正常 |
+| 成功 | — | 落库 +（notify 时）同事务通知 |
+
+## 5. admin adjust（`POST /v1/scoring/admin/adjust`）
+
+管理员（服主）积分调控端点：**仅 service-token**（`require_service_token`，与 credit/debit 同鉴权）。面向服主的 admin 面板（环境变量配置凭证，规划中）与服主脚本——面板即服务端组件，持 token 调用，不签发独立 JWT。
+
+**与 credit/debit 的差异**（其余请求/响应结构、批量语义、skip_reason 全集、通知行为完全一致，复用 §3/§4 契约）：
+
+| 差异点 | admin/adjust 行为 |
+|---|---|
+| `items[].reason` 枚举 | **全集 6 种**：`collect` / `build_a` / `leader_bonus` / `settle`（加）/ `manual_adj` / `season_reset`（减）|
+| delta 方向 | **由 reason 符号定**（`LEDGER_REASON_SIGN`）：入账 reason → `+amount`，出账 reason → `−amount`——单端点双向，加减分无需选端点 |
+| `allow_overdraft` | 语义同 debit：默认 false 余额不足 skip `insufficient balance`；true 允许扣成负数 |
+| 审计 | 调用方按条提供 `operator_uuid`（操作管理员）与 `note`（原因）；面板侧应记录 |
+
+```json
+{"items": [{"player_uuid": "550e8400-...", "amount": "3", "reason": "manual_adj",
+            "operator_uuid": "<操作者 uuid>", "note": "误发回收"}],
+ "notify": true, "allow_overdraft": false}
+```
+
+## 6. ledger（`GET /v1/scoring/ledger`）
+
+**请求**：
+
+```
+GET /v1/scoring/ledger?player_uuid=…&since=2026-08-01T00:00:00Z&until=…&page=1&limit=50
+```
+
+**作用域解析**（`player_uuid` 可选，按调用方凭证分流）：
+
+| 调用方 | player_uuid 省略 | player_uuid = 自己 | player_uuid = 他人 |
+|---|---|---|---|
+| service-token（特权）| 全局流水 | 该玩家 | 该玩家；未知 uuid → 404 `player not found` |
+| JWT admin / owner（特权）| 全局流水 | 该玩家 | 同上 |
+| 普通玩家 JWT | **默认查自己** | 自己 | 403 `forbidden`（全局 / 他人一律不可得）|
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `player_uuid` | UUID | — | 可选；作用域见上表 |
+| `since` | ISO 8601（tz-aware）| — | `created_at >= since` |
+| `until` | ISO 8601（tz-aware）| — | `created_at < until`（开区间上界）|
+| `page` | int | 1 | ≥1 |
+| `limit` | int | 50 | 1..200（防单次爆量，超限 422）|
+
+排序 `id DESC`（最新在前）。**响应**：`{"items": [ScoreLedgerEntry…], "total": 123, "page": 1, "limit": 50}`；`items[]` 字段同 §3 响应 `entry`。
+
+## 7. HTTP 错误码与处理
+
+| HTTP | 场景 | 调用方处理 |
+|---|---|---|
+| 401 | 缺/错 service token；JWT 无效（ledger；写端点带 Authorization 头）| 检查凭证 |
+| 403 | ledger 普通玩家查他人 / 试图查全局（`forbidden`）| 改查自己或提权 |
+| 404 | ledger 特权方传未知 `player_uuid`（`player not found`）| 校验 uuid |
+| 422 | schema 级：reason 越界 / amount 非法 / items 超 100 / limit>200 | 修请求体 |
+| 200 | 批量端点恒 200，逐条看 `results[].accepted` / `skip_reason` | 按条处理 |
+
+## 8. 示例（Python `requests`）
+
+```python
+import requests
+
+BASE = "http://localhost:8000"
+H = {"X-Service-Token": "svc", "Content-Type": "application/json"}
+
+# 批量加分（幂等键防 MCDR 重试重复记账）
+r = requests.post(f"{BASE}/v1/scoring/credit", headers=H, timeout=10, json={
+    "items": [{"player_uuid": "550e8400-...", "amount": "12.50", "reason": "collect",
+               "idempotency_key": "daily-2026-08-15-001"}],
+    "notify": True})
+
+# 扣分（大额缴回，允许透支）
+r = requests.post(f"{BASE}/v1/scoring/debit", headers=H, timeout=10, json={
+    "items": [{"player_uuid": "550e8400-...", "amount": "25.00", "reason": "manual_adj",
+               "operator_uuid": "<管理员 uuid>", "note": "回收误发"}],
+    "allow_overdraft": True})
+
+# 管理员调控（服主面板 / 脚本；方向由 reason 定：manual_adj 减、leader_bonus 加）
+r = requests.post(f"{BASE}/v1/scoring/admin/adjust", headers=H, timeout=10, json={
+    "items": [{"player_uuid": "550e8400-...", "amount": "3", "reason": "manual_adj",
+               "operator_uuid": "<操作者 uuid>", "note": "误发回收"}]})
+
+# 流水分页迭代（service-token 特权；普通玩家 JWT 省略 player_uuid 即查自己）
+page = 1
+while True:
+    r = requests.get(f"{BASE}/v1/scoring/ledger", headers=H, timeout=10,
+                     params={"page": page, "limit": 200,
+                             "since": "2026-08-01T00:00:00Z"}).json()
+    for e in r["items"]:
+        print(e)
+    if page * r["limit"] >= r["total"]:
+        break
+    page += 1
+```
+
+---
+
+*创建：2026-08-15。行为契约以 `Backend/app/services/score_service.py::write_ledger` 与 `Backend/app/api/scoring.py` 为准；权威 schema = `/openapi.json`。*

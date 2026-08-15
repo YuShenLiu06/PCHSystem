@@ -46,5 +46,10 @@ def test_paths_present():
         "/v1/construction/me/switch",
         "/v1/construction/me/leave",
         "/v1/construction/active-by-uuids",
+        # 积分层低层 API（迁移 0024）+ 管理员调控
+        "/v1/scoring/credit",
+        "/v1/scoring/debit",
+        "/v1/scoring/ledger",
+        "/v1/scoring/admin/adjust",
     ]:
         assert p in paths, f"missing {p}"

@@ -15,7 +15,8 @@
 
 ### Added
 
-- _暂无_
+- **积分层首批（迁移 0024）**：新增 `POST /v1/scoring/credit` / `POST /v1/scoring/debit` 批量记账端点（仅 service-token；append-only `scoring.score_ledger`，幂等键防重放 + 透支开关 + 可选同事务站内通知）与 `GET /v1/scoring/ledger` 多角色流水分页查询。
+- **管理员积分调控**：新增 `POST /v1/scoring/admin/adjust`（仅 service-token，面向服主 admin 面板 / 脚本；reason 放开全集、方向由 reason 符号定，单端点双向加减，`allow_overdraft` 同 debit）。
 
 ### Fixed
 

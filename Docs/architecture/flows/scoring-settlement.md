@@ -1,12 +1,12 @@
 <!-- omit in toc -->
 # 积分结算 · 端到端流程指南（设计契约）
 
-> 本文件是积分结算层的**设计契约**：积分怎么算、怎么记、谁来调。本层 🚧 规划中（未实现），本文是后续实现的对照基线。
+> 本文件是积分结算层的**设计契约**：积分怎么算、怎么记、谁来调。本层 🟡 部分实现（低层 credit/debit/ledger REST 端点已落地，迁移 0024；settle 编排未实现），本文是剩余部分的对照基线。
 > 顶层索引见 [`../../architecture.md`](../../architecture.md) §7；公式依据见 [`../../guide.md`](../../guide.md) 黄皮子积分体系；红线见根 [`../../../CLAUDE.md`](../../../CLAUDE.md) §3。
 
 **读者**：要实现积分引擎 / 注入自定义公式 / 生成多平台客户端的二次开发者。
 
-**状态**：🚧 规划中。旧规划 [`../services/scoring-service.md`](../services/scoring-service.md)（即时记账 + per-UUID）已归档，**关键决策在此推翻**（见 §1.1）。
+**状态**：🟡 部分实现。REST 低层端点（credit/debit/ledger，迁移 0024）已落地——契约见 [`../api/scoring.md`](../api/scoring.md)；settle 编排（Calculator 链 + 归档 hook）未实现。旧规划 [`../services/scoring-service.md`](../services/scoring-service.md)（即时记账 + per-UUID）已归档，**关键决策在此推翻**（见 §1.1）。
 
 ---
 
@@ -18,6 +18,7 @@
   - [4.1 三个内置 Calculator](#41-%E4%B8%89%E4%B8%AA%E5%86%85%E7%BD%AE-calculator)
   - [4.2 服主自定义公式（服主权，非 API 能力）](#42-%E6%9C%8D%E4%B8%BB%E8%87%AA%E5%AE%9A%E4%B9%89%E5%85%AC%E5%BC%8F%E6%9C%8D%E4%B8%BB%E6%9D%83%E9%9D%9E-api-%E8%83%BD%E5%8A%9B)
 - [5. 统一记账入口：score\_service.write\_ledger](#5-%E7%BB%9F%E4%B8%80%E8%AE%B0%E8%B4%A6%E5%85%A5%E5%8F%A3scoreservicewriteledger)
+  - [5.1 REST 低层端点（已落地）](#51-rest-%E4%BD%8E%E5%B1%82%E7%AB%AF%E7%82%B9%E5%B7%B2%E8%90%BD%E5%9C%B0)
 - [6. 数据模型（R-1 全 DB）](#6-%E6%95%B0%E6%8D%AE%E6%A8%A1%E5%9E%8Br-1-%E5%85%A8-db)
 - [7. 多平台客户端（OpenAPI 优先）](#7-%E5%A4%9A%E5%B9%B3%E5%8F%B0%E5%AE%A2%E6%88%B7%E7%AB%AFopenapi-%E4%BC%98%E5%85%88)
   - [7.1 spec 优先，不手写 SDK](#71-spec-%E4%BC%98%E5%85%88%E4%B8%8D%E6%89%8B%E5%86%99-sdk)
@@ -84,14 +85,16 @@ sequenceDiagram
 
 | 调用方 | 鉴权 | 能调什么 |
 |---|---|---|
-| **服务端组件**（MCDR / 服务端 mod）| `X-Service-Token` | `settle` / `write_ledger`（业务事件触发）/ 代玩家查 `!!PCH score` |
-| **玩家客户端 mod** | （不直接调积分层）| 走应用层查 `/me/scores` |
-| **Web 前端** | 玩家 JWT | `GET /me/scores`（查自己）/ admin JWT 调 `manual_adj` |
+| **服务端组件（REST 低层通道）**（MCDR / 服务端 mod / 服主脚本）| `X-Service-Token` | ✅ `POST /v1/scoring/credit` / `POST /v1/scoring/debit`（批量代任意玩家记账）/ `GET /v1/scoring/ledger`（特权：全局 + 任意玩家）——契约见 [`../api/scoring.md`](../api/scoring.md) |
+| **Web 前端** | 玩家 JWT | ✅ 普通玩家 `GET /v1/scoring/ledger`（仅自己）/ admin·owner JWT `GET /v1/scoring/ledger`（特权）；🚧 `GET /me/scores` 汇总、admin 面板 `manual_adj`（仍规划）|
+| **玩家客户端 mod** | （不直接调积分层）| 🚧 走应用层查 `/me/scores` |
 | **外部第三方** | ❌ **砍掉** | 不开放（YAGNI）|
 
-**铁律**：service-token 是全局共享密钥，**绝不发给第三方**（R-11）；玩家 JWT 只能查/操作自己（`account_id = JWT.sub`）；外部 API Key 通道整体砍除。
+**铁律**：service-token 是全局共享密钥，**绝不发给第三方**（R-11）；普通玩家 JWT 只能查自己（`account_id = JWT.sub`）；外部 API Key 通道整体砍除。
 
-> 与施工层的鉴权分流（同端点按头区分）不同：积分层**端点本身按角色隔离**（`/me/scores` JWT vs `settle` service-token），不混用同一端点。
+> `manual_adj` 落地方式扩展（2026-08-15）：原规划「admin JWT 面板直调」，现经 service-token REST 通道写入——服主脚本出账、`operator_uuid` 记录管理员 UUID；JWT 面板通道仍规划中。`settle` / `write_ledger` 是内部入口（归档 hook / REST 端点统一调用），不直接暴露。
+
+> 与施工层的鉴权分流（同端点按头区分）不同：积分层**端点按角色隔离**——写端点（credit/debit）纯 service-token，读端点（ledger）按凭证三档分流（见 [`../api/scoring.md`](../api/scoring.md) §5）。
 
 ---
 
@@ -139,39 +142,62 @@ class ScoreCalculator(Protocol):
 
 ## 5. 统一记账入口：score_service.write_ledger
 
-范式同 `notification_service.notify`（RS-9）——**唯一入口**，禁止其他路径直接 INSERT `score_ledger`。
+范式同 `notification_service.notify`（RS-9）——**唯一入口**（不 commit，调用方控制事务），禁止其他路径直接 INSERT `score_ledger`。REST credit/debit 端点（§5.1）逐条经它落库。
 
 ```python
 async def write_ledger(
     session: AsyncSession, *,
     account_id: int, delta: Decimal, reason: LedgerReason,
     sheet_id: int | None = None, operator_uuid: UUID | None = None,
-    balance_after: Decimal,  # 入口内 SELECT 当前余额 + delta（避免外部竞态）
-) -> None:
-    # 同事务 INSERT score_ledger（append-only，R-2）；balance_after 必填（可审计重建）
+    idempotency_key: str | None = None, note: str | None = None,
+    allow_overdraft: bool = False,
+) -> ScoreLedgerEntry:
+    # 落库条目（REST 响应 entry 即其投影）；同事务 INSERT（append-only，R-2，balance_after 必填可审计重建）
 ```
 
-**reason 枚举**（入账 / 出账分流）：
+**入口内流程**（顺序固定；`balance_after` **入口内计算、禁止外部传**——锁内读最新余额，避免并发竞态）：
 
-| 方向 | reason | 触发方 | 权限 |
-|---|---|---|---|
-| 入账（+）| `collect` / `build_a` / `leader_bonus` / `settle` | score_service 内部（Calculator 链）| 系统事件，外部不可直接调 |
-| 出账（−）| `manual_adj` | admin/owner 手动修正 | RBAC admin/owner |
-| 出账（−）| `season_reset` | 赛季重置任务 | 系统定时 |
+1. 方向守卫：`delta` 符号与 `reason` 方向一致（credit 端 reason 配 +、debit 端配 −）
+2. `pg_advisory_xact_lock(hashtext('scoring.score_ledger'), account_id)`：串行化同账号并发记账
+3. 幂等检查：`(account_id, idempotency_key)` 已存在且同 payload（delta/reason/sheet_id）→ 回放原条目；不一致 → 抛 `ScoreIdempotencyConflict`（REST 层转该条 skip `idempotency key conflict`）
+4. `balance_after` = 最新 `balance_after` + `delta`（锁内算）
+5. 透支判定：`allow_overdraft=False` 且 `balance_after < 0` → 抛 `InsufficientBalance`（REST 层转该条 skip `insufficient balance`）
+6. INSERT
 
-**入口校验**：`reason ∈ {collect,build_a,leader_bonus,settle}` 仅 service-token 内部调用可写；`manual_adj/season_reset` 需 RBAC。玩家 JWT 调 `write_ledger` → 403。
+**reason 枚举**（入账 / 出账分流；越界 422 整批拒）：
+
+| 方向 | reason | 触发方 |
+|---|---|---|
+| 入账（+）| `collect` / `build_a` / `leader_bonus` / `settle` | 🚧 settle 编排（Calculator 链）；✅ `POST /v1/scoring/credit` |
+| 出账（−）| `manual_adj` | ✅ `POST /v1/scoring/debit`（`operator_uuid` 记录管理员）；🚧 JWT 面板通道 |
+| 出账（−）| `season_reset` | 🚧 赛季重置任务；✅ `POST /v1/scoring/debit` |
+
+**入口权限**：REST 写通道仅 service-token（端点结构上无 Authorization 处理，玩家 JWT 不开放，H-2）；内部调用（settle 编排、赛季任务）同走本入口。
+
+### 5.1 REST 低层端点（已落地）
+
+三端点：`POST /v1/scoring/credit`（批量加分）· `POST /v1/scoring/debit`（批量扣分 + `allow_overdraft` 透支开关）· `GET /v1/scoring/ledger`（多角色流水分页）。逐条独立、业务性失败 skip 不连坐、HTTP 恒 200。全量契约（鉴权矩阵 / 字段 / skip_reason / 错误码）见 [`../api/scoring.md`](../api/scoring.md)。
 
 ---
 
 ## 6. 数据模型（R-1 全 DB）
 
-`scoring` schema（规划中，迁移待定）：
+`scoring` schema（迁移 0024 起）：
 
 | 表 | 用途 | 关键约束 |
 |---|---|---|
-| `score_ledger` | 积分流水 | **append-only**（R-2，DDL 角色权限 + 触发器 `prevent_ledger_modify` 强制）；列 `account_id`（R-5 锚）/ `delta` / `reason` / `balance_after` / `sheet_id` / `operator_uuid` / `created_at` |
-| `submissions` | 材料提交批次（终算聚合源之一）| `batch_token` 防重放；`(sheet_id, account_id, registry_id, batch_token)` 唯一 |
-| `placement_records` | 施工净放置（终算聚合源之二，来自施工层）| 按账号聚合；与 `construction` schema 的同源（跨 schema 只读聚合） |
+| `score_ledger` ✅ 已落地（0024）| 积分流水 | 列 `id` / `account_id`（FK `users.web_accounts` **RESTRICT**，R-5 锚）/ `delta`（numeric(18,2)，CHECK `<>0`）/ `reason`（CHECK 6 枚举）/ `balance_after` / `sheet_id`（**弱引用无 FK**）/ `operator_uuid` / `idempotency_key` / `note` / `created_at`。**append-only**（R-2）：行级 UPDATE/DELETE 由触发器 `scoring.prevent_ledger_modify` 强制拒绝（项目首个触发器）；不拦 TRUNCATE（测试清库依赖，TRUNCATE 防护属运维权限后续）|
+| `submissions` 🚧 规划 | 材料提交批次（终算聚合源之一）| `batch_token` 防重放；`(sheet_id, account_id, registry_id, batch_token)` 唯一 |
+| `placement_records` 🚧 规划 | 施工净放置（终算聚合源之二，来自施工层）| 按账号聚合；与 `construction` schema 的同源（跨 schema 只读聚合） |
+
+`score_ledger` 索引（4 个）：
+
+| 索引 | 用途 |
+|---|---|
+| `(account_id, id DESC)` | 余额读取主索引（取最新 `balance_after`）|
+| `reason` | 按原因过滤 |
+| `sheet_id`（partial，`WHERE sheet_id IS NOT NULL`）| 按项目回查 |
+| `(account_id, idempotency_key)`（partial unique，`WHERE idempotency_key IS NOT NULL`）| 幂等 |
 
 `system.settings`（key-value JSONB，运行时开关）：
 - `scoring.auto_settle_on_archive`（默认 true：归档自动触发结算）
@@ -245,8 +271,7 @@ CI 集成见 `.github/workflows/`（待实现）；snapshot 防漂移见 §7.1�
 - 赛季周期：自然月 / 自然季 / 固定时长？赛季重置是清零还是归档转历史？
 - `auto_settle_on_archive` 默认 true 是否要支持「归档不结算、手动 settle」的运营流程？
 - 占比公式 N 的口径：按实际总提交（防超量刷分 → 配 `score_cap`）还是总需求？
-- 负积分策略：`balance_after` 允许负（+告警）还是加非负约束？
 
 ---
 
-*创建：2026-07-25（v0.9 文档重构）。本层 🚧 规划中，本文为设计契约基线；旧规划 [`../services/scoring-service.md`](../services/scoring-service.md) §3.2 公式仍有效，其余已推翻（见 §1.1）。施工层数据源见 [`./construction-progress.md`](./construction-progress.md)，归档触发见 [`./archive-generation.md`](./archive-generation.md)。*
+*创建：2026-07-25（v0.9 文档重构）；更新：2026-08-15（积分层首批落地回填：credit/debit/ledger REST 端点 + 迁移 0024 + write_ledger 签名修正与 §10 负积分策略拍板，端点契约见 [`../api/scoring.md`](../api/scoring.md)）。旧规划 [`../services/scoring-service.md`](../services/scoring-service.md) §3.2 公式仍有效，其余已推翻（见 §1.1）。施工层数据源见 [`./construction-progress.md`](./construction-progress.md)，归档触发见 [`./archive-generation.md`](./archive-generation.md)。*

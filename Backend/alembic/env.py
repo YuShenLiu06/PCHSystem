@@ -16,6 +16,7 @@ from app.models import sheet  # noqa: F401  注册 Sheet/SheetRow 模型
 from app.models import user  # noqa: F401  注册 Player 模型
 from app.models import construction  # noqa: F401  注册施工上报层模型（迁移 0017）
 from app.models import system  # noqa: F401  注册 system.settings 模型（迁移 0017）
+from app.models import scoring  # noqa: F401  注册积分层模型（迁移 0024）
 
 config = context.config
 
