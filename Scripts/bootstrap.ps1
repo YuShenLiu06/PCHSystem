@@ -92,10 +92,15 @@ function Ensure-DockerDesktop {
     $dockerExe = "$env:ProgramFiles\Docker\Docker\resources\bin\docker.exe"
     Write-BootInfo "等待 Docker Desktop 就绪（首次启动需在弹窗中手动接受协议，≤3 分钟）..."
     $deadline = (Get-Date).AddSeconds(180)
-    while ((Get-Date) -lt $deadline) {
-        if ((Test-Path $dockerExe) -and (& $dockerExe info *> $null; $LASTEXITCODE -eq 0)) { return }
-        Start-Sleep -Seconds 5
+    $dockerReady = $false
+    while (-not $dockerReady -and (Get-Date) -lt $deadline) {
+        if (Test-Path $dockerExe) {
+            & $dockerExe info *> $null
+            $dockerReady = ($LASTEXITCODE -eq 0)
+        }
+        if (-not $dockerReady) { Start-Sleep -Seconds 5 }
     }
+    if ($dockerReady) { return }
     Stop-Boot "Docker Desktop 3 分钟内未就绪。请手动启动它（首次需接受协议）后重跑本命令（已 clone 的目录会自动复用）。"
 }
 
@@ -113,7 +118,7 @@ function Pick-CloneSource {
 
     Write-BootInfo "探测 clone 源（直连 → Gitee → GitHub 镜像链）..."
     if (Test-LsRemote $repoUrl) {
-        Write-BootInfo "GitHub 直连可用"
+        Write-BootInfo "直连源可用: $repoUrl"
         return @($repoUrl)
     }
     Write-BootWarn "GitHub 直连不通，尝试 Gitee 自动同步镜像..."
@@ -146,7 +151,8 @@ function Pick-CloneSource {
 所有 clone 源均不可达。手动兜底（任选其一后进入目录跑 bash Scripts/install.sh）：
   git clone $giteeUrl
   git clone $repoUrl
-（镜像前缀 clone 用法见 Scripts/README.md §1/§5）"
+（镜像前缀 clone 用法见 Scripts/README.md §1/§5）
+"@
 }
 
 # Clone-Repo：幂等 clone（已是本仓库则复用，版本同步交给 install.sh）。
@@ -160,8 +166,10 @@ function Clone-Repo {
         Stop-Boot "目标目录存在且非空、也不是 PCHSystem 仓库: $dir`n请换目录（`$env:PCH_CLONE_DIR）或清空后重跑"
     }
     Write-BootInfo "clone 到 $dir ..."
-    $cloneArgs = (Pick-CloneSource) + @($dir)
-    & git @cloneArgs
+    # @( ) 强制数组：函数输出的单元素数组会被 PowerShell 解 rolling 成裸字符串，
+    # 之后 'url' + @($dir) 会变字符串拼接（而非数组合并）；数组 splatting 也要求集合类型。
+    $cloneArgs = @(Pick-CloneSource)
+    & git clone @cloneArgs "$dir"
     if ($LASTEXITCODE -ne 0) { Stop-Boot "git clone 失败。可重跑本命令（会换源重试）或见上方手动兜底命令" }
     return $dir
 }
