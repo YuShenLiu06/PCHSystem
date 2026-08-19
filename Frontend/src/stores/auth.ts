@@ -20,9 +20,10 @@ export const useAuthStore = defineStore('auth', {
     isTemporaryAccount: (s) => !!s.account?.is_temporary,
   },
   actions: {
+    // player 可空：无绑定玩家的托管管理账号（ADMIN_* 环境同步，owner）登录时为 null
     set(
       tokens: { access_token: string; refresh_token: string },
-      player: PlayerBrief,
+      player: PlayerBrief | null,
       account: AccountBrief,
     ) {
       this.accessToken = tokens.access_token

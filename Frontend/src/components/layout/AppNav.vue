@@ -22,6 +22,7 @@ const ALL_ITEMS: readonly NavItem[] = [
   { to: '/sheets', label: '项目' },
   { to: '/parsing/batch', label: '解析投影' },
   { to: '/admin/construction', label: '施工管理', adminOnly: true },
+  { to: '/admin/scoring', label: '积分管理', adminOnly: true },
 ]
 
 const isAdmin = computed(
