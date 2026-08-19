@@ -71,6 +71,16 @@ describe('scoring api', () => {
     expect(r.items[0].delta).toBe('-3.00')
   })
 
+  it('fetchLedger 传 account_id 时按账号过滤（snake_case 透传，特权下钻用）', async () => {
+    const page = { items: [], total: 0, page: 1, limit: 20 }
+    mocked.get.mockResolvedValueOnce({ data: page })
+    const r = await fetchLedger({ account_id: 7, page: 1, limit: 20 })
+    expect(mocked.get).toHaveBeenCalledWith('/v1/scoring/ledger', {
+      params: { account_id: 7, page: 1, limit: 20 },
+    })
+    expect(r.total).toBe(0)
+  })
+
   it('adminAdjust posts single-item batch to /v1/scoring/admin/adjust', async () => {
     const result = {
       results: [

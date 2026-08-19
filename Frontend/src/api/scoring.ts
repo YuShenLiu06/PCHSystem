@@ -36,6 +36,8 @@ export interface ScoreLedgerPage {
 /** ledger 查询参数（player_uuid 省略 = 全局；until 开区间上界） */
 export interface LedgerQuery {
   player_uuid?: string
+  /** 特权专用：按 Web 账号过滤（与 player_uuid 互斥，余额榜行下钻用） */
+  account_id?: number
   since?: string
   until?: string
   page?: number

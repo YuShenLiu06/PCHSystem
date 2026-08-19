@@ -20,6 +20,9 @@
 - **托管管理账号**：`.env` 配 `ADMIN_USERNAME`/`ADMIN_PASSWORD`（均非空启用）后启动时幂等同步为 role=owner、无绑定玩家的 WebAccount；`POST /auth/login` 放开无玩家账号（`player` 可空返回）。
 - **积分管理页（前端）**：新增 `/admin/scoring`（admin/owner 可见）——流水按玩家/时间筛选 + 服务端分页，调分弹窗（方向预览、透支开关仅出账、skip 原因中文提示、幂等回放提示）；登录支持无绑定玩家的托管账号（落地积分管理页，「我的身份」入口按绑定显隐）。
 - **余额排名**：新增 `GET /v1/scoring/admin/balances`（仅特权 JWT；balance = SUM(delta) 重建，排序 balance DESC + account_id 稳定序，行 = 有绑定玩家的 WebAccount）；积分管理页加「玩家积分」tab 消费（排名跨页连续、负余额红标，调分后即时刷新）。
+- **余额下钻（ledger `account_id`）**：`GET /v1/scoring/ledger` 加 `account_id` 查询参数（特权 JWT / service-token 直按账号收敛，余额行下钻入口；未知账号 404、与 `player_uuid` 互斥 422、普通玩家传参 403——自账号放行为将来预留语义）。
+- **调分通知带备注**：记账通知文案 note 非空时拼为 `reason: note`（玩家不再收到裸枚举值）；文案标点改 ASCII——通知入口 `_clean_text` 白名单不含 U+FF00 全角符号区，原全角括号/逗号一直被剔除成连体文本（本次修正并补测试护栏）。
+- **余额下钻抽屉（前端）**：积分管理页「玩家积分」tab 行点击打开流水抽屉（ledger `account_id` 按账号过滤 + 自含分页，重开即重载）；流水列渲染抽公共组件 `ScoreLedgerTable.vue`，流水 tab 与抽屉共用（DRY）。
 - **焦点边框修复（前端）**：el-select / el-input / el-textarea 手动输入时聚焦描边错位（描边画在内层窄 input 上形成双框），统一抬特异度压回内层、焦点指示回归 wrapper。
 
 ### Fixed

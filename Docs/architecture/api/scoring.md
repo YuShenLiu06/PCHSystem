@@ -171,21 +171,23 @@ GET /v1/scoring/admin/balances?page=1&limit=50
 
 ```
 GET /v1/scoring/ledger?player_uuid=…&since=2026-08-01T00:00:00Z&until=…&page=1&limit=50
+GET /v1/scoring/ledger?account_id=42&page=1&limit=50        # 余额下钻：特权直按账号收敛
 ```
 
-**作用域解析**（`player_uuid` 可选，按调用方凭证分流）：
+**作用域解析**（`player_uuid` / `account_id` 均可选、**互斥**（同传 422），按调用方凭证分流）：
 
-| 调用方 | player_uuid 省略 | player_uuid = 自己 | player_uuid = 他人 |
-|---|---|---|---|
-| service-token（特权）| 全局流水 | 该玩家 | 该玩家；未知 uuid → 404 `player not found` |
-| JWT admin / owner（特权）| 全局流水 | 该玩家 | 同上 |
-| 普通玩家 JWT | **默认查自己** | 自己 | 403 `forbidden`（全局 / 他人一律不可得）|
+| 调用方 | 过滤参数全省略 | player_uuid = 自己 | player_uuid = 他人 | account_id |
+|---|---|---|---|---|
+| service-token（特权）| 全局流水 | 该玩家 | 该玩家；未知 uuid → 404 `player not found` | 该账号；未知 → 404 `account not found` |
+| JWT admin / owner（特权）| 全局流水 | 该玩家 | 同上 | 同上 |
+| 普通玩家 JWT | **默认查自己** | 自己 | 403 `forbidden`（全局 / 他人一律不可得）| 403（显式拒绝；自账号放行为**将来预留语义，暂未实现**）|
 
 **查询参数**：
 
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `player_uuid` | UUID | — | 可选；作用域见上表 |
+| `player_uuid` | UUID | — | 可选；作用域见上表；与 `account_id` 互斥 |
+| `account_id` | int | — | 可选（≥1）；**特权专用**直按账号收敛（余额行下钻入口，多 UUID 账号整账号可见）|
 | `since` | ISO 8601（tz-aware）| — | `created_at >= since` |
 | `until` | ISO 8601（tz-aware）| — | `created_at < until`（开区间上界）|
 | `page` | int | 1 | ≥1 |
@@ -198,9 +200,9 @@ GET /v1/scoring/ledger?player_uuid=…&since=2026-08-01T00:00:00Z&until=…&page
 | HTTP | 场景 | 调用方处理 |
 |---|---|---|
 | 401 | 缺/错 service token；JWT 无效（ledger / adjust / players / balances；credit / debit 带 Authorization 头）；admin 端点（adjust / players / balances）无 Authorization（含仅带 service-token）| 检查凭证 |
-| 403 | ledger 普通玩家查他人；普通玩家 JWT 调 admin 端点（adjust / players / balances，`forbidden`）| 改查自己或提权 |
-| 404 | ledger 特权方传未知 `player_uuid`（`player not found`）| 校验 uuid |
-| 422 | schema 级：reason 越界 / amount 非法 / items 超 100 / limit>200 | 修请求体 |
+| 403 | ledger 普通玩家查他人；ledger 普通玩家传 `account_id`；普通玩家 JWT 调 admin 端点（adjust / players / balances，`forbidden`）| 改查自己或提权 |
+| 404 | ledger 特权方传未知 `player_uuid`（`player not found`）或未知 `account_id`（`account not found`）| 校验 uuid / 账号 id |
+| 422 | schema 级：reason 越界 / amount 非法 / items 超 100 / limit>200；ledger `player_uuid` 与 `account_id` 同传（互斥）| 修请求体 |
 | 200 | 批量端点恒 200，逐条看 `results[].accepted` / `skip_reason` | 按条处理 |
 
 ## 8. 示例（Python `requests`）
@@ -253,4 +255,4 @@ while True:
 
 ---
 
-*创建：2026-08-15；2026-08-19 增量：admin/adjust 收敛为**仅特权 JWT**（admin ≠ service-token，service-token 调用 401）+ `admin/players` 联想端点（同鉴权）+ 环境同步托管账号（积分管理面板）；同日增量 2：`admin/balances` 余额排名端点（同鉴权，balance = SUM(delta) 重建 + balance DESC 排名，面板「玩家积分」tab 消费）。行为契约以 `Backend/app/services/score_service.py::write_ledger` 与 `Backend/app/api/scoring.py` 为准；权威 schema = `/openapi.json`。*
+*创建：2026-08-15；2026-08-19 增量：admin/adjust 收敛为**仅特权 JWT**（admin ≠ service-token，service-token 调用 401）+ `admin/players` 联想端点（同鉴权）+ 环境同步托管账号（积分管理面板）；同日增量 2：`admin/balances` 余额排名端点（同鉴权，balance = SUM(delta) 重建 + balance DESC 排名，面板「玩家积分」tab 消费）；同日增量 3：ledger 加 `account_id` 查询参数（特权专用直按账号收敛，余额行下钻入口；普通玩家 403、与 `player_uuid` 互斥 422）+ 调分通知文案携带 note（`reason: note`，标点 ASCII 避开通知清洗白名单）。行为契约以 `Backend/app/services/score_service.py::write_ledger` 与 `Backend/app/api/scoring.py` 为准；权威 schema = `/openapi.json`。*
