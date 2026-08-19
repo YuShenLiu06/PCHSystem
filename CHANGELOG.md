@@ -23,10 +23,11 @@
 - **余额下钻（ledger `account_id`）**：`GET /v1/scoring/ledger` 加 `account_id` 查询参数（特权 JWT / service-token 直按账号收敛，余额行下钻入口；未知账号 404、与 `player_uuid` 互斥 422、普通玩家传参 403——自账号放行为将来预留语义）。
 - **调分通知带备注**：记账通知文案 note 非空时拼为 `reason: note`（玩家不再收到裸枚举值）；文案标点改 ASCII——通知入口 `_clean_text` 白名单不含 U+FF00 全角符号区，原全角括号/逗号一直被剔除成连体文本（本次修正并补测试护栏）。
 - **余额下钻抽屉（前端）**：积分管理页「玩家积分」tab 行点击打开流水抽屉（ledger `account_id` 按账号过滤 + 自含分页，重开即重载）；流水列渲染抽公共组件 `ScoreLedgerTable.vue`，流水 tab 与抽屉共用（DRY）。
-- **焦点边框修复（前端）**：el-select / el-input / el-textarea 手动输入时聚焦描边错位（描边画在内层窄 input 上形成双框），统一抬特异度压回内层、焦点指示回归 wrapper。
 
 ### Fixed
 
+- **焦点边框（前端）**：el-select / el-input / el-textarea 手动输入时聚焦描边错位（描边画在内层窄 input 上形成双框），统一抬特异度压回内层、焦点指示回归 wrapper。
+- **积分页每页条数切换失效（CR）**：流水表 / 余额表 / 下钻抽屉的「N 条/页」el-select 此前单向 `:model-value` 绑定不回写，切档 100% 无效；改 `v-model`，el-select 交互化测试替身（先 emit `update:modelValue` 再 `change`，对齐 element-plus 真实顺序）防假绿。
 - **透支守卫方向（CR）**：`score_service.write_ledger` 余额守卫此前不分记账方向——负余额账号（经 `allow_overdraft` 出账后）的合法 credit 入账被静默 skip 不记账；守卫现限定出账（`delta < 0`），入账不再检查余额正负。
 - **admin 托管账号撞名可见性（CR）**：`ADMIN_USERNAME` 与现有玩家用户名相同时的静默接管（升 owner + env 密码覆盖）此前无任何提示，现启动日志打 warning（`.env.example` 同步警示注释）。
 
