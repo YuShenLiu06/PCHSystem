@@ -9,7 +9,12 @@ vi.mock('../../utils/http', () => ({
 }))
 
 import { http } from '../../utils/http'
-import { fetchLedger, adminAdjust, searchScoringPlayers } from '../../api/scoring'
+import {
+  adminAdjust,
+  fetchBalances,
+  fetchLedger,
+  searchScoringPlayers,
+} from '../../api/scoring'
 
 const mocked = http as unknown as {
   get: ReturnType<typeof vi.fn>
@@ -66,6 +71,16 @@ describe('scoring api', () => {
     expect(r.items[0].delta).toBe('-3.00')
   })
 
+  it('fetchLedger 传 account_id 时按账号过滤（snake_case 透传，特权下钻用）', async () => {
+    const page = { items: [], total: 0, page: 1, limit: 20 }
+    mocked.get.mockResolvedValueOnce({ data: page })
+    const r = await fetchLedger({ account_id: 7, page: 1, limit: 20 })
+    expect(mocked.get).toHaveBeenCalledWith('/v1/scoring/ledger', {
+      params: { account_id: 7, page: 1, limit: 20 },
+    })
+    expect(r.total).toBe(0)
+  })
+
   it('adminAdjust posts single-item batch to /v1/scoring/admin/adjust', async () => {
     const result = {
       results: [
@@ -106,6 +121,32 @@ describe('scoring api', () => {
       allow_overdraft: false,
     })
     expect(r.accepted_count).toBe(1)
+  })
+
+  it('fetchBalances hits GET /v1/scoring/admin/balances with pagination', async () => {
+    const page = {
+      items: [
+        {
+          account_id: 7,
+          display_name: '爱丽丝',
+          player_names: ['alice', 'alice_old'],
+          balance: '130.00',
+          entries_count: 2,
+          last_entry_at: '2026-08-19T10:00:00Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+    }
+    mocked.get.mockResolvedValueOnce({ data: page })
+    const r = await fetchBalances({ page: 1, limit: 50 })
+    expect(mocked.get).toHaveBeenCalledWith('/v1/scoring/admin/balances', {
+      params: { page: 1, limit: 50 },
+    })
+    expect(r.total).toBe(1)
+    expect(r.items[0].balance).toBe('130.00')
+    expect(r.items[0].player_names).toEqual(['alice', 'alice_old'])
   })
 
   it('searchScoringPlayers hits GET /v1/scoring/admin/players', async () => {

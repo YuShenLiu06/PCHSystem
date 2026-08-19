@@ -36,6 +36,8 @@ export interface ScoreLedgerPage {
 /** ledger 查询参数（player_uuid 省略 = 全局；until 开区间上界） */
 export interface LedgerQuery {
   player_uuid?: string
+  /** 特权专用：按 Web 账号过滤（与 player_uuid 互斥，余额榜行下钻用） */
+  account_id?: number
   since?: string
   until?: string
   page?: number
@@ -76,6 +78,33 @@ export interface PlayerOption {
   display_name: string | null
 }
 
+/** 单账号余额行（排名榜；归属锚 = WebAccount，player_names 按 last_seen_at DESC） */
+export interface ScoreBalanceRow {
+  account_id: number
+  display_name: string
+  player_names: string[]
+  balance: string
+  entries_count: number
+  last_entry_at: string | null
+}
+
+/** GET /v1/scoring/admin/balances 分页响应 */
+export interface ScoreBalancesPage {
+  items: ScoreBalanceRow[]
+  total: number
+  page: number
+  limit: number
+}
+
+/** 余额榜查询参数（page/limit 即后端分页参数） */
+export interface BalancesQuery {
+  page?: number
+  limit?: number
+}
+
+/** 服务端分页每页档位（上限 200 对齐后端 admin/balances · ledger 的 le=200） */
+export const LIMIT_OPTIONS = [20, 50, 100, 200] as const
+
 /** GET /v1/scoring/ledger —— 流水分页（admin/owner JWT 或玩家自查，作用域后端定） */
 export async function fetchLedger(params: LedgerQuery): Promise<ScoreLedgerPage> {
   const { data } = await http.get<ScoreLedgerPage>('/v1/scoring/ledger', { params })
@@ -89,6 +118,14 @@ export async function adminAdjust(payload: {
   allow_overdraft?: boolean
 }): Promise<ScoreBatchResult> {
   const { data } = await http.post<ScoreBatchResult>('/v1/scoring/admin/adjust', payload)
+  return data
+}
+
+/** GET /v1/scoring/admin/balances —— 全账号余额排名（仅特权 JWT；排序 balance DESC） */
+export async function fetchBalances(params: BalancesQuery): Promise<ScoreBalancesPage> {
+  const { data } = await http.get<ScoreBalancesPage>('/v1/scoring/admin/balances', {
+    params,
+  })
   return data
 }
 

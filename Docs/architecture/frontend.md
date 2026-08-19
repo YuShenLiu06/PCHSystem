@@ -62,7 +62,7 @@ flowchart LR
 | 身份管理 | `Login.vue`（密码登录）/ `Register.vue`（临时→永久）/ `BindConfirm.vue`（game_init 短码确认）/ `ClaimBind.vue`（web_init 挂接）/ `Me.vue`（账号 + 绑定 UUID 列表 + 昵称）/ `AuthExchange.vue`（token 兑换 + 临时/永久分流） | user-service |
 | 玩家·账号 | 玩家列表、改名过户、白名单状态、Web 账号 | user-service |
 | 项目管理 | 项目列表、立项（上传 `.litematic`）、材料清单、CSV 导出、状态流转、协管员管理面板（`SheetEditor` 内联，owner 增/撤销 + 全员可见列表） | project-service |
-| 提交·积分·榜单 | 积分管理 `ScoringAdmin.vue`（`/admin/scoring`，admin/owner：流水玩家/时间筛选 + 服务端分页 + 单条调分弹窗）；提交审计、榜单（规划） | scoring-service |
+| 提交·积分·榜单 | 积分管理 `ScoringAdmin.vue`（`/admin/scoring`，admin/owner：el-tabs 双 tab「积分流水」（玩家/时间筛选 + 服务端分页）/「玩家积分」（`ScoringBalances.vue` 余额排名，调分后即时刷新；**行点击下钻该账号流水抽屉**——ledger `account_id` 参数 + 共享组件 `ScoreLedgerTable.vue` 双端复用）+ 单条调分弹窗）；提交审计、公开榜单（规划） | scoring-service |
 | 称号管理 | 称号梯度配置、玩家已解锁称号、前缀预览 | title-service |
 | Wiki 同步 | 同步日志、失败重试 | wiki-service |
 | 告警中心 | 告警队列、ack/resolve、转白名单复核 | alert-service |

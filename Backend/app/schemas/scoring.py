@@ -108,3 +108,28 @@ class ScoreLedgerPage(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class ScoreBalanceRow(BaseModel):
+    """单账号余额行（排名榜；余额归属锚 = WebAccount，R-5）。
+
+    ``balance`` = SUM(delta)（append-only 可审计重建，R-2，与最新
+    ``balance_after`` 恒一致）；``player_names`` 按 last_seen_at DESC；
+    ``display_name`` 空 → 回退最新玩家名（#41 回退链）。
+    """
+
+    account_id: int
+    display_name: str
+    player_names: list[str]
+    balance: Decimal
+    entries_count: int
+    last_entry_at: datetime | None = None
+
+
+class ScoreBalancesPage(BaseModel):
+    """余额排名分页响应（排序 balance DESC + account_id 稳定序由 repo 保证）。"""
+
+    items: list[ScoreBalanceRow]
+    total: int
+    page: int
+    limit: int

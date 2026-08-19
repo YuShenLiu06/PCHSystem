@@ -3,7 +3,7 @@
 
 > `POST /v1/scoring/credit` / `POST /v1/scoring/debit`：服务端组件专用的批量记账端点；
 > `POST /v1/scoring/admin/adjust`：管理员（服主）积分调控（**仅 admin·owner JWT**，admin ≠ service-token）；
-> `GET /v1/scoring/admin/players`：特权玩家联想（面板选人，仅特权 JWT）；`GET /v1/scoring/ledger`：多角色流水分页查询。全部经 `score_service.write_ledger` 落
+> `GET /v1/scoring/admin/players`：特权玩家联想（面板选人，仅特权 JWT）；`GET /v1/scoring/admin/balances`：全账号余额排名（面板「玩家积分」tab，仅特权 JWT）；`GET /v1/scoring/ledger`：多角色流水分页查询。全部经 `score_service.write_ledger` 落
 > append-only `scoring.score_ledger`（R-2）。settle 编排（Calculator 链、归档自动结算）未实现，
 > 设计契约见 [`../flows/scoring-settlement.md`](../flows/scoring-settlement.md)。
 
@@ -12,7 +12,7 @@
 ---
 
 - [1. 概述与鉴权矩阵](#1-%E6%A6%82%E8%BF%B0%E4%B8%8E%E9%89%B4%E6%9D%83%E7%9F%A9%E9%98%B5)
-- [2. 端点速查（4 个，前缀 `/v1/scoring`）](#2-%E7%AB%AF%E7%82%B9%E9%80%9F%E6%9F%A54-%E4%B8%AA%E5%89%8D%E7%BC%80-v1scoring)
+- [2. 端点速查（6 个，前缀 `/v1/scoring`）](#2-%E7%AB%AF%E7%82%B9%E9%80%9F%E6%9F%A56-%E4%B8%AA%E5%89%8D%E7%BC%80-v1scoring)
 - [3. credit（`POST /v1/scoring/credit`）](#3-creditpost-v1scoringcredit)
 - [4. debit（`POST /v1/scoring/debit`）](#4-debitpost-v1scoringdebit)
 - [5. admin adjust（`POST /v1/scoring/admin/adjust`）](#5-admin-adjustpost-v1scoringadminadjust)
@@ -27,15 +27,15 @@
 | 调用方 | 头 | 能调什么 |
 |---|---|---|
 | 服务端组件（MCDR / 服务端 mod / 服主脚本）| `X-Service-Token` | `credit` / `debit` 批量代任意玩家记账 + `ledger` **特权**（全局 + 任意玩家）。**admin 端点不放行**（admin ≠ service-token，见 §5）|
-| admin / owner（含 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 环境同步的托管面板账号）| `Authorization: Bearer <JWT>` | `admin/adjust`（见 §5）+ `admin/players` + `ledger` **特权**（全局 + 任意玩家）|
+| admin / owner（含 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 环境同步的托管面板账号）| `Authorization: Bearer <JWT>` | `admin/adjust`（见 §5）+ `admin/players` + `admin/balances` + `ledger` **特权**（全局 + 任意玩家）|
 | 普通玩家 | `Authorization: Bearer <JWT>` | `ledger` **仅自己**（作用域见 §6）|
-| 玩家 JWT 调 credit / debit | ❌ 不开放 | 两端点结构上无 Authorization 处理 → 401；admin/adjust / admin/players 对普通玩家 403 |
-| service-token 调 admin 端点 | ❌ 不放行 | admin/adjust / admin/players 仅特权 JWT，service-token（含正确值）→ 401 `missing authorization` |
+| 玩家 JWT 调 credit / debit | ❌ 不开放 | 两端点结构上无 Authorization 处理 → 401；admin 端点（adjust / players / balances）对普通玩家 403 |
+| service-token 调 admin 端点 | ❌ 不放行 | admin 端点（adjust / players / balances）仅特权 JWT，service-token（含正确值）→ 401 `missing authorization` |
 | 外部第三方 | ❌ 不开放 | —（YAGNI，R-11）|
 
 **H-2**：`Authorization` 头存在（即便非 Bearer/非法）只走 JWT 通道，**绝不静默降级** service-token——credit / debit 无 JWT 通道，带该头直接 401。
 
-## 2. 端点速查（5 个，前缀 `/v1/scoring`）
+## 2. 端点速查（6 个，前缀 `/v1/scoring`）
 
 | 方法 | 路径 | 鉴权 | 用途 |
 |---|---|---|---|
@@ -43,6 +43,7 @@
 | POST | `/debit` | 仅 `X-Service-Token` | 批量积分扣除（delta = −amount；`allow_overdraft` 开关）|
 | POST | `/admin/adjust` | **仅** admin/owner JWT（service-token 401）| 管理员调控任意玩家积分（**方向由 reason 定**，双向；见 §5）|
 | GET | `/admin/players` | **仅** admin/owner JWT（service-token 401）| 特权玩家联想（面板调分/筛选选人，见 §5.1）|
+| GET | `/admin/balances` | **仅** admin/owner JWT（service-token 401）| 全账号余额排名（面板「玩家积分」tab，见 §5.2）|
 | GET | `/ledger` | 多角色（见 §1 / §6）| 流水查询（日期范围 + 分页）|
 
 ## 3. credit（`POST /v1/scoring/credit`）
@@ -144,27 +145,49 @@
 GET /v1/scoring/admin/players?q=ali&limit=10   →  [{"player_uuid": "…", "player_name": "alice", "display_name": "…"}]
 ```
 
+### 5.2 余额排名（`GET /v1/scoring/admin/balances`）
+
+所有玩家（WebAccount）当前积分余额排名（面板「玩家积分」tab），鉴权同 admin/adjust（**仅特权 JWT**，普通玩家 403、service-token 401）。
+
+- **行集** = 有 ≥1 绑定玩家的 WebAccount（积分归属锚 = WebAccount，R-5；同账号多玩家一行，未绑定玩家不入榜）。
+- **`balance` = SUM(delta)**（append-only 可审计重建，R-2，与该账号最新 `balance_after` 恒一致；无流水 → `0.00`）。
+- 排序 `balance DESC` + `account_id ASC`（平分稳定序）；`player_names` 按 `last_seen_at` DESC（同名去重），`display_name` 空 → 回退首个玩家名（#41 回退链）。
+
+```
+GET /v1/scoring/admin/balances?page=1&limit=50
+→ {"items": [{"account_id": 7, "display_name": "alice", "player_names": ["alice", "alice_old"],
+              "balance": "130.00", "entries_count": 2, "last_entry_at": "2026-08-19T10:00:00Z"}],
+    "total": 1, "page": 1, "limit": 50}
+```
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `page` | int | 1 | ≥1 |
+| `limit` | int | 50 | 1..200（同 ledger，超限 422）|
+
 ## 6. ledger（`GET /v1/scoring/ledger`）
 
 **请求**：
 
 ```
 GET /v1/scoring/ledger?player_uuid=…&since=2026-08-01T00:00:00Z&until=…&page=1&limit=50
+GET /v1/scoring/ledger?account_id=42&page=1&limit=50        # 余额下钻：特权直按账号收敛
 ```
 
-**作用域解析**（`player_uuid` 可选，按调用方凭证分流）：
+**作用域解析**（`player_uuid` / `account_id` 均可选、**互斥**（同传 422），按调用方凭证分流）：
 
-| 调用方 | player_uuid 省略 | player_uuid = 自己 | player_uuid = 他人 |
-|---|---|---|---|
-| service-token（特权）| 全局流水 | 该玩家 | 该玩家；未知 uuid → 404 `player not found` |
-| JWT admin / owner（特权）| 全局流水 | 该玩家 | 同上 |
-| 普通玩家 JWT | **默认查自己** | 自己 | 403 `forbidden`（全局 / 他人一律不可得）|
+| 调用方 | 过滤参数全省略 | player_uuid = 自己 | player_uuid = 他人 | account_id |
+|---|---|---|---|---|
+| service-token（特权）| 全局流水 | 该玩家 | 该玩家；未知 uuid → 404 `player not found` | 该账号；未知 → 404 `account not found` |
+| JWT admin / owner（特权）| 全局流水 | 该玩家 | 同上 | 同上 |
+| 普通玩家 JWT | **默认查自己** | 自己 | 403 `forbidden`（全局 / 他人一律不可得）| 403（显式拒绝；自账号放行为**将来预留语义，暂未实现**）|
 
 **查询参数**：
 
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `player_uuid` | UUID | — | 可选；作用域见上表 |
+| `player_uuid` | UUID | — | 可选；作用域见上表；与 `account_id` 互斥 |
+| `account_id` | int | — | 可选（≥1）；**特权专用**直按账号收敛（余额行下钻入口，多 UUID 账号整账号可见）|
 | `since` | ISO 8601（tz-aware）| — | `created_at >= since` |
 | `until` | ISO 8601（tz-aware）| — | `created_at < until`（开区间上界）|
 | `page` | int | 1 | ≥1 |
@@ -176,10 +199,10 @@ GET /v1/scoring/ledger?player_uuid=…&since=2026-08-01T00:00:00Z&until=…&page
 
 | HTTP | 场景 | 调用方处理 |
 |---|---|---|
-| 401 | 缺/错 service token；JWT 无效（ledger / adjust / players；credit / debit 带 Authorization 头）；admin/adjust / admin/players 无 Authorization（含仅带 service-token）| 检查凭证 |
-| 403 | ledger 普通玩家查他人；普通玩家 JWT 调 admin/adjust / admin/players（`forbidden`）| 改查自己或提权 |
-| 404 | ledger 特权方传未知 `player_uuid`（`player not found`）| 校验 uuid |
-| 422 | schema 级：reason 越界 / amount 非法 / items 超 100 / limit>200 | 修请求体 |
+| 401 | 缺/错 service token；JWT 无效（ledger / adjust / players / balances；credit / debit 带 Authorization 头）；admin 端点（adjust / players / balances）无 Authorization（含仅带 service-token）| 检查凭证 |
+| 403 | ledger 普通玩家查他人；ledger 普通玩家传 `account_id`；普通玩家 JWT 调 admin 端点（adjust / players / balances，`forbidden`）| 改查自己或提权 |
+| 404 | ledger 特权方传未知 `player_uuid`（`player not found`）或未知 `account_id`（`account not found`）| 校验 uuid / 账号 id |
+| 422 | schema 级：reason 越界 / amount 非法 / items 超 100 / limit>200；ledger `player_uuid` 与 `account_id` 同传（互斥）| 修请求体 |
 | 200 | 批量端点恒 200，逐条看 `results[].accepted` / `skip_reason` | 按条处理 |
 
 ## 8. 示例（Python `requests`）
@@ -213,6 +236,10 @@ r = requests.post(f"{BASE}/v1/scoring/admin/adjust", headers=B, timeout=10, json
 r = requests.get(f"{BASE}/v1/scoring/admin/players", headers=B, timeout=10,
                  params={"q": "ali"}).json()
 
+# 余额排名（面板「玩家积分」tab；balance = SUM(delta)，排序 balance DESC）
+r = requests.get(f"{BASE}/v1/scoring/admin/balances", headers=B, timeout=10,
+                 params={"page": 1, "limit": 50}).json()
+
 # 流水分页迭代（service-token 特权；普通玩家 JWT 省略 player_uuid 即查自己）
 page = 1
 while True:
@@ -228,4 +255,4 @@ while True:
 
 ---
 
-*创建：2026-08-15；2026-08-19 增量：admin/adjust 收敛为**仅特权 JWT**（admin ≠ service-token，service-token 调用 401）+ `admin/players` 联想端点（同鉴权）+ 环境同步托管账号（积分管理面板）。行为契约以 `Backend/app/services/score_service.py::write_ledger` 与 `Backend/app/api/scoring.py` 为准；权威 schema = `/openapi.json`。*
+*创建：2026-08-15；2026-08-19 增量：admin/adjust 收敛为**仅特权 JWT**（admin ≠ service-token，service-token 调用 401）+ `admin/players` 联想端点（同鉴权）+ 环境同步托管账号（积分管理面板）；同日增量 2：`admin/balances` 余额排名端点（同鉴权，balance = SUM(delta) 重建 + balance DESC 排名，面板「玩家积分」tab 消费）；同日增量 3：ledger 加 `account_id` 查询参数（特权专用直按账号收敛，余额行下钻入口；普通玩家 403、与 `player_uuid` 互斥 422）+ 调分通知文案携带 note（`reason: note`，标点 ASCII 避开通知清洗白名单）。行为契约以 `Backend/app/services/score_service.py::write_ledger` 与 `Backend/app/api/scoring.py` 为准；权威 schema = `/openapi.json`。*
