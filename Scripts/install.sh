@@ -397,7 +397,7 @@ save_state_and_summary() {
     [[ $RELOGIN_REQUIRED -eq 1 ]] && log_warn "  - 运行 newgrp docker 或重新登录，才能免 sudo 使用 docker"
     [[ -z "${MCDR_DEPLOYED_ROOT:-}" && $NO_MCDR -eq 0 ]] && log_warn "  - 部署 pch_system 到你的 MCDR（或重跑 install.sh 带 --mcdr-root）"
     log_warn "  - 在游戏内执行: !!MCDR plugin reload pch_system"
-    log_warn "  - 确认依赖插件已装: uuid_api_remake + minecraft_data_api"
+    log_warn "  - 确认依赖插件已装: chest_scanner_lib + uuid_api_remake + minecraft_data_api"
     [[ -f .env ]] && log_warn "  - 检查 .env：WEB_BASE_URL 需为玩家可访问的前端地址（单机 + web 默认 5173 已对齐；用域名/反代则改成真实 URL 后 docker compose restart backend）"
     log_info "======================================================================================"
 }
