@@ -33,19 +33,17 @@ async function onLogin(): Promise<void> {
   loading.value = true
   try {
     const resp = await passwordLogin(trimmedUsername, password.value)
-    if (!resp.player) {
-      ElMessage.error('账号数据异常：无绑定玩家，请联系管理员')
-      return
-    }
+    // player 可空：托管管理账号（ADMIN_* 环境同步）无绑定玩家，照常建立会话
     auth.set(
       { access_token: resp.access_token, refresh_token: resp.refresh_token },
       resp.player,
       resp.account,
     )
     ElMessage.success(`欢迎，${resolveDisplayName(resp.account, resp.player)}`)
-    // 优先跳 redirect（如 bind 链接带来的 /bind/confirm?code=XXX），否则进 /me
+    // 优先跳 redirect（如 bind 链接带来的 /bind/confirm?code=XXX）；
+    // 无玩家 = 托管管理账号 → 直达积分管理（/me 需 active_uuid 会 401）
     const redirect = route.query.redirect as string | undefined
-    router.replace(redirect || '/me')
+    router.replace(redirect || (resp.player ? '/me' : '/admin/scoring'))
   } catch (e: unknown) {
     ElMessage.error(extractApiError(e) ?? '登录失败')
   } finally {

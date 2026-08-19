@@ -17,4 +17,10 @@ describe('router 守卫', () => {
     expect(routeMeta('/login')?.public).toBe(true)
     expect(routeMeta('/auth')?.public).toBe(true)
   })
+
+  // 积分管理页（admin 面板）：requiresAdmin 守卫 → 非 admin/owner 弹回 /me（R-9 仅可见性）
+  it('/admin/scoring 需 admin 角色（requiresAdmin）', () => {
+    expect(routeMeta('/admin/scoring')?.requiresAdmin).toBe(true)
+    expect(routeMeta('/admin/scoring')?.public).toBeFalsy()
+  })
 })

@@ -103,6 +103,33 @@ async def test_login_returns_full_auth_response_with_first_player(client):
 
 
 @pytest.mark.asyncio
+async def test_login_playerless_managed_account_returns_null_player(client):
+    """环境同步的托管管理账号（永久 + 无绑定玩家）可登录，player=None（admin 面板用）。"""
+    # Arrange — 直接建无玩家永久账号（等价 sync_admin_account 产物）
+    async with async_session_factory() as s:
+        s.add(
+            WebAccount(
+                username="panel_root",
+                password_hash=hash_password("PanelPass1"),
+                role="owner",
+            )
+        )
+        await s.commit()
+
+    # Act
+    resp = await client.post(
+        "/auth/login", json={"username": "panel_root", "password": "PanelPass1"}
+    )
+
+    # Assert — 200 且 player=null；JWT 可签发（active_uuid 为空，限面板端点使用）
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["player"] is None
+    assert body["account"]["role"] == "owner"
+    assert body["access_token"]
+
+
+@pytest.mark.asyncio
 async def test_login_wrong_password_returns_401(client):
     # Arrange
     await _make_permanent_account("bob", "Secret123", uuid.uuid4())

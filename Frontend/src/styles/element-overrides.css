@@ -139,6 +139,17 @@ html:root[data-theme='light'] {
   box-shadow: 0 0 0 1px var(--pch-accent) inset;
 }
 
+/* 焦点描边归属：EP 组件焦点指示画在 wrapper（上方 is-focus / select is-focused），
+   base.css 的全局 :focus-visible 描边不得打进内层原生 input/textarea——否则描边
+   会画在内层小输入上（如 el-select__input 宽度仅为内容区，比外框窄一截），
+   形成错位双框。EP 原生内层本就 outline:none，此处抬特异度压回（键盘可达性
+   不受损：焦点仍可见，只是画在正确的 wrapper 上）。 */
+.el-select__input:focus-visible,
+.el-input__inner:focus-visible,
+.el-textarea__inner:focus-visible {
+  outline: none;
+}
+
 /* 短码/注册名输入用等宽（BindConfirm / ClaimBind 的 6 位码） */
 .pch-input-code .el-input__inner {
   font-family: var(--pch-font-mono);

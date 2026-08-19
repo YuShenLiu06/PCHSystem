@@ -32,6 +32,7 @@ _TRUNCATE_SQL = text(
     "construction.player_sources, "
     "construction.player_source_history, construction.server_mod_sources, "
     "construction.participants, "
+    "scoring.score_ledger, "
     "system.settings RESTART IDENTITY CASCADE"
 )
 

@@ -53,10 +53,10 @@
 - **身份主锚 = Web 账号（R-5，迁移 0014 落地）**；MC UUID 为子身份（离线模式 UUID 由玩家名确定性推导，改名即换身份）。Web 账号绑定（`web_accounts` / `players.web_account_id`）已实现，见 §2.4/§2.1。
 - **物品 id = registry id**：统一 `namespace:path`（如 `create:warehouse`、`minecraft:chest`），存储前剥离 BlockState properties。
 - **时间戳**：`TIMESTAMPTZ`，统一存 UTC。
-- **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单（**规划中**，未落地）。
+- **积分流水 append-only**：任何积分变动写一条 `score_ledger`，含 `balance_after`，可审计与重建榜单（✅ 迁移 0024 落地；触发器强制拒绝行级 UPDATE/DELETE，写入唯一入口 `score_service.write_ledger`，§4.3）。
 - **schema 划分与实现状态**：
-  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations` / `web_accounts` / `bind_tokens`，迁移 0001-0003 + 0011 + 0014-0015，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors` / `sheet_managers`，迁移 0004/0005/0007/0008/0009/0010/0016，§10）、`notifications`（`notifications`，迁移 0006，§11）
-  - 🚧 **规划中（未落地）**：`projects` / `scoring` / `titles` / `wiki` / `alerts`（原架构 6 schema 中的 5 个，§3-§7 为设计预案）
+  - ✅ **已实现**：`users`（`players` / `auth_tokens` / `jwt_revocations` / `web_accounts` / `bind_tokens`，迁移 0001-0003 + 0011 + 0014-0015，§2）、`sheets`（`sheets` / `sheet_rows` / `sheet_row_contributors` / `sheet_managers`，迁移 0004/0005/0007/0008/0009/0010/0016，§10）、`notifications`（`notifications`，迁移 0006，§11）、`scoring`（`score_ledger`，迁移 0024，§4.3）、`construction` + `system`（`placement_records` / `player_sources` / `player_source_history` / `server_mod_sources` / `settings`，迁移 0017-0018 + 0021-0023，RS-12）
+  - 🚧 **规划中（未落地）**：`projects` / `titles` / `wiki` / `alerts` 整 schema（§3 / §5-§7 为设计预案）+ `scoring` 的 §4.1 `submissions` / §4.2 `placement_records`（放置贡献已由 `construction.placement_records` 承担，见 [`api/construction.md`](./api/construction.md)）
 
 ## 1. 全局 ER 图
 
@@ -64,9 +64,9 @@
 erDiagram
     web_accounts ||--o{ players : "绑定"
     players ||--o{ bind_tokens : "签发"
+    web_accounts ||--o{ score_ledger : "积分流水"
     players ||--o{ submissions : "提交"
     players ||--o{ placement_records : "放置"
-    players ||--o{ score_ledger : "积分流水"
     players ||--o{ player_titles : "持有称号"
     projects ||--o{ material_lists : "材料清单"
     projects ||--o{ submissions : "接收"
@@ -200,6 +200,8 @@ erDiagram
 
 ## 4. `scoring` schema —— 提交、放置、流水
 
+> **实现状态**：仅 §4.3 `score_ledger` 已落地（迁移 0024）；§4.1 `submissions` / §4.2 `placement_records` 为设计预案（放置贡献已由 `construction.placement_records` 承担，§0 schema 划分）。
+
 ### 4.1 `submissions`（材料提交记录）
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -226,19 +228,26 @@ erDiagram
 
 索引：`idx(project_id, player_uuid)`。
 
-### 4.3 `score_ledger`（积分流水 —— append-only）
+### 4.3 `score_ledger`（积分流水 —— append-only，✅ 迁移 0024 已落地）
+
+> 写入唯一入口 `score_service.write_ledger`（advisory lock 串行化 + 锁内算 `balance_after` + 幂等回放）；REST 端点见 [`api/scoring.md`](./api/scoring.md)。
+
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | bigserial | PK | |
-| `player_uuid` | uuid | FK, not null | |
-| `project_id` | bigint | FK, null | 关联项目（运维转移可为空） |
-| `delta` | numeric(18,2) | not null | 增减（可负，如修正/回收） |
-| `reason` | text | not null | submit/place/leader_bonus/manual_adj/season_reset |
-| `balance_after` | numeric(18,2) | not null | 变更后余额 |
-| `operator` | text | null | 手动修正时的操作者 |
-| `created_at` | timestamptz | not null | |
+| `account_id` | bigint | FK→`users.web_accounts.id`（`ondelete=RESTRICT`），not null | 归属锚 = Web 账号（R-5，离线改名换 UUID 积分不丢）；RESTRICT 防账号删除连坐抹审计行 |
+| `delta` | numeric(18,2) | not null，CHECK `delta <> 0` | 增减量：credit 恒正 / debit 恒负（reason 方向守卫保证） |
+| `reason` | text | not null，CHECK 6 值枚举 | 入账 `collect` / `build_a` / `leader_bonus` / `settle`；出账 `manual_adj` / `season_reset` |
+| `balance_after` | numeric(18,2) | not null | 本条落账后余额（写入入口锁内计算，禁止外部传入） |
+| `sheet_id` | bigint | null，**弱引用无 FK** | append-only 审计行不能被 CASCADE 连坐删、RESTRICT 又阻塞 sheet 清理 → 存在性由 API 层校验 |
+| `operator_uuid` | uuid | null | 出账（manual_adj）时发起的管理员/服主 UUID |
+| `idempotency_key` | text | null | 调用方防重放键（MCDR HTTP 重试，R-12） |
+| `note` | text | null | 运维备注（出账追溯「为什么扣」） |
+| `created_at` | timestamptz | not null, default now() | |
 
-索引：`idx(player_uuid, created_at desc)`、`idx(project_id)`、`idx(reason)`。**禁止 UPDATE/DELETE**（由权限/触发器保证）。
+索引：`(account_id, id DESC)`（余额读取 + 流水查询主索引）、`(reason)`（对账/赛季审计）、`(sheet_id) WHERE sheet_id IS NOT NULL`（settle 幂等查重）、`(account_id, idempotency_key) UNIQUE WHERE idempotency_key IS NOT NULL`（幂等防重放）。
+
+**禁止行级 UPDATE/DELETE**——触发器 `scoring.prevent_ledger_modify` 强制拒绝（不拦 TRUNCATE，供测试清库；项目首个触发器）。
 
 ---
 
@@ -312,7 +321,7 @@ erDiagram
 
 - **占比结算**（收集类 `S_i = S_总 × n_i/N_总`）：窗口函数 `SUM(qty) OVER (PARTITION BY project_id, item_id)`。
 - **A 类贡献度** `G = α(t/T)+β(p/P)`：分别聚合 `placement_records`（t）与 `submissions`（p）占比，加权。
-- **榜单**：`players.total_score` 排序 + 赛季窗口（按 `score_ledger.created_at` 范围重算）。
+- **榜单**：按 `score_ledger` 聚合余额排名（`GET /v1/scoring/admin/balances`，R-5 account 级）+ 赛季窗口（按 `created_at` 范围重算）；`players.total_score` 冗余列未实现。
 - **进度监控**：`material_lists.delivered_qty / required_qty`。
 
 ## 9. 迁移与种子
@@ -488,6 +497,10 @@ stateDiagram-v2
 
 > 只记录迁移链顺序与不在表结构中的代码/服务层变更；表结构详情见对应 §节。
 
+### 2026-08-19：score_ledger 文档对齐迁移 0024（CR MEDIUM）
+
+`scoring.score_ledger` 落地时文档未同步，本次对齐：§4.3 表契约重写（`account_id` FK RESTRICT 锚 WebAccount / `delta` CHECK≠0 / reason 6 值枚举 / `sheet_id` 弱引用 / `operator_uuid` + `idempotency_key` + `note` 列 + 4 索引 + append-only 触发器）；§0 schema 划分（`scoring` + `construction`/`system` 移入已实现，head = 0024）；ER 图 `score_ledger` 改挂 `web_accounts`（R-5）；§8 榜单查询改 ledger 聚合口径。
+
 ### 2026-07-19：迁移链重编号 + Web 账号主锚 + sheet_managers 升 account 级
 
 迁移链 `0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（head = 0016）。身份主锚升级（R-5）落地：详见 §0、§2.1（`web_account_id`）、§2.4（`web_accounts`）、§2.5（`bind_tokens`）。`sheet_managers` PK 变 account 级：详见 §10.5；权限矩阵变化（`advance ?to=constructing` 改 tier B）见 [`api/sheets.md`](./api/sheets.md) §7.1。
@@ -510,4 +523,4 @@ stateDiagram-v2
 
 ---
 
-*最后更新：2026-07-21*
+*最后更新：2026-08-19（score_ledger 对齐迁移 0024；ER 图/§0/§4.3/§8 同步）*

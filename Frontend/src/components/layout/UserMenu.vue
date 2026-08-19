@@ -52,7 +52,8 @@ function onLogout(): void {
       </button>
       <template #dropdown>
         <el-dropdown-menu>
-          <el-dropdown-item @click="router.push('/me')">我的身份</el-dropdown-item>
+          <!-- 托管管理账号无绑定玩家（auth.player 为 null）：/me 需玩家身份，隐藏入口 -->
+          <el-dropdown-item v-if="auth.player" @click="router.push('/me')">我的身份</el-dropdown-item>
           <el-dropdown-item v-if="isTemporary" @click="router.push('/register')">
             注册永久账号
           </el-dropdown-item>
