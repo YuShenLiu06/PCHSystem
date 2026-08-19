@@ -160,7 +160,7 @@ onMounted(load)
     </el-table>
 
     <div class="pch-balances__footer">
-      <el-select :model-value="limit" class="pch-balances__limit-select" @change="onLimitChange">
+      <el-select v-model="limit" class="pch-balances__limit-select" @change="onLimitChange">
         <el-option v-for="n in LIMIT_OPTIONS" :key="n" :value="n" :label="`${n} 条/页`" />
       </el-select>
       <el-pagination
@@ -209,7 +209,7 @@ onMounted(load)
 
       <div class="pch-balances__footer">
         <el-select
-          :model-value="dLimit"
+          v-model="dLimit"
           class="pch-balances__limit-select"
           @change="onDrawerLimitChange"
         >

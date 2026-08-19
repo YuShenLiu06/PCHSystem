@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, h, inject, provide, type PropType } from 'vue'
 
 // mock api（不真发请求；组件还解构 LIMIT_OPTIONS，一并给出）
 vi.mock('../../../api/scoring', () => ({
@@ -65,6 +66,37 @@ const LEDGER_PAGE = {
   limit: 50,
 }
 
+// el-select 交互化替身：option 点击 → 先 update:modelValue 再 change（对齐
+// element-plus useSelect 真实 emit 顺序），供 v-model 回写 + @change 重查断言。
+const SELECT_PICK: unique symbol = Symbol('stubSelectPick')
+
+const ElSelectStub = defineComponent({
+  name: 'ElSelect',
+  props: { modelValue: { type: null as unknown as PropType<unknown>, default: undefined } },
+  emits: ['update:modelValue', 'change'],
+  setup(_props, { emit, slots }) {
+    provide(SELECT_PICK, (value: unknown) => {
+      emit('update:modelValue', value)
+      emit('change', value)
+    })
+    return () => h('div', { class: 'stub-select' }, slots.default?.())
+  },
+})
+
+const ElOptionStub = defineComponent({
+  name: 'ElOption',
+  props: { value: { type: null as unknown as PropType<unknown>, default: undefined } },
+  setup(props) {
+    const pick = inject<(value: unknown) => void>(SELECT_PICK, () => {})
+    return () =>
+      h('div', {
+        class: 'stub-option',
+        'data-value': String(props.value),
+        onClick: () => pick(props.value),
+      })
+  },
+})
+
 const globalStubs = {
   ElTable: ElTableStub,
   ElTableColumn: ElTableColumnStub,
@@ -79,8 +111,8 @@ const globalStubs = {
   },
   ElSkeleton: { template: '<div class="stub-skeleton" />' },
   ElButton: { template: '<button><slot /></button>' },
-  ElSelect: { template: '<div class="stub-select"><slot /></div>' },
-  ElOption: { template: '<div class="stub-option" />' },
+  ElSelect: ElSelectStub,
+  ElOption: ElOptionStub,
   ElPagination: { template: '<div class="stub-pagination" />' },
 }
 
@@ -144,6 +176,33 @@ describe('ScoringBalances · 行点击下钻抽屉', () => {
     await flushPromises()
     const drawer = wrapper.find('.stub-drawer')
     expect(drawer.find('.stub-tag').attributes('data-type')).toBe('danger')
+  })
+
+  it('抽屉切「100 条/页」→ 以新 limit 重查且页码归 1（CR HIGH 防假绿）', async () => {
+    mockedBalances.mockResolvedValueOnce(BALANCES_PAGE)
+    mockedLedger.mockResolvedValue(LEDGER_PAGE)
+    const wrapper = mountBalances()
+    await flushPromises()
+    await wrapper.findAll('.stub-row')[0].trigger('click')
+    await flushPromises()
+    // 抽屉 footer 里的 select（DOM 上第二张表后于主表 footer，找 drawer 内的 option）
+    const drawer = wrapper.find('.stub-drawer')
+    await drawer.findAll('.stub-option')[2].trigger('click') // LIMIT_OPTIONS[2] = 100
+    await flushPromises()
+    expect(mockedLedger).toHaveBeenLastCalledWith({ account_id: 7, page: 1, limit: 100 })
+  })
+
+  it('主表切每页条数同样生效（同根因基线修复的护栏）', async () => {
+    mockedBalances.mockResolvedValue(BALANCES_PAGE)
+    const wrapper = mountBalances()
+    await flushPromises()
+    // 主表 footer 的 select 在 drawer 之前（DOM 顺序第一个）
+    await wrapper.findAll('.stub-select')[0].findAll('.stub-option')[1].trigger('click') // 50
+    await flushPromises()
+    expect(mockedBalances).toHaveBeenLastCalledWith({ page: 1, limit: 50 })
+    await wrapper.findAll('.stub-select')[0].findAll('.stub-option')[3].trigger('click') // 200
+    await flushPromises()
+    expect(mockedBalances).toHaveBeenLastCalledWith({ page: 1, limit: 200 })
   })
 
   it('下钻加载失败 → ElMessage.error + ErrorState，重试重查', async () => {
