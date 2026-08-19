@@ -139,7 +139,7 @@ PCHSystem/
 | submit-extension API | [`Docs/architecture/api/submit-extension.md`](./Docs/architecture/api/submit-extension.md) | `POST /sheets/{id}/submit-batch` 程序化批量提交入口 · 双鉴权（服务端组件 service-token+UUID / 客户端 mod JWT）· 4 类典型场景 · reason 枚举 · 回执折叠策略 |
 | parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + `POST /parsing/nbt` Create 蓝图解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
 | construction API | [`Docs/architecture/api/construction.md`](./Docs/architecture/api/construction.md) | `POST /v1/construction/report` 施工方块净放置上报（双通道：service-token 多玩家 / JWT[mod_id]）· 严格单源 · 归因三分支 · 切源两端点 · admin 设置/白名单 · **默认追踪器实现契约 C-1~C-10**（供 MCDR PR） · 归档/结算接入契约（D8） |
-| scoring API | [`Docs/architecture/api/scoring.md`](./Docs/architecture/api/scoring.md) | POST /v1/scoring/credit·debit 批量记账（仅 service-token · append-only ledger · 幂等键 · 透支开关）+ GET /v1/scoring/ledger 多角色流水分页（迁移 0024）+ POST /v1/scoring/admin/adjust（**仅特权 JWT**，admin ≠ service-token）+ GET /v1/scoring/admin/players 玩家联想 + GET /v1/scoring/admin/balances 余额排名（积分管理面板双 tab）|
+| scoring API | [`Docs/architecture/api/scoring.md`](./Docs/architecture/api/scoring.md) | POST /v1/scoring/credit·debit 批量记账（仅 service-token · append-only ledger · 幂等键 · 透支开关）+ GET /v1/scoring/ledger 多角色流水分页（player_uuid / 特权专用 account_id 过滤，迁移 0024）+ POST /v1/scoring/admin/adjust（**仅特权 JWT**，admin ≠ service-token）+ GET /v1/scoring/admin/players 玩家联想 + GET /v1/scoring/admin/balances 余额排名（积分管理面板双 tab + 余额行下钻流水抽屉）|
 
 ---
 
@@ -171,4 +171,4 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-08-19（余额排名端点落地：§5 scoring API 行补 admin/balances、§7「积分层后续」补公开榜单待办注记；积分管理面板双 tab 见 CHANGELOG [Unreleased]）*
+*最后更新：2026-08-19（余额排名端点落地 + 余额下钻：§5 scoring API 行补 admin/balances、ledger account_id、下钻抽屉注记；积分管理面板双 tab 与下钻见 CHANGELOG [Unreleased]）*
