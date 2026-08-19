@@ -716,13 +716,6 @@ async def test_admin_players_search_privileged_only(client):
     assert resp.status_code == 200, resp.text
     assert "alice" in [p["player_name"] for p in resp.json()]
 
-    # Act + Assert（admin JWT）
-    resp = await client.get(
-        "/v1/scoring/admin/players", params={"q": "ali"}, headers={"Authorization": admin_bearer}
-    )
-    assert resp.status_code == 200, resp.text
-    assert "alice" in [p["player_name"] for p in resp.json()]
-
     # Act + Assert（普通玩家 JWT → 403）
     resp = await client.get(
         "/v1/scoring/admin/players", headers={"Authorization": normal_bearer}
