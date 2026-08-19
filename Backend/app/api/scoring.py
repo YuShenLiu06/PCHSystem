@@ -204,11 +204,17 @@ def _skip(player_uuid: UUID, reason: str) -> ScoreItemResult:
 async def _notify_score_change(
     session: AsyncSession, item: ScoreItem, entry: ScoreLedger, *, is_debit: bool
 ) -> None:
-    """accepted 条目落通知（同事务，RS-9：回滚则通知不落库）。"""
+    """accepted 条目落通知（同事务，RS-9：回滚则通知不落库）。
+
+    note 非空时拼进文案（``reason: note``）；标点用 ASCII——notification
+    入口的 ``_clean_text`` 白名单不含 U+FF00 全角符号区，全角括号/冒号会被
+    剔除成连体文本。
+    """
     title, category = (
         ("积分扣除", "scoring_debit") if is_debit else ("积分入账", "scoring_credit")
     )
-    body = f"{title} {entry.delta:+.2f}（{item.reason}），当前余额 {entry.balance_after:.2f}"
+    reason_text = f"{item.reason}: {item.note}" if item.note else item.reason
+    body = f"{title} {entry.delta:+.2f}({reason_text}), 当前余额 {entry.balance_after:.2f}"
     payload = {
         "amount": str(item.amount),
         "reason": item.reason,

@@ -393,6 +393,7 @@ async def test_notify_default_creates_notification(client):
     credit_note = by_category["scoring_credit"]
     assert credit_note.title == "积分入账"
     assert "12.50" in credit_note.body
+    assert "(collect)" in credit_note.body  # 无 note → 裸 reason，不拼冒号（ASCII 标点过 _clean_text 白名单）
     assert credit_note.payload["amount"] == "12.50"
     assert credit_note.payload["reason"] == "collect"
     assert credit_note.payload["balance_after"] == "12.50"
@@ -869,6 +870,8 @@ async def test_adjust_notify_and_operator_uuid_echo(client):
     notes = await _notifications_for(puuid)
     assert len(notes) == 1
     assert notes[0].category == "scoring_debit"
+    assert "(manual_adj: 误发回收)" in notes[0].body  # note 拼进通知文案（reason: note）
+    assert notes[0].payload["reason"] == "manual_adj"  # payload 保持裸枚举，不被 note 污染
 
 
 # ---------------------------------------------------------------------------
