@@ -24,12 +24,17 @@ COPY TestServer/config/mcdr_config.yml /mcdr/config.yml
 # 经 MCDR 原生 pim CLI 从官方插件目录下载 latest + 自动安装包内 Python 依赖
 # （取代旧的「.mcdr 二进制提交进 git + Dockerfile COPY + 手写 pip」方案，版本随 latest）
 # mkdir 必须显式做：WORKDIR 只建 /mcdr；且 pim 对无效输出目录静默 exit 0。
-# 末行 ls 校验产物：pim download/pipi 对部分失败也 exit 0，靠退出码拦不住。
+# 校验：pim download/pipi 对部分失败也 exit 0，靠退出码拦不住——
+#   逐 id 校验产物存在（拦「3 个只下到 2 个」），sha256 清单随构建日志留档可审计。
 RUN mkdir -p /mcdr/plugins \
  && mcdreforged pim download chest_scanner_lib uuid_api_remake minecraft_data_api \
         -o /mcdr/plugins/ \
  && mcdreforged pim pipi /mcdr/plugins/*.mcdr \
- && ls /mcdr/plugins/*.mcdr >/dev/null
+ && ls -la /mcdr/plugins/ \
+ && sha256sum /mcdr/plugins/*.mcdr \
+ && for id in chest_scanner_lib uuid_api_remake MinecraftDataAPI; do \
+        ls /mcdr/plugins/ | grep -q "$id" || { echo "missing plugin asset: $id" >&2; exit 1; }; \
+    done
 COPY McdrPlugin /mcdr/plugins/pch_system
 # pch_system 配置：load_config_simple("config.json") 默认从 <MCDR>/config/<plugin_id>/config.json 加载
 COPY TestServer/config/pch_system_config.json /mcdr/config/pch_system/config.json

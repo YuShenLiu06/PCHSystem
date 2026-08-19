@@ -405,7 +405,9 @@ upgrade_dep_plugins() {
 
     local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
     local tmp; tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' RETURN
+    # RETURN trap 不会随函数返回自动撤销——不自清则 main() 返回时再次触发，
+    # $tmp 越作用域 → set -u 下 unbound variable 中止（E2E --upgrade-plugins 实测抓到）
+    trap 'rm -rf "$tmp"; trap - RETURN' RETURN
 
     log_step "升级 MCDR 依赖插件（pim latest）"
     # shellcheck disable=SC2046  # 故意分词：id 列表逐个传参
