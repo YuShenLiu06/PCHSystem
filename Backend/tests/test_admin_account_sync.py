@@ -103,7 +103,7 @@ async def test_sync_idempotent_on_second_run():
     assert first.id == second.id
 
 
-async def test_sync_upgrades_existing_user_role_to_owner():
+async def test_sync_upgrades_existing_user_role_to_owner(caplog):
     # Arrange — 预置同名 role=user 永久账号
     async with async_session_factory() as s:
         s.add(
@@ -119,10 +119,12 @@ async def test_sync_upgrades_existing_user_role_to_owner():
     async with async_session_factory() as s:
         await sync_admin_account(s, _settings())
 
-    # Assert — 只升不降：user → owner
+    # Assert — 只升不降：user → owner；撞名接管必须留 warning 日志供运维复核
     account = await _fetch_account("panel_admin")
     assert account is not None
     assert account.role == "owner"
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "撞名" in joined and "panel_admin" in joined
 
 
 async def test_sync_never_touches_existing_admin_role():

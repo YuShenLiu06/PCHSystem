@@ -79,6 +79,16 @@ async def sync_admin_account(
 
     changed = False
     if account.role not in ("admin", "owner"):
+        # 撞名接管信号：普通账号（大概率玩家注册名）被 ADMIN_USERNAME 命中
+        # → 升 owner + env 密码覆盖（原密码失效），日志警示供运维复核
+        logger.warning(
+            "admin account sync: ADMIN_USERNAME=%r 与现有非特权账号 "
+            "(account_id=%s role=%s) 撞名，将升为 owner 并以 env 密码为准"
+            "（原密码失效）——若非有意接管请更换 ADMIN_USERNAME",
+            username,
+            account.id,
+            account.role,
+        )
         account.role = "owner"  # 只升不降：已是特权角色则不动
         changed = True
     if not account.password_hash or not verify_password(

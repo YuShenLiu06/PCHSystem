@@ -27,7 +27,8 @@
 
 ### Fixed
 
-- _暂无_
+- **透支守卫方向（CR）**：`score_service.write_ledger` 余额守卫此前不分记账方向——负余额账号（经 `allow_overdraft` 出账后）的合法 credit 入账被静默 skip 不记账；守卫现限定出账（`delta < 0`），入账不再检查余额正负。
+- **admin 托管账号撞名可见性（CR）**：`ADMIN_USERNAME` 与现有玩家用户名相同时的静默接管（升 owner + env 密码覆盖）此前无任何提示，现启动日志打 warning（`.env.example` 同步警示注释）。
 
 ### Security
 
