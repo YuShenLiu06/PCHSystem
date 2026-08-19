@@ -4,6 +4,7 @@ import {
   fetchLedger,
   adminAdjust,
   searchScoringPlayers,
+  LIMIT_OPTIONS,
   type ScoreLedgerEntry,
   type ScoreReason,
   type PlayerOption,
@@ -14,6 +15,7 @@ import { extractApiError } from '../../utils/error'
 import PageHeader from '../../components/layout/PageHeader.vue'
 import EmptyState from '../../components/feedback/EmptyState.vue'
 import ErrorState from '../../components/feedback/ErrorState.vue'
+import ScoringBalances from './ScoringBalances.vue'
 
 // reason → 中文（方向对齐后端 LEDGER_REASON_SIGN：前四入账 +、后二出账 −）
 const REASON_LABEL: Record<ScoreReason, string> = {
@@ -37,8 +39,6 @@ const SKIP_REASON_LABEL: Record<string, string> = {
   'insufficient balance': '余额不足（未开透支）',
   'idempotency key conflict': '幂等键冲突',
 }
-
-const LIMIT_OPTIONS = [20, 50, 100, 200] as const
 
 function playerLabel(p: PlayerOption): string {
   return p.display_name && p.display_name !== p.player_name
@@ -96,6 +96,26 @@ function onReset(): void {
   until.value = undefined
   limit.value = 50
   onQuery()
+}
+
+// --- 双 tab（积分流水 / 玩家积分）：刷新与调分联动只作用于当前 tab ---
+
+const activeTab = ref<'ledger' | 'balances'>('ledger')
+const balancesRef = ref<InstanceType<typeof ScoringBalances>>()
+
+function onRefresh(): void {
+  if (activeTab.value === 'ledger') void load()
+  else void balancesRef.value?.load()
+}
+
+/** 调分成功后刷当前 tab（流水最新一条在第 1 页，id DESC） */
+function refreshActiveTab(): void {
+  if (activeTab.value === 'ledger') {
+    page.value = 1
+    void load()
+  } else {
+    void balancesRef.value?.load()
+  }
 }
 
 async function onSearchPlayers(q: string): Promise<void> {
@@ -213,8 +233,7 @@ async function onAdjustSubmit(): Promise<void> {
           ? '该调整此前已生效（幂等回放），未重复记账'
           : `已调整，调整后余额 ${r.entry?.balance_after ?? '—'}`,
       )
-      page.value = 1
-      void load()
+      refreshActiveTab()
     } else {
       // 恒 200 逐条结算：skip 非异常，warn 提示原因
       notifyWarn(`未生效：${SKIP_REASON_LABEL[r.skip_reason ?? ''] ?? r.skip_reason ?? '未知原因'}`)
@@ -232,114 +251,122 @@ onMounted(load)
 <template>
   <PageHeader title="积分管理">
     <template #actions>
-      <el-button @click="load">刷新</el-button>
+      <el-button @click="onRefresh">刷新</el-button>
       <el-button type="primary" @click="openAdjust">调整积分</el-button>
     </template>
   </PageHeader>
 
-  <el-card class="pch-scoring__filters">
-    <el-form inline @submit.prevent="onQuery">
-      <el-form-item label="玩家">
-        <el-select
-          v-model="filterPlayerUuid"
-          filterable
-          remote
-          clearable
-          placeholder="玩家名 / 昵称联想"
-          :remote-method="onSearchPlayers"
-          :loading="playerSearchLoading"
-          class="pch-scoring__player-select"
-        >
-          <el-option
-            v-for="p in playerOptions"
-            :key="p.player_uuid"
-            :value="p.player_uuid"
-            :label="playerLabel(p)"
+  <el-tabs v-model="activeTab">
+    <el-tab-pane label="积分流水" name="ledger">
+      <el-card class="pch-scoring__filters">
+        <el-form inline @submit.prevent="onQuery">
+          <el-form-item label="玩家">
+            <el-select
+              v-model="filterPlayerUuid"
+              filterable
+              remote
+              clearable
+              placeholder="玩家名 / 昵称联想"
+              :remote-method="onSearchPlayers"
+              :loading="playerSearchLoading"
+              class="pch-scoring__player-select"
+            >
+              <el-option
+                v-for="p in playerOptions"
+                :key="p.player_uuid"
+                :value="p.player_uuid"
+                :label="playerLabel(p)"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="起始">
+            <el-date-picker v-model="since" type="datetime" placeholder="含此时刻起" />
+          </el-form-item>
+          <el-form-item label="截止">
+            <el-date-picker v-model="until" type="datetime" placeholder="到此时刻前（不含）" />
+          </el-form-item>
+          <el-form-item label="每页">
+            <el-select v-model="limit" class="pch-scoring__limit-select">
+              <el-option v-for="n in LIMIT_OPTIONS" :key="n" :value="n" :label="`${n} 条`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="onQuery">查询</el-button>
+            <el-button @click="onReset">重置</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <el-card>
+        <el-skeleton v-if="isFirstLoad" :rows="6" animated />
+
+        <ErrorState
+          v-else-if="loadError && entries.length === 0"
+          :message="loadError"
+          @retry="load"
+        />
+
+        <EmptyState
+          v-else-if="entries.length === 0"
+          with-mark
+          title="暂无积分流水"
+          hint="调整玩家 / 时间筛选，或先做一次积分调整。"
+        />
+
+        <el-table v-else v-loading="loading" :data="entries">
+          <el-table-column label="时间" width="180" class-name="pch-mono-col">
+            <template #default="{ row }">
+              {{ new Date(row.created_at).toLocaleString() }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="account_id" label="账号" width="90" class-name="pch-mono-col" />
+          <el-table-column label="变动" width="120" align="right" class-name="pch-mono-col">
+            <template #default="{ row }">
+              <el-tag
+                :type="row.delta.startsWith('-') ? 'danger' : 'success'"
+                size="small"
+                effect="plain"
+              >
+                {{ row.delta.startsWith('-') ? row.delta : `+${row.delta}` }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column
+            prop="balance_after"
+            label="余额"
+            width="110"
+            align="right"
+            class-name="pch-mono-col"
           />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="起始">
-        <el-date-picker v-model="since" type="datetime" placeholder="含此时刻起" />
-      </el-form-item>
-      <el-form-item label="截止">
-        <el-date-picker v-model="until" type="datetime" placeholder="到此时刻前（不含）" />
-      </el-form-item>
-      <el-form-item label="每页">
-        <el-select v-model="limit" class="pch-scoring__limit-select">
-          <el-option v-for="n in LIMIT_OPTIONS" :key="n" :value="n" :label="`${n} 条`" />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="onQuery">查询</el-button>
-        <el-button @click="onReset">重置</el-button>
-      </el-form-item>
-    </el-form>
-  </el-card>
+          <el-table-column label="原因" width="110">
+            <template #default="{ row }">
+              {{ REASON_LABEL[row.reason as ScoreReason] ?? row.reason }}
+            </template>
+          </el-table-column>
+          <el-table-column label="项目" width="90" align="center">
+            <template #default="{ row }">{{ row.sheet_id ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column prop="note" label="备注" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.note ?? '—' }}</template>
+          </el-table-column>
+        </el-table>
 
-  <el-card>
-    <el-skeleton v-if="isFirstLoad" :rows="6" animated />
+        <el-pagination
+          v-if="total > 0"
+          v-model:current-page="page"
+          class="pch-scoring__pager"
+          layout="total, prev, pager, next, jumper"
+          :total="total"
+          :page-size="limit"
+          @current-change="load"
+        />
+      </el-card>
+    </el-tab-pane>
 
-    <ErrorState
-      v-else-if="loadError && entries.length === 0"
-      :message="loadError"
-      @retry="load"
-    />
-
-    <EmptyState
-      v-else-if="entries.length === 0"
-      with-mark
-      title="暂无积分流水"
-      hint="调整玩家 / 时间筛选，或先做一次积分调整。"
-    />
-
-    <el-table v-else v-loading="loading" :data="entries">
-      <el-table-column label="时间" width="180" class-name="pch-mono-col">
-        <template #default="{ row }">
-          {{ new Date(row.created_at).toLocaleString() }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="account_id" label="账号" width="90" class-name="pch-mono-col" />
-      <el-table-column label="变动" width="120" align="right" class-name="pch-mono-col">
-        <template #default="{ row }">
-          <el-tag
-            :type="row.delta.startsWith('-') ? 'danger' : 'success'"
-            size="small"
-            effect="plain"
-          >
-            {{ row.delta.startsWith('-') ? row.delta : `+${row.delta}` }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column
-        prop="balance_after"
-        label="余额"
-        width="110"
-        align="right"
-        class-name="pch-mono-col"
-      />
-      <el-table-column label="原因" width="110">
-        <template #default="{ row }">
-          {{ REASON_LABEL[row.reason as ScoreReason] ?? row.reason }}
-        </template>
-      </el-table-column>
-      <el-table-column label="项目" width="90" align="center">
-        <template #default="{ row }">{{ row.sheet_id ?? '—' }}</template>
-      </el-table-column>
-      <el-table-column prop="note" label="备注" min-width="160" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.note ?? '—' }}</template>
-      </el-table-column>
-    </el-table>
-
-    <el-pagination
-      v-if="total > 0"
-      v-model:current-page="page"
-      class="pch-scoring__pager"
-      layout="total, prev, pager, next, jumper"
-      :total="total"
-      :page-size="limit"
-      @current-change="load"
-    />
-  </el-card>
+    <el-tab-pane label="玩家积分" name="balances" lazy>
+      <ScoringBalances ref="balancesRef" />
+    </el-tab-pane>
+  </el-tabs>
 
   <el-dialog v-model="adjustVisible" title="调整积分" width="480px">
     <el-form label-width="88px">
