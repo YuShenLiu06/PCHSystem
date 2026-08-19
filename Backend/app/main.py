@@ -1,6 +1,9 @@
+import logging
+from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 
 from fastapi import FastAPI
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.api.auth import router as auth_router, top_router
 from app.api.construction import router as construction_router
@@ -12,9 +15,28 @@ from app.api.identity import (
 from app.api.notifications import router as notifications_router
 from app.api.parsing import router as parsing_router
 from app.api.players import router as players_router
+from app.api.scoring import router as scoring_router
 from app.api.sheets import router as sheets_router
 from app.core.config import get_settings
+from app.core.db import async_session_factory
 from app.core.web_probe import probe_web
+from app.services.admin_account_service import sync_admin_account
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """启动钩子：ADMIN_* 已配置时同步 admin 托管账号（幂等；失败仅日志不阻断启动）。"""
+    settings = get_settings()
+    if settings.admin_account_configured:
+        try:
+            async with async_session_factory() as session:
+                await sync_admin_account(session, settings)
+        except (OperationalError, ProgrammingError) as exc:
+            # 首启未跑 alembic 等场景：记日志放行，不阻断 /healthz 与其余端点
+            logger.error("admin account sync failed: %s", exc)
+    yield
 
 
 def _backend_version() -> str:
@@ -31,7 +53,9 @@ def _backend_version() -> str:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="HTCMC PCHSystem", version=_backend_version())
+    app = FastAPI(
+        title="HTCMC PCHSystem", version=_backend_version(), lifespan=_lifespan
+    )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -63,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications_router)
     app.include_router(players_router)
     app.include_router(construction_router)
+    app.include_router(scoring_router)
     app.include_router(top_router)
     return app
 

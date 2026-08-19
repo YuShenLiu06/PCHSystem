@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # 容器自身（误报不可达）。空 = 不探，/info 的 web_online=null，插件回退自探 web_base_url。
     web_probe_url: str = ""
 
+    # admin 面板托管账号（积分管理等 /admin 页面登录用，R-11 经 .env 注入）：
+    # 启动时经 lifespan 幂等同步为 DB 中 role=owner 的 WebAccount（无绑定玩家，
+    # 与所有 sheet owner 平级）。两者均非空才启用；未配置 = 静默跳过（不做
+    # fail-fast，不影响未启用面板的部署与测试）。env 是该账号密码权威源，修改需重启。
+    admin_username: str = ""
+    admin_password: str = ""
+
     # 投影解析：上传字节上限（默认 50MB）
     litematic_max_upload_bytes: int = 50 * 1024 * 1024
     # .nbt(Create 蓝图 / structure) 解析：上传字节上限（默认 50MB）
@@ -91,6 +98,11 @@ class Settings(BaseSettings):
                 "(service-token 代理写通道的共享密钥，禁止空)"
             )
         return v
+
+    @property
+    def admin_account_configured(self) -> bool:
+        """admin 托管账号已配置（ADMIN_USERNAME / ADMIN_PASSWORD 均非空）。"""
+        return bool(self.admin_username.strip()) and bool(self.admin_password)
 
     @property
     def postgres_dsn(self) -> str:

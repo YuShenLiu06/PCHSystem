@@ -63,6 +63,11 @@ export const router = createRouter({
       component: () => import('../views/admin/ConstructionSettings.vue'),
       meta: { requiresAdmin: true, title: '施工管理' },
     },
+    {
+      path: '/admin/scoring',
+      component: () => import('../views/admin/ScoringAdmin.vue'),
+      meta: { requiresAdmin: true, title: '积分管理' },
+    },
     { path: '/', redirect: '/me' },
     // catch-all 兜底：错误地址此前静默空白页
     {

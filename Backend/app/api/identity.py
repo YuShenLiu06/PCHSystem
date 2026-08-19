@@ -85,6 +85,8 @@ async def password_login(
 
     契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久），
     player 取该账号首个绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。
+    例外：环境同步的托管管理账号（admin 面板，sync_admin_account 产物）无绑定玩家，
+    player=None、JWT 无 active_uuid（限 /admin 面板端点使用）。
     限频：入口按 IP + (username, ip) 双维度滑窗（bcrypt 慢哈希配合防爆破/撞库）；成功后清零。
     """
     ip = request.client.host if request.client else None
@@ -107,12 +109,9 @@ async def password_login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
 
     players = await web_account_repo.list_players(session, account.id)
-    if not players:
-        # 永久账号必有至少一个绑定 player；防御性兜底（数据异常时显式 401 而非 500）
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "account has no bound player")
-
-    first = players[0]
-    access, refresh = _issue_jwt_for_account(account, first.uuid)
+    # 托管管理账号（admin 面板）无绑定玩家：player=None、JWT 无 active_uuid
+    first = players[0] if players else None
+    access, refresh = _issue_jwt_for_account(account, first.uuid if first else None)
 
     # 登录成功：清除该 IP / credential 的失败计数，正常用户不累积触发限频
     login_by_ip.reset(ip)
@@ -121,7 +120,7 @@ async def password_login(
     return TokenExchangeResponse(
         access_token=access,
         refresh_token=refresh,
-        player=_player_brief(first, account.role),
+        player=_player_brief(first, account.role) if first is not None else None,
         account=_account_brief(account),
     )
 
