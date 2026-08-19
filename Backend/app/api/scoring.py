@@ -18,6 +18,9 @@
   ``operator=jwt-account:<id>`` 标签记录。
 - ``GET /v1/scoring/admin/players``：特权玩家联想（面板调分/筛选选人用，
   鉴权同 admin/adjust：仅特权 JWT）。
+- ``GET /v1/scoring/admin/balances``：所有玩家（WebAccount）当前积分余额
+  排名（面板「玩家积分」tab），鉴权同 admin/adjust：仅特权 JWT；
+  balance = SUM(delta)（R-2 重建），排序 balance DESC + account_id 稳定序。
 - ``GET /v1/scoring/ledger``：流水查询，**多角色**——service-token 或 admin/owner
   JWT 可查全局（可按 ``player_uuid`` 收敛到单账号）；普通玩家 JWT 只能查自身
   account（他人 uuid → 403）。H-2：Authorization 头存在（即便非法）只走 JWT
@@ -50,6 +53,8 @@ from app.schemas.scoring import (
     AdminAdjustBatchRequest,
     CreditBatchRequest,
     DebitBatchRequest,
+    ScoreBalanceRow,
+    ScoreBalancesPage,
     ScoreBatchResult,
     ScoreItem,
     ScoreItemResult,
@@ -398,6 +403,45 @@ async def admin_search_players(
         )
         for p in players
     ]
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/balances
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/balances", response_model=ScoreBalancesPage)
+async def admin_balances(
+    _access: PrivilegedAccess = Depends(require_privileged_access),
+    session: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+) -> ScoreBalancesPage:
+    """所有玩家当前积分余额排名（积分管理面板「玩家积分」tab）。
+
+    仅特权 JWT（鉴权同 admin/adjust：无凭证/service-token → 401、普通玩家
+    403）。行 = 有绑定玩家的 WebAccount（R-5 归属锚）；``balance`` = SUM(delta)
+    （R-2 append-only 重建，与最新 balance_after 恒一致）；排序 balance DESC +
+    account_id 稳定序。聚合与 display_name 回退链细节见
+    ``score_repo.list_balances``。
+    """
+    rows, total = await score_repo.list_balances(session, page=page, limit=limit)
+    return ScoreBalancesPage(
+        items=[
+            ScoreBalanceRow(
+                account_id=r.account_id,
+                display_name=r.display_name,
+                player_names=list(r.player_names),
+                balance=r.balance,
+                entries_count=r.entries_count,
+                last_entry_at=r.last_entry_at,
+            )
+            for r in rows
+        ],
+        total=total,
+        page=page,
+        limit=limit,
+    )
 
 
 # ---------------------------------------------------------------------------

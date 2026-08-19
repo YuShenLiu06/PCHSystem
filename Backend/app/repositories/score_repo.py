@@ -10,13 +10,15 @@
 - 写入仅经 ``app/services/score_service.write_ledger`` 入口（锁内算余额），
   禁止其他路径直接 ``create``。
 """
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Numeric, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scoring import ScoreLedger
+from app.models.user import Player, WebAccount
 
 
 async def acquire_account_lock(session: AsyncSession, account_id: int) -> None:
@@ -115,3 +117,92 @@ async def list_entries(
     )
     rows = list((await session.execute(stmt)).scalars().all())
     return rows, total
+
+
+@dataclass(frozen=True)
+class BalanceRow:
+    """账号余额聚合行（``list_balances`` 返回；display_name 已按 #41 回退链解析）。"""
+
+    account_id: int
+    display_name: str
+    player_names: tuple[str, ...]
+    balance: Decimal
+    entries_count: int
+    last_entry_at: datetime | None
+
+
+async def list_balances(
+    session: AsyncSession, *, page: int, limit: int
+) -> tuple[list[BalanceRow], int]:
+    """所有已绑定玩家的 WebAccount 当前余额排名（只读，供 admin/balances）。
+
+    - 行集 = 有 ≥1 绑定玩家的账号（未绑定玩家 credit/debit 本就 skip，
+      无积分语义）；余额归属锚 = WebAccount（R-5），同账号多玩家一行。
+    - ``balance`` = SUM(delta)（append-only 可审计重建，R-2，与该账号最新
+      ``balance_after`` 恒一致；无流水 → 0.00）。
+    - 排序 balance DESC、account_id ASC（榜单 + 平分稳定序）。
+    - ``player_names`` 按 last_seen_at DESC（最新在前，同名去重）；
+      ``display_name`` 空 → 回退首个玩家名（#41 链最新成员名）。
+    """
+    bound_ids = select(Player.web_account_id).where(
+        Player.web_account_id.is_not(None)
+    )
+    total = (
+        await session.execute(
+            select(func.count())
+            .select_from(WebAccount)
+            .where(WebAccount.id.in_(bound_ids))
+        )
+    ).scalar_one()
+
+    agg = (
+        select(
+            WebAccount.id,
+            WebAccount.display_name,
+            func.coalesce(func.sum(ScoreLedger.delta), 0)
+            .cast(Numeric(18, 2))
+            .label("balance"),
+            func.count(ScoreLedger.id).label("entries_count"),
+            func.max(ScoreLedger.created_at).label("last_entry_at"),
+        )
+        .join_from(
+            WebAccount, ScoreLedger, ScoreLedger.account_id == WebAccount.id,
+            isouter=True,
+        )
+        .where(WebAccount.id.in_(bound_ids))
+        .group_by(WebAccount.id, WebAccount.display_name)
+        .order_by(desc("balance"), WebAccount.id)
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
+    rows = (await session.execute(agg)).all()
+    if not rows:
+        return [], total
+
+    players = (
+        (
+            await session.execute(
+                select(Player)
+                .where(Player.web_account_id.in_([r.id for r in rows]))
+                .order_by(Player.last_seen_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    names_by_account: dict[int, list[str]] = {}
+    for p in players:
+        names_by_account.setdefault(p.web_account_id, []).append(p.current_name)
+
+    return [
+        BalanceRow(
+            account_id=r.id,
+            display_name=r.display_name
+            or (names_by_account.get(r.id) or [str(r.id)])[0],
+            player_names=tuple(dict.fromkeys(names_by_account.get(r.id, []))),
+            balance=r.balance,
+            entries_count=r.entries_count,
+            last_entry_at=r.last_entry_at,
+        )
+        for r in rows
+    ], total
