@@ -50,7 +50,7 @@ flowchart LR
     AUTH -->|/auth/*,/web-accounts/*,/bind/*| U[user-service]
     USER -->|/players,/web-accounts| U
     PROJ -->|/sheets/*,/sheets/{id}/managers| P[project-service]
-    SCORE -->|/submissions,/scores| S[scoring-service]
+    SCORE -->|/v1/scoring/*| S[scoring-service]
     TITLE -->|/titles/*| T[title-service]
     WIKI -->|/wiki/sync-log| W[wiki-service]
     ALERT -->|/alerts| A[alert-service]
@@ -62,7 +62,7 @@ flowchart LR
 | 身份管理 | `Login.vue`（密码登录）/ `Register.vue`（临时→永久）/ `BindConfirm.vue`（game_init 短码确认）/ `ClaimBind.vue`（web_init 挂接）/ `Me.vue`（账号 + 绑定 UUID 列表 + 昵称）/ `AuthExchange.vue`（token 兑换 + 临时/永久分流） | user-service |
 | 玩家·账号 | 玩家列表、改名过户、白名单状态、Web 账号 | user-service |
 | 项目管理 | 项目列表、立项（上传 `.litematic`）、材料清单、CSV 导出、状态流转、协管员管理面板（`SheetEditor` 内联，owner 增/撤销 + 全员可见列表） | project-service |
-| 提交·积分·榜单 | 提交审计、手动修正、榜单（总/赛季/分类） | scoring-service |
+| 提交·积分·榜单 | 积分管理 `ScoringAdmin.vue`（`/admin/scoring`，admin/owner：流水玩家/时间筛选 + 服务端分页 + 单条调分弹窗）；提交审计、榜单（规划） | scoring-service |
 | 称号管理 | 称号梯度配置、玩家已解锁称号、前缀预览 | title-service |
 | Wiki 同步 | 同步日志、失败重试 | wiki-service |
 | 告警中心 | 告警队列、ack/resolve、转白名单复核 | alert-service |

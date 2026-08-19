@@ -139,7 +139,7 @@ PCHSystem/
 | submit-extension API | [`Docs/architecture/api/submit-extension.md`](./Docs/architecture/api/submit-extension.md) | `POST /sheets/{id}/submit-batch` 程序化批量提交入口 · 双鉴权（服务端组件 service-token+UUID / 客户端 mod JWT）· 4 类典型场景 · reason 枚举 · 回执折叠策略 |
 | parsing API | [`Docs/architecture/api/parsing.md`](./Docs/architecture/api/parsing.md) | `POST /parsing/litematic` 投影解析 + `POST /parsing/nbt` Create 蓝图解析 + 中文翻译 + ABC 架构 / `POST /sheets/from-items` 批量建表 |
 | construction API | [`Docs/architecture/api/construction.md`](./Docs/architecture/api/construction.md) | `POST /v1/construction/report` 施工方块净放置上报（双通道：service-token 多玩家 / JWT[mod_id]）· 严格单源 · 归因三分支 · 切源两端点 · admin 设置/白名单 · **默认追踪器实现契约 C-1~C-10**（供 MCDR PR） · 归档/结算接入契约（D8） |
-| scoring API | [`Docs/architecture/api/scoring.md`](./Docs/architecture/api/scoring.md) | POST /v1/scoring/credit·debit 批量记账（仅 service-token · append-only ledger · 幂等键 · 透支开关）+ GET /v1/scoring/ledger 多角色流水分页（迁移 0024）|
+| scoring API | [`Docs/architecture/api/scoring.md`](./Docs/architecture/api/scoring.md) | POST /v1/scoring/credit·debit 批量记账（仅 service-token · append-only ledger · 幂等键 · 透支开关）+ GET /v1/scoring/ledger 多角色流水分页（迁移 0024）+ POST /v1/scoring/admin/adjust（**仅特权 JWT**，admin ≠ service-token）+ GET /v1/scoring/admin/players 玩家联想（积分管理面板）|
 
 ---
 
@@ -166,9 +166,9 @@ PCHSystem/
 - [ ] **前端 `Identities.vue`**：账号下多 UUID 列表 + `active_uuid` 切换 UI 尚未实现（身份主锚升 account 级后规划，2026-07-19）。
 - [ ] **后端拆分为 `user_service/` 等子目录**后，用 `service-claude-md` skill 生成各子服务 CLAUDE.md（当前 Backend 仍为单 CLAUDE.md 导航待拆分）。
 - [ ] **wiki.js 纳入部署 + wiki 内容 git 仓 host 选型**（GitHub / Gitea / GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）。
-- [ ] **积分层后续**：`/me/scores` 汇总端点（JWT）、settle 编排（Calculator 链 + 归档 hook 接线）、玩家消耗积分端点（禁透支）。首批 credit/debit/ledger REST 端点 + 迁移 0024 已落地（[`api/scoring.md`](./Docs/architecture/api/scoring.md)）。
+- [ ] **积分层后续**：`/me/scores` 汇总端点（JWT）、settle 编排（Calculator 链 + 归档 hook 接线）、玩家消耗积分端点（禁透支）。首批 credit/debit/ledger REST 端点 + 迁移 0024 + **积分管理面板**（前端 `/admin/scoring`；后端 `admin/adjust` 仅特权 JWT + `admin/players` 联想 + `ADMIN_*` env 托管账号，见 [`api/scoring.md`](./Docs/architecture/api/scoring.md)）已落地。
 - [ ] **拍板待确认参数**：积分 `k / α / β / r`、赛季周期等（见 [`architecture.md`](./Docs/architecture.md) §9）。
 
 ---
 
-*最后更新：2026-08-15（积分层首批落地：§5 新增 scoring API 索引行，§7 待处理补「积分层后续」；CHANGELOG [Unreleased] 同步）*
+*最后更新：2026-08-19（积分管理面板落地：§5 scoring API 行补 admin/adjust·admin/players，§7「积分层后续」补面板已落地注记；CHANGELOG [Unreleased] 同步）*

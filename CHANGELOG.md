@@ -16,7 +16,9 @@
 ### Added
 
 - **积分层首批（迁移 0024）**：新增 `POST /v1/scoring/credit` / `POST /v1/scoring/debit` 批量记账端点（仅 service-token；append-only `scoring.score_ledger`，幂等键防重放 + 透支开关 + 可选同事务站内通知）与 `GET /v1/scoring/ledger` 多角色流水分页查询。
-- **管理员积分调控**：新增 `POST /v1/scoring/admin/adjust`（仅 service-token，面向服主 admin 面板 / 脚本；reason 放开全集、方向由 reason 符号定，单端点双向加减，`allow_overdraft` 同 debit）。
+- **管理员积分调控**：新增 `POST /v1/scoring/admin/adjust`（**仅 admin/owner JWT**，admin ≠ service-token；reason 放开全集、方向由 reason 符号定，单端点双向加减，`allow_overdraft` 同 debit，操作者经审计日志 `operator=jwt-account:<id>` 记录）与 `GET /v1/scoring/admin/players` 特权玩家联想。
+- **托管管理账号**：`.env` 配 `ADMIN_USERNAME`/`ADMIN_PASSWORD`（均非空启用）后启动时幂等同步为 role=owner、无绑定玩家的 WebAccount；`POST /auth/login` 放开无玩家账号（`player` 可空返回）。
+- **积分管理页（前端）**：新增 `/admin/scoring`（admin/owner 可见）——流水按玩家/时间筛选 + 服务端分页，调分弹窗（方向预览、透支开关仅出账、skip 原因中文提示、幂等回放提示）；登录支持无绑定玩家的托管账号（落地积分管理页，「我的身份」入口按绑定显隐）。
 
 ### Fixed
 
