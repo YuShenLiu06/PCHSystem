@@ -142,12 +142,24 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 
 脚本只负责**后端容器**（backend + postgres）。MC 服务端（Fabric + MCDReforged）由你自己持有。
 
-### 前置依赖（必须）
-`pch_system` 依赖另外两个 MCDR 插件，缺则加载失败：
+### 前置依赖（pim 自动安装）
+`pch_system` 依赖三个 MCDR 插件（均在 MCDR 官方插件目录收录）：
+- **`chest_scanner_lib`** —— [YuShenLiu06/mcdr-chest-scanner](https://github.com/YuShenLiu06/mcdr-chest-scanner)（箱子扫描：RCON 读箱 + 准星检测 + SNBT 解析 + 双联合并）
 - **`uuid_api_remake`** —— <https://github.com/gubaiovo/MCDR_uuid_api_remake>（离线 UUID 推导）
-- **`minecraft_data_api`** —— MCDR 插件市场的 `MinecraftDataAPI`
+- **`minecraft_data_api`** —— 官方插件目录的 `MinecraftDataAPI`（物品 / NBT 查询）
 
-`install.sh` / `update.sh` 会扫描你的 `plugins/` 并在缺失时 warn。
+`install.sh` 扫描 `plugins/`，检测到缺失时**经 MCDR 原生 pim CLI 自动安装**：`pim download` 从官方插件目录下载 .mcdr → `pim pipi` 安装各包内声明的 Python 依赖（交互确认，跳过则打印手动命令）。
+`update.sh --upgrade-plugins` 升级三个依赖插件到 latest：下载临时目录 → 文件名比对（内嵌版本号）→ 删旧换新（防同 id 双文件加载冲突）→ pipi。
+
+手动安装（等价命令）：
+
+```
+mcdreforged pim download chest_scanner_lib uuid_api_remake minecraft_data_api -o <MCDR>/plugins
+mcdreforged pim pipi <MCDR>/plugins/*.mcdr
+```
+
+> 国内网络 pip 慢：`PIP_INDEX_URL=<pip 镜像>` 环境变量会被脚本透传给 pipi（与 compose build 同约定）。
+> pim download 依赖官方插件目录 meta + GitHub Releases；两者不可达时回退＝手动下载 .mcdr 放入 `plugins/` 再跑 `pim pipi`。
 
 ### config.json 的 api_url（关键）
 插件配置 `<MCDR>/config/pch_system/config.json` 的 `api_url` 必须是**插件容器/进程能访问到后端的地址**：

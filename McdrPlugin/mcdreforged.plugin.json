@@ -1,6 +1,6 @@
 {
   "id": "pch_system",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "name": "PCH System",
   "description": "材料协作收集与项目进度管理，联动 Web 后台",
   "author": "YuShen",
@@ -9,6 +9,7 @@
   "dependencies": {
     "mcdreforged": ">=2.14.0",
     "uuid_api_remake": "*",
-    "minecraft_data_api": "*"
+    "minecraft_data_api": "*",
+    "chest_scanner_lib": ">=1.0.1"
   }
 }

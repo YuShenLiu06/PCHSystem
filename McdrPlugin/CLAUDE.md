@@ -18,7 +18,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | 管管 | 不管 |
 |---|---|
 | 游戏内命令交互（`!!PCH login` / `!!PCH bind` / `!!PCH submit` / `!!PCH score` 等） | 积分计算（交 scoring-service） |
-| 箱子 / 背包 / 手持物品扫描（RCON `data get`） | 业务数据持久化（交后端 PostgreSQL） |
+| 箱子扫描（v0.10.0 起由外部插件 `chest_scanner_lib` 提供）/ 背包 / 手持物品扫描（RCON `data get`） | 业务数据持久化（交后端 PostgreSQL） |
 | 离线模式 UUID 推导（依赖 `uuid_api_remake` 插件） | wiki 同步 |
 | 称号前缀下发（scoreboard team prefix） | 白名单审核决策 |
 | 向后端 HTTP 上报（带服务密钥） | 投影解析（交 project-service） |
@@ -38,7 +38,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | **RS-4** | **遵守 R-7：纯客户端定位** | 不做积分计算、不持久化业务数据、不做 wiki 同步、不缓存超过「短时显示用」所需的玩家信息。 |
 | **RS-5** | **遵守 R-11：密钥不进代码库** | `service_token` / `api_url` / RCON 密码经 `config.json`（本地）或环境变量注入；`config.json` 已在 `.gitignore`。仓库只提交 `config.json.example`。 |
 | **RS-6** | **遵守 R-12：阻塞调用放 `@new_thread`** | 所有 HTTP 调用、RCON 查询、NBT 解析必须用 `@new_thread(...)`（`mcdreforged.api.decorator.new_thread`）卸载到后台线程；`schedule_task` 的同步回调跑在 task executor = 主线程，**禁止**用来卸载阻塞工作（曾导致 `!!PCH login` 卡顿——见 [`Docs/mcdr-plugin/mcdr-api-cheatsheet.md`](../Docs/mcdr-plugin/mcdr-api-cheatsheet.md) §8「常见误区」）；HTTP 必含超时（≤10s）+ 重试 + 失败回执给玩家（`server.tell` 线程安全，可在后台线程直接回执）。 |
-| **RS-7** | **SNBT 解析不自研** | 潜影盒 / 复杂 NBT 一律走 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt)，不为 SNBT 写正则或手写解析器；写完用真实潜影盒样本测试。 |
+| **RS-7** | **箱子 SNBT 解析不自研（v0.10.0 起归外部库）** | 箱子 SNBT 解析由 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner) 外部插件提供（`>=1.0.1`，官方插件目录收录，经 `get_plugin_instance` 调用）；本插件不为 SNBT 写正则或手写解析器，未来如需内嵌解析一律走 [`amulet-nbt`](https://github.com/Amulet-Team/amulet-nbt) 并用真实潜影盒样本测试。 |
 | **RS-8** | **离线 UUID 推导只依赖 `uuid_api_remake`** | 不要在插件内重写 `OfflinePlayer.nameUUIDFromBytes` —— 复用 `uuid_api_remake.get_uuid(name)`（已在 `pch_system/__init__.py` 验证可用），保证与 `uuid_api_remake.mcdr` 全局一致。 |
 | **RS-9** | **称号 scoreboard prefix 兼容性** | team prefix 会干扰 MCDR 玩家名解析；部署时必须配合 [Title Prefix Handler](https://mcdreforged.com/zh-CN/plugin/title_prefix_handler)，并在真机回归玩家名解析。Fabric + Carpet 下聊天/Tab 前缀渲染待真机验证。 |
 | **RS-10** | **RCON 串行 + 限频 + 熔断** | 多箱批量扫描必须串行执行，单次超时熔断；禁止并发刷 RCON，避免压垮服务端主线程。 |
@@ -73,7 +73,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 | `!!PCH sheet list [--mine]` / `view` / `create` / `add` / `set` / `delrow` / `claim` / `deliver` / `done` / `contribute` / `release` / `reject` / `advance` / `notify list` | user / owner | 在线表格协作 + **项目阶段流转**（service-token + `X-Player-UUID` 代玩家写；`deliver` 按 mode 分流——lock→`/delivery` 绝对值 / progress→`/contribute` 增量；`advance <sheet_id> [constructing\|archived]` owner/admin 流转阶段，缺省 `to` 走后端状态机默认推进，`to=archived` 触发归档回执含相对路径；`view` 显阶段横幅 + owner footer 按 status 渲染流转按钮）；命令↔HTTP↔角色映射见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §11） |
 | `!!sheet` / `!!sheet <sheet_id>` / `!!PCH sheet last` | user | **快速重开**（commit 20cdf37）：`!!sheet` 无参 = 重开上次查看的表（经 `GET /me/last_sheet` 取 `last_sheet_id`，无历史回显提示）；`!!sheet <id>` = 直开指定表；`!!PCH sheet last` 等同无参 `!!sheet`。`!!sheet` 为**第二命令根**（独立 help message），与 `!!PCH sheet ...` 子树并存 |
 | `!!submit` / `!!submit <sheet_id>` | user | **一键提交新根**（feat a619510）：`!!submit` 为**第三命令根**（独立 help message，镜像 `!!sheet` 多根注册），无参 = 重开上次查看的表格并直接提交（复用 `!!sheet` 的 `GET /me/last_sheet` 存储，后端零改动）；`!!submit <编号>` 指定表格。与 `!!PCH sheet submit <id>` 共用 `_sheet_submit_impl` 实现；回执折叠两类跳过行（不再逐行）：① 已备齐/进度已满（`scanner.skip_is_ready` + `SHEET_SUBMIT_READY_FOLDED_LINE`）；② 与本人无关（他人认领的 lock 行、progress 未携带项，`scanner.skip_is_noise` + `SHEET_SUBMIT_FOLDED_LINE`）；仅逐行展示本人本次可操作的跳过（认领未完成需补货等）。归桶顺序 ready 优先（他人 done 的 lock 行计入「已备齐」更准确） |
-| `!!submitc` / `!!submitc <sheet_id>` / `!!submitc <sheet_id> <x> <y> <z>` | user | **箱子提交**（issue #48，第四命令根）：无参 = 重开上次表 + 准星检测；`<sheet_id>` = 指定表 + 准星检测；`<sheet_id> <x y z>` = 指定表 + 坐标模式。RCON `data get block` 读箱子内容 → SNBT 解析（提取自 MinecraftDataAPI 的预处理 + hjson.loads）→ `scanner.expand_items` 复用嵌套展开 → `sheet_client.submit_batch` 复用批量提交 → `_build_submit_receipt` 渲染回执。准星模式读玩家 Pos+Rotation 射线检测 6 格内首个容器（串行 RCON，RS-10）。纯申报不清空（RS-3）。`!!PCH sheet submitchest <id> [x y z]` 等价子命令。**双联箱子限制**：`data get block` 不含 block state `type`，MVP 仅读单格 27 槽，双联需对另一半再跑一次 |
+| `!!submitc` / `!!submitc <sheet_id>` / `!!submitc <sheet_id> <x> <y> <z>` | user | **箱子提交**（issue #48，第四命令根）：无参 = 重开上次表 + 准星检测；`<sheet_id>` = 指定表 + 准星检测；`<sheet_id> <x y z>` = 指定表 + 坐标模式。扫描实现由外部插件 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner) 提供（v0.10.0 剥离内嵌实现，`server.get_plugin_instance("chest_scanner_lib")` 调用：准星射线检测 / RCON 读箱 SNBT 解析 / **双联合并** / 嵌套物品展开）→ `sheet_client.submit_batch` 复用批量提交 → `_build_submit_receipt` 渲染回执；错误码与 `_CHEST_ERR_MSG` 键逐一对应（no_rcon/no_api/no_pos/not_container/not_found/empty/parse_error/unknown_format）。纯申报不清空（RS-3）。`!!PCH sheet submitchest <id> [x y z]` 等价子命令 |
 | `!!PCH sheet list [-m\|-c\|-t\|-a\|-l]` 简写旗标 | user | list 默认 `active`（进行中=collecting+constructing，排除归档）+ 自己参与的优先（后端参与优先排序）+ 每行阶段标签 `format_phase_label`。旗标单字母简写：`-m`(mine)/`-c`(collecting)/`-t`(constructing)/`-a`(archived)/`-l`(all)，可组合如 `-ma`=mine+archived；完整 `--mine`/`--collecting` 等向后兼容；未知旗标回显助记提示。解析走纯函数 `_parse_list_flag_tokens` |
 | `!!PCH sheet addsub <sheet_id> <parent_row_id> <registry_id> <qty_per_unit> [mode] [sort]` / `delsub <sheet_id> <row_id>` / `setsub <sheet_id> <row_id> <qty_per_unit> [mode] [sort]` | owner | **子物品嵌套行**（issue #19，迁移 0012）：`addsub` 给指定父行添加子物品（必须提供 registry_id 与 qty_per_unit≥1，need 派生）；`delsub` 删子行（复用 `delrow` 端点）；`setsub` 修改子行 qty_per_unit/mode/sort（父 need 变时级联重算）。**单层限制**：父行必须是顶层行，否则 409。`messages.py` 缩进渲染子行（1–2 空格）+ 父行 `+N子件` 徽标；按钮紧凑化（单字 `[认][改][-][+]` + RText hover）。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §11 |
 | `!!PCH sheet manager <sheet_id> [list\|add\|remove] <玩家名>` | owner（add/remove）/ 全员（list） | **项目协管员**（v0.8.0，迁移 0016，account 锚）：`add`/`remove` 先 `uuid_api_remake.get_uuid(玩家名)` 转 UUID，后端解析 account；授予/撤销经 `POST`/`DELETE /sheets/{id}/managers`（service-token + `X-Player-UUID` 双头，RS-13）。**同账号任一 UUID 继承 manager**（`messages._is_manager`：`managers[].member_uuids ∩ viewer_uuids`）；tier B 可见 `[调][改][-][子]` 行级管理 + `[进入施工]`，tier A（owner）独占 `[直接归档][协管][改标题][删表]`。详见 [`api/sheets.md`](../Docs/architecture/api/sheets.md) §5.6 / §7.1 |
@@ -93,6 +93,8 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 - **sheets-service**：`GET/POST/PATCH/DELETE /sheets/*`（service-token + `X-Player-UUID` 代玩家写，RS-13）—— `!!PCH sheet …` 全套
 - **notification-service**：`GET /notifications/pending` / `POST /notifications/ack` / `POST /notifications/{id}/read`（service-token）—— 通知轮询投递（RS-14）
 - **construction-service**：`POST /v1/construction/report`（施工方块净放置上报，**单头** service-token → `{mcdr, official}` 默认源，C-1/RS-15）+ `GET /v1/construction/active-sheets`（启发式归因，双头代在线玩家）—— 施工进度默认追踪器（RS-15）
+- **chest_scanner_lib**（MCDR 插件依赖，v0.10.0）：箱子扫描（`!!submitc` / `submitchest`；`get_plugin_instance` 调用，`mcdreforged.plugin.json` dependencies 声明 `>=1.0.1`）
+- **minecraft_data_api**（MCDR 插件依赖）：一键提交取玩家背包 NBT
 - **uuid_api_remake**（MCDR 插件依赖）：离线 UUID 推导
 
 ### 关键文件
@@ -106,7 +108,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 - HTTP 客户端：`pch_system/client.py`（`LoginResult` dataclass，login）、`pch_system/bind_client.py`（bind 双向：`request_bind_token` 单头 / `consume_bind_code` 双头）、`pch_system/sheet_client.py`（sheets + notifications + managers HTTP，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）
 - 健康自检：`pch_system/health.py`（4 探针 + `on_load` 控制台版 + `!!PCH status` 游戏内版）
 - 扫描器：`pch_system/scanner.py`（背包/手持扫描 + 一键提交行匹配，纯函数无 mcdreforged 依赖）
-- 箱子扫描器：`pch_system/chest_scanner.py`（RCON 读箱子 + 准星射线检测 + SNBT 解析，issue #48）
+- 箱子扫描：外部插件 `chest_scanner_lib`（v0.10.0 删除内嵌 `chest_scanner.py`；本端仅 `sheet_commands._submitchest_impl` 接线 + 错误码翻译，`scanner.expand_items` 保留供背包路径）
 - 渲染工具：`pch_system/text_layout.py`（tellraw 像素对齐）、`pch_system/view_args.py`（view 分页 + 参数解析）、`pch_system/qty.py`（数量换算 STACK=64/SHULKER=1728，三端字节级对齐）
 - 配置：`pch_system/config.py`（含 `notify_poll_interval_seconds` / `notify_max_per_poll`）+ `config.json`（仓库只提交 `config.json.example`，RS-5）
 - **施工进度追踪器（v0.9.0）**：`pch_system/construction_tracker.py`（后台 flush 循环 + baseline 幂等，复刻 `notifier.run`）、`pch_system/construction_client.py`（`/v1/construction` HTTP：report 单头 / active-sheets 双头，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）、`pch_system/stats_reader.py`（读 `world/stats/<uuid>.json` + `minecraft:used`/`mined` 解析 + diff，纯函数无 mcdreforged 依赖）、`pch_system/construction_commands.py`（`!!PCH construction status` 回执渲染）
@@ -223,7 +225,9 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 
 ---
 
-*最后更新：2026-08-07（文档命名规范统一：Docs/ 文件 kebab-case 小写）*
+*最后更新：2026-08-15（v0.10.0 箱子扫描剥离为 chest_scanner_lib 外部插件依赖）*
+
+*增量（2026-08-15，v0.10.0 箱子扫描剥离）：删除 `pch_system/chest_scanner.py`（425 行）与 `tests/test_chest_scanner.py`（489 行），实现归 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner)（`>=1.0.1`，官方插件目录收录；含准星射线 + 双联合并 + SNBT 解析，错误码与 `_CHEST_ERR_MSG` 逐一对应）。`_submitchest_impl` 改 `server.get_plugin_instance("chest_scanner_lib")` 取库调用（dependencies 已声明、加载期 DependencyWalker 校验，None 仅防御回执）。`mcdreforged.plugin.json` 加依赖 `chest_scanner_lib >=1.0.1`、version 0.10.0；`requirements.txt` 删 `hjson`（只剩 requests）。安装链路 pim 化：install.sh 检测缺失自动 `pim download`+`pipi`；update.sh 新增 `--upgrade-plugins`；TestServer 构建期 pim 安装三依赖插件并移除 git 内 .mcdr 二进制。新增 `SubmitchestWiringTest`（4 用例：准星/坐标接线、库缺失防御、错误码映射）。*
 
 *增量（2026-07-28 v0.9.0-rc.1）：RS-15 段补按玩家路由 + join 命令——`construction_tracker._flush_once` 重写（`lookup_active_by_uuids` 批量查 `{uuid: sheet_id}` 后分桶上报：显式 sheet_id 优先 / heuristic fallback 恰 1 constructing / 无显式无 fallback skip 推进 baseline，取代 v0.9 整轮 heuristic gate）；lookup 网络失败降级 `mappings={}` + heuristic fallback 仍可用。新增 `!!PCH construction join [sheet_id]` / `leave` / `current`（双头代玩家写 `/me/{join,leave,construction}`，RS-13；`@new_thread` + 哨兵/HttpError 分支回执，401/403/404/409 中文翻译含「项目已归档」/「已加入他项目」分流）。`construction_client.py` 加 `lookup_active_by_uuids`/`join_construction`/`leave_construction`/`get_my_construction`。`!!PCH` 帮助页加 `construction` 条目。详见 [`api/construction.md`](../Docs/architecture/api/construction.md) §4.2/§5。*
 

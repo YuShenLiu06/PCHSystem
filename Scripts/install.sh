@@ -275,25 +275,25 @@ build_frontend() {
     log_info "前端构建完成: Frontend/dist/"
 }
 
-check_mcdr_dep_plugins() {
-    # 补丁发现 A：pch_system 依赖 uuid_api_remake 与 minecraft_data_api
+install_mcdr_dep_plugins() {
+    # pch_system 的 MCDR 依赖插件：缺失时经 MCDR 原生 pim CLI 自动安装
+    # （官方插件目录下载 .mcdr + 读包内 requirements.txt 自动装 Python 依赖）
+    # 安装是全新部署、涉及外部下载，保留交互确认；确认后走 common.sh 共享实现（update.sh 复用）
     local plugins_dir=$1
-    local found_uuid=0 found_mda=0
-    local f
-    for f in "$plugins_dir"/*; do
-        [[ -e "$f" ]] || continue
-        local base; base=$(basename "$f")
-        case "$base" in
-            *uuid_api_remake*) found_uuid=1 ;;
-            *MinecraftDataAPI*|*minecraft_data_api*) found_mda=1 ;;
-        esac
-    done
-    if [[ $found_uuid -eq 0 ]]; then
-        log_warn "未找到依赖插件 uuid_api_remake（pch_system 加载需要）→ https://github.com/gubaiovo/MCDR_uuid_api_remake"
+    local missing; missing=$(mcdr_missing_dep_plugins "$plugins_dir")
+    [[ -z "$missing" ]] && { log_info "MCDR 依赖插件已齐备"; return 0; }
+
+    log_warn "缺失 MCDR 依赖插件: ${missing}"
+    if ! confirm "调用 MCDR pim 自动安装（官方插件目录 + Python 依赖）？ [Y/n]" "y"; then
+        log_warn "已跳过自动安装，请手动执行:"
+        log_info "  mcdreforged pim download ${missing} -o ${plugins_dir}"
+        log_info "  mcdreforged pim pipi ${plugins_dir}/<对应 .mcdr 文件>"
+        return 0
     fi
-    if [[ $found_mda -eq 0 ]]; then
-        log_warn "未找到依赖插件 minecraft_data_api（pch_system 加载需要）→ MCDR 插件市场 MinecraftDataAPI"
-    fi
+    # 失败降级为 warn：此时后端已起、迁移已跑，不应中止安装流程（否则部署状态不落盘、
+    # 下次 update.sh 需 --force）；依赖未装齐前 pch_system 无法加载，按指引手动补装即可
+    mcdr_install_dep_plugins "$plugins_dir" \
+        || log_warn "依赖插件安装未完成（插件本体仍会拷贝，但依赖装齐并 reload 前 pch_system 无法加载）——请按上方输出手动补装"
 }
 
 deploy_mcdr_plugin() {
@@ -305,7 +305,7 @@ deploy_mcdr_plugin() {
     fi
     [[ -d "$mcdr_root/plugins" && -d "$mcdr_root/config" ]] \
         || die "MCDR 根目录无效（需含 plugins/ 与 config/ 子目录）: $mcdr_root"
-    check_mcdr_dep_plugins "$mcdr_root/plugins"
+    install_mcdr_dep_plugins "$mcdr_root/plugins"
 
     # 旧版插件 id 为 htcmc_auth → 先迁移（搬 config + 删旧目录，避免与新 pch_system 双注册 !!PCH）
     migrate_legacy_plugin_name "$mcdr_root"
@@ -397,7 +397,7 @@ save_state_and_summary() {
     [[ $RELOGIN_REQUIRED -eq 1 ]] && log_warn "  - 运行 newgrp docker 或重新登录，才能免 sudo 使用 docker"
     [[ -z "${MCDR_DEPLOYED_ROOT:-}" && $NO_MCDR -eq 0 ]] && log_warn "  - 部署 pch_system 到你的 MCDR（或重跑 install.sh 带 --mcdr-root）"
     log_warn "  - 在游戏内执行: !!MCDR plugin reload pch_system"
-    log_warn "  - 确认依赖插件已装: uuid_api_remake + minecraft_data_api"
+    log_warn "  - 确认依赖插件已装: chest_scanner_lib + uuid_api_remake + minecraft_data_api"
     [[ -f .env ]] && log_warn "  - 检查 .env：WEB_BASE_URL 需为玩家可访问的前端地址（单机 + web 默认 5173 已对齐；用域名/反代则改成真实 URL 后 docker compose restart backend）"
     log_info "======================================================================================"
 }

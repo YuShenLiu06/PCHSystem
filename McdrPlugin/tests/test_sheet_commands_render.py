@@ -697,5 +697,141 @@ class SubmitBatchReceiptTest(unittest.TestCase):
         self.assertIn("另有 2 行与您无关已折叠", msg)
 
 
+class SubmitchestWiringTest(unittest.TestCase):
+    """!!submitc 剥离为外部库后的接线验证（v0.10.0）。
+
+    扫描实现不再内嵌，由 chest_scanner_lib（YuShenLiu06/mcdr-chest-scanner）提供；
+    本端经 ``server.get_plugin_instance("chest_scanner_lib")`` 取库实例编排提交。
+    覆盖：准星 / 坐标两模式接线、库缺失防御回执、错误码 → 中文回执映射。
+    """
+
+    def _make_src(self, player="玩家A", lib=None):
+        told = []
+        server = mock.Mock()
+        server.tell.side_effect = lambda name, msg: told.append(msg)
+        server.get_plugin_instance.return_value = lib
+        src = mock.Mock()
+        src.is_player = True
+        src.player = player
+        src.get_server.return_value = server
+        return src, told
+
+    def _lib(self, *, items=None, err=None):
+        """chest_scanner_lib 插件实例替身：两个高级 API 返回同一 (items, err)。"""
+        lib = mock.Mock()
+        lib.find_targeted_chest.return_value = (items, err)
+        lib.scan_chest_rcon.return_value = (items, err)
+        return lib
+
+    def _mk_outcome(self, *, row_id, action, item_name="x", registry_id="minecraft:x",
+                    mode=0, qty=0, reason="", is_claimant=False, delivered_qty=0, need_qty=0):
+        return {
+            "row_id": row_id, "action": action, "item_name": item_name,
+            "registry_id": registry_id, "mode": mode, "qty": qty, "reason": reason,
+            "is_claimant": is_claimant, "delivered_qty": delivered_qty, "need_qty": need_qty,
+        }
+
+    def _result(self):
+        return {
+            "sheet_id": 7, "actor_uuid": "u",
+            "totals": {"delivered": 1, "contributed": 0, "skipped": 0},
+            "outcomes": [self._mk_outcome(row_id=1, action="delivered", item_name="铁锭",
+                                          mode=0, qty=10, is_claimant=True,
+                                          delivered_qty=10, need_qty=10)],
+        }
+
+    def test_crosshair_mode_calls_lib_and_submits(self):
+        # 准星模式：lib.find_targeted_chest(server, 玩家) → items → submit_batch → 箱子回执头
+        lib = self._lib(items={"minecraft:iron_ingot": 10})
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch",
+                               return_value=self._result()) as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        lib.find_targeted_chest.assert_called_once_with(src.get_server.return_value, "玩家A")
+        submit_mock.assert_called_once()
+        self.assertEqual(submit_mock.call_args[0][3], {"minecraft:iron_ingot": 10})
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("箱子提交 #7", msg)
+        self.assertIn("完成", msg)
+
+    def test_coords_mode_calls_scan_chest_rcon(self):
+        # 坐标模式：走 lib.scan_chest_rcon(server, x, y, z)，不触准星 API
+        lib = self._lib(items={"minecraft:stone": 64})
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch",
+                               return_value=self._result()) as submit_mock:
+            sheet_commands._submitc_coords(src, {"sheet_id": 7, "x": 10, "y": 64, "z": -5})
+        lib.scan_chest_rcon.assert_called_once_with(src.get_server.return_value, 10, 64, -5)
+        lib.find_targeted_chest.assert_not_called()
+        submit_mock.assert_called_once()
+
+    def test_lib_missing_defensive_receipt(self):
+        # 库未加载（被禁用等）→ 防御回执（不鼓励重试）+ 服务端 warning 日志，不触 submit_batch
+        src, told = self._make_src(lib=None)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        submit_mock.assert_not_called()
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("chest_scanner_lib", msg)
+        self.assertIn("联系管理员", msg)
+        server = src.get_server.return_value
+        server.logger.warning.assert_called_once()
+
+    def test_error_code_mapped_to_receipt(self):
+        # 库错误码 no_rcon → SHEET_SUBMIT_NO_RCON 中文回执，不触 submit_batch
+        lib = self._lib(err="no_rcon")
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        submit_mock.assert_not_called()
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("RCON 未运行", msg)
+
+    def test_all_known_error_codes_hit_dedicated_receipts(self):
+        # 契约护栏：_CHEST_ERR_MSG 全部 key 必须命中各自专属文案——
+        # 外部库侧 key 打错字会静默落到通用 FAIL，此表是唯一仓内防线
+        expected_substring = {
+            "no_rcon": "RCON 未运行",
+            "not_container": "不是容器方块",
+            "parse_error": "箱子提交处理失败：parse_error",
+            "unknown_format": "箱子提交处理失败：unknown_format",
+            "empty": "箱子为空",
+            "not_found": "准星 6 格内未检测到容器",
+            "no_api": "minecraft_data_api 插件未加载",
+            "no_pos": "无法获取玩家位置数据",
+        }
+        self.assertEqual(set(expected_substring), set(sheet_commands._CHEST_ERR_MSG))
+        for code, fragment in expected_substring.items():
+            with self.subTest(code=code):
+                lib = self._lib(err=code)
+                src, told = self._make_src(lib=lib)
+                with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+                    sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+                submit_mock.assert_not_called()
+                msg = " ".join(str(m) for m in told)
+                self.assertIn(fragment, msg)
+
+    def test_unknown_error_code_falls_back_with_code_echo_and_log(self):
+        # 未知错误码 → 通用 FAIL 回显码原文 + 服务端 warning（外部库新增码的唯一可观测点）
+        lib = self._lib(err="new_code")
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        submit_mock.assert_not_called()
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("箱子提交处理失败：new_code", msg)
+        src.get_server.return_value.logger.warning.assert_called_once()
+
+    def test_empty_items_receipt(self):
+        # 扫描成功但箱子空（items 空字典、err=None）→ 空箱回执，不触 submit_batch
+        lib = self._lib(items={})
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        submit_mock.assert_not_called()
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("箱子为空", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

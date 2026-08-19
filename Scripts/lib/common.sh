@@ -597,6 +597,135 @@ detect_mcdr_topology() {
 }
 
 # ============================================================
+# MCDR 依赖插件（pch_system dependencies）· pim 原生安装
+# ============================================================
+# pch_system 依赖的 MCDR 插件 id 清单：优先从 McdrPlugin/mcdreforged.plugin.json 的
+# dependencies 运行时解析（排除 mcdreforged 自身），解析失败才回落硬编码——
+# plugin.json 新增依赖而此清单漏同步，正是 v0.10.0 升级断裂的根因
+mcdr_dep_plugin_ids() {
+    local json="McdrPlugin/mcdreforged.plugin.json"
+    if command -v jq >/dev/null 2>&1 && [[ -f "$json" ]]; then
+        jq -r '(del(.dependencies.mcdreforged) | .dependencies // {}) | keys | join(" ")' "$json" 2>/dev/null && return 0
+    fi
+    if command -v python3 >/dev/null 2>&1 && [[ -f "$json" ]]; then
+        python3 - "$json" <<'PY' 2>/dev/null && return 0
+import json, sys
+deps = json.load(open(sys.argv[1], encoding="utf-8")).get("dependencies", {})
+deps.pop("mcdreforged", None)
+print(" ".join(deps))
+PY
+    fi
+    echo 'chest_scanner_lib uuid_api_remake minecraft_data_api'
+}
+
+# 插件 id → 空格分隔的文件名 glob 列表（各插件 .mcdr 资产命名不同）。
+# 注意：bash case 的 | 交替只对字面量模式生效，变量展开出的 | 是普通字符（永不匹配），
+# 故拆成多个单 glob，由 mcdr_file_matches_plugin 逐个 [[ == ]] 匹配。
+mcdr_dep_plugin_patterns() {
+    case "$1" in
+        chest_scanner_lib)  echo '*chest_scanner_lib*' ;;
+        uuid_api_remake)    echo '*uuid_api_remake*' ;;
+        minecraft_data_api) echo '*MinecraftDataAPI* *minecraft_data_api*' ;;
+        *) return 1 ;;
+    esac
+}
+
+# 文件名是否匹配指定依赖插件（$1=文件名 basename, $2=插件 id）
+mcdr_file_matches_plugin() {
+    local pat
+    local -a pats
+    # read -ra 分词不做路径名展开（for $(...) 在 CWD 恰有同名文件时会替换 glob，匹配失效）
+    read -ra pats <<< "$(mcdr_dep_plugin_patterns "$2")"
+    for pat in "${pats[@]}"; do
+        # [[ ]] 内右侧裸变量按 pattern 匹配，且不做路径名展开（无 glob 副作用）
+        # shellcheck disable=SC2053  # 右侧故意不引用：按 glob 匹配
+        [[ "$1" == $pat ]] && return 0
+    done
+    return 1
+}
+
+# plugins 目录中是否已装指定依赖插件（$1=plugins 目录, $2=插件 id）
+mcdr_dep_plugin_installed() {
+    local f
+    for f in "$1"/*; do
+        [[ -e "$f" ]] || continue
+        mcdr_file_matches_plugin "$(basename "$f")" "$2" && return 0
+    done
+    return 1
+}
+
+# 文件名 → 依赖插件 id 反查（$1=文件名 basename）；非依赖插件文件返回 1
+mcdr_plugin_id_of() {
+    local id
+    for id in $(mcdr_dep_plugin_ids); do
+        mcdr_file_matches_plugin "$1" "$id" && { echo "$id"; return 0; }
+    done
+    return 1
+}
+
+# 定位 MCDR 原生 pim CLI（mcdreforged 主名，mcdr 别名兜底）
+mcdr_pim_cmd() {
+    command -v mcdreforged >/dev/null 2>&1 && { echo mcdreforged; return 0; }
+    command -v mcdr >/dev/null 2>&1 && { echo mcdr; return 0; }
+    return 1
+}
+
+# pim CLI 缺失时的手动安装指引（安装环境必有 MCDR，通常只是 PATH / venv 未激活）
+mcdr_pim_missing() {
+    log_error "未找到 mcdreforged CLI（MCDR 应已安装；检查 PATH / venv 激活）"
+    log_info "手动安装: mcdreforged pim download <插件id...> -o <plugins 目录>"
+    log_info "          mcdreforged pim pipi <下载的 .mcdr 文件>"
+}
+
+# pim pipi 包装：透传 PIP_INDEX_URL（国内 pip 镜像，与 compose_build 同约定）
+mcdr_pim_pipi() {
+    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
+    local -a args=("$@")
+    [[ -n "${PIP_INDEX_URL:-}" ]] && args+=(-a "-i ${PIP_INDEX_URL}")
+    "$pim_cmd" pim pipi "${args[@]}"
+}
+
+# 列出 plugins 目录（$1）中缺失的依赖插件 id；空输出 = 已齐备
+mcdr_missing_dep_plugins() {
+    local id
+    for id in $(mcdr_dep_plugin_ids); do
+        mcdr_dep_plugin_installed "$1" "$id" || echo "$id"
+    done
+}
+
+# 自动补装缺失的依赖插件（幂等、无交互）。install.sh 与 update.sh 共用：
+# update 每次执行都调本函数，兜底老部署升级断裂——旧 update.sh 无 pim 逻辑，
+# 升到声明新依赖的版本后（如 v0.10.0 的 chest_scanner_lib），pch_system 会因
+# 依赖校验失败被 MCDR 卸载（重启也无效），必须补装依赖后 reload 才恢复。
+# 返回 0=已齐或补装成功；1=失败（调用方提示手动恢复，不阻断其余更新步骤）
+mcdr_install_dep_plugins() {
+    local plugins_dir=$1
+    local missing; missing=$(mcdr_missing_dep_plugins "$plugins_dir")
+    [[ -z "$missing" ]] && { log_info "MCDR 依赖插件已齐备"; return 0; }
+
+    log_warn "缺失 MCDR 依赖插件: ${missing}（pch_system 依赖校验将失败被卸载，自动补装）"
+    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
+    "$pim_cmd" pim download $missing -o "$plugins_dir" \
+        || { log_error "pim download 失败（网络 / 插件目录不可达？）"; return 1; }
+
+    # 仅对本次缺失插件的 .mcdr 跑 pipi，避免动到 plugins 目录下无关插件
+    local -a files=() f id
+    for id in $missing; do
+        for f in "$plugins_dir"/*; do
+            [[ -e "$f" ]] || continue
+            mcdr_file_matches_plugin "$(basename "$f")" "$id" && files+=("$f")
+        done
+    done
+    ((${#files[@]})) || { log_error "pim download 后未发现新文件（pim 对部分失败静默 exit 0，详见上方输出）"; return 1; }
+    mcdr_pim_pipi "${files[@]}" || { log_error "pim pipi 失败（Python 依赖未装齐）"; return 1; }
+
+    # pim 对部分失败静默 exit 0（如 3 个只下到 2 个）：按 id 逐个复检，缺一即报
+    local still_missing; still_missing=$(mcdr_missing_dep_plugins "$plugins_dir")
+    [[ -z "$still_missing" ]] || { log_error "依赖插件仍缺失（pim 部分失败）: ${still_missing}。请手动补装或稍后重跑"; return 1; }
+    log_info "缺失依赖插件已补装: ${files[*]}（游戏内执行 !!MCDR reload plugin 生效）"
+}
+
+# ============================================================
 # compose build 封装（透传代理给 build，助 CJK 字体 wget）
 # ============================================================
 # compose_build <service>：自动透传 HTTP(S)_PROXY 与 PIP_INDEX_URL build-arg

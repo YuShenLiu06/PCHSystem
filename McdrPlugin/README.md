@@ -84,10 +84,19 @@ PCHSystem 面向**白名单生电社区服**，围绕「**项目制协作 + 积�
 | 插件 | 版本 / 来源 | 用途 |
 |---|---|---|
 | [MCDReforged](https://github.com/Fallen-Breath/MCDReforged) | `>= 2.14.0` | 运行时 |
+| `chest_scanner_lib` | `>= 1.0.1` · [YuShenLiu06/mcdr-chest-scanner](https://github.com/YuShenLiu06/mcdr-chest-scanner) | 箱子扫描（`!!submitc` 依赖：RCON 读箱 + 准星检测 + SNBT 解析 + 双联合并） |
 | `uuid_api_remake` | [gubaiovo/MCDR_uuid_api_remake](https://github.com/gubaiovo/MCDR_uuid_api_remake) | 离线模式 UUID 推导 |
 | `minecraft_data_api` | MCDR 插件市场搜索 `MinecraftDataAPI` | 物品 / NBT 查询（一键提交依赖） |
 
-> `!!MCDR plugin install` 是否会自动安装上述前置插件尚未最终确认，建议手动预装。
+前置插件经 MCDR 原生 pim CLI 安装（自动装包内声明的 Python 依赖）：
+
+```
+mcdreforged pim download chest_scanner_lib uuid_api_remake minecraft_data_api -o <MCDR>/plugins
+mcdreforged pim pipi <MCDR>/plugins/*.mcdr
+!!MCDR reload plugin
+```
+
+游戏内等价：`!!MCDR plugin install chest_scanner_lib -y`（含依赖解析与自动 reload）。
 
 ### ⚠️ 后端服务（必需）
 

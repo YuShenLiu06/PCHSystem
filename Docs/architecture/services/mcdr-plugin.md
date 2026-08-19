@@ -310,9 +310,12 @@ def _do_claim(server, player, sheet_id, row_id):
 
 | 依赖 | 用途 | 仓库 |
 |---|---|---|
+| **chest_scanner_lib** | 箱子扫描（`!!submitc` / `!!PCH sheet submitchest`）：RCON 读箱 NBT + SNBT 解析 + 准星射线检测 + **双联合并** + 嵌套物品展开（v0.10.0 起剥离为外部插件，`>=1.0.1`） | <https://github.com/YuShenLiu06/mcdr-chest-scanner> |
 | **MinecraftDataAPI** | 提供按玩家取完整背包 NBT（含潜影盒嵌套物品枚举、`registry_id` 提取），供 `!!PCH sheet submit` 一键提交使用 | <https://github.com/Fallen-Breath/MinecraftDataAPI> |
+| **uuid_api_remake** | 离线模式 UUID 推导（RS-8） | <https://github.com/gubaiovo/MCDR_uuid_api_remake> |
 
-> 安装缺失时 `submit` 命令回执友好提示并降级（其他 sheets 命令不受影响）。
+> 三者均在 MCDR 官方插件目录收录，可经 `mcdreforged pim download <ids> -o <plugins>` + `pim pipi <files.mcdr>` 安装（自动装包内声明的 Python 依赖）；安装脚本（install.sh）已内置该流程。
+> MinecraftDataAPI 缺失时 `submit` 命令回执友好提示并降级（其他 sheets 命令不受影响）；chest_scanner_lib 缺失则 MCDR 加载期 DependencyWalker 直接拦截（dependencies 已声明）。
 
 ## 5. 所属数据表
 
@@ -324,7 +327,8 @@ def _do_claim(server, player, sheet_id, row_id):
 
 | 项 | 说明 | 缓解 |
 |---|---|---|
-| SNBT 解析边界 | 潜影盒/复杂 NBT | amulet-nbt + 测试用例覆盖 |
+| SNBT 解析边界 | 潜影盒/复杂 NBT | 箱子路径归 chest_scanner_lib 外部库（自带测试，v0.10.0 起本服务不再内嵌）；背包嵌套走 MinecraftDataAPI |
+| chest_scanner_lib 版本漂移 | TestServer 构建随 latest；外部库 breaking 变更 | `mcdreforged.plugin.json` 声明 `>=1.0.1`，加载期 DependencyWalker 拦截不满足版本 |
 | RCON 性能 | 多箱批量扫描 | 串行 + 限频 + 超时熔断 |
 | scoreboard prefix 显示效果 | Fabric+Carpet 下聊天/Tab 前缀实际渲染 | 待真机验证；不达标则引入 Fabric 前缀 mod |
 | Title Prefix Handler 兼容性 | 与 Carpet 等共存 | 部署时回归玩家名解析 |
