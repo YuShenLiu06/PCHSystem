@@ -26,9 +26,7 @@
 
 ### Changed
 
-- **McdrPlugin**：箱子扫描实现剥离为外部插件 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner)（`>=1.0.1`，官方插件目录收录）——`!!submitc` / `!!PCH sheet submitchest` 改经 `get_plugin_instance` 调用外部库（RCON 读箱 + 准星检测 + SNBT 解析 + **双联合并**），删除内嵌 `chest_scanner.py`；`requirements.txt` 移除 `hjson`。
-- **Scripts**：依赖插件安装改走 MCDR 原生 `pim` CLI——install.sh 检测缺失自动安装（`pim download` + `pim pipi` 装 Python 依赖，交互确认）；update.sh 新增 `--upgrade-plugins` 升级依赖插件（latest + 换文件防同 id 双载）。
-- **TestServer**：构建期改用 `pim download` + `pipi` 安装三依赖插件（版本随 latest），移除提交进 git 的两个 .mcdr 二进制与手写 pip 依赖。
+- _暂无_
 
 ### Fixed
 
@@ -40,6 +38,23 @@
 ### Security
 
 - _暂无_
+
+---
+
+## [pch_system-v0.10.0] - 2026-08-19
+
+⚠️ **破坏性变更**：箱子扫描剥离为独立插件，本版起 `pch_system` 硬依赖 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner)。**旧部署（<0.10.0）升级后，`!!MCDR plugin reload pch_system` 会因依赖缺失被卸载（重启也无效）**。恢复方法（任选其一）：
+
+- 仓库内再执行一次 `bash Scripts/update.sh`（新版会自动检测并补装缺失依赖），随后 reload；
+- 手动安装：`mcdreforged pim download chest_scanner_lib -o <plugins 目录>` → `mcdreforged pim pipi <下载的 .mcdr 文件>` → `!!MCDR plugin reload pch_system`。
+
+### Changed
+
+- **箱子扫描独立成库**：`!!submitc` / `!!PCH sheet submitchest` 的扫描实现（RCON 读箱、准星检测、SNBT 解析、双联合并）剥离为官方插件目录收录的外部插件 `chest_scanner_lib`（`>=1.0.1`），随依赖自动安装；游戏内命令用法不变。内嵌 `chest_scanner.py` 移除，插件自身不再需要 `hjson` Python 依赖。
+
+### Added
+
+- **部署脚本（运维）**：依赖插件安装改走 MCDR 原生 `pim` CLI——install.sh 缺失自动安装（交互确认）；update.sh 新增 `--upgrade-plugins` 升级依赖插件（latest + 换文件防同 id 双载）；TestServer 构建同链路。
 
 ---
 
