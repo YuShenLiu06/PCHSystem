@@ -278,37 +278,22 @@ build_frontend() {
 install_mcdr_dep_plugins() {
     # pch_system 的 MCDR 依赖插件：缺失时经 MCDR 原生 pim CLI 自动安装
     # （官方插件目录下载 .mcdr + 读包内 requirements.txt 自动装 Python 依赖）
+    # 安装是全新部署、涉及外部下载，保留交互确认；确认后走 common.sh 共享实现（update.sh 复用）
     local plugins_dir=$1
-    local -a missing=()
-    local id
-    for id in $(mcdr_dep_plugin_ids); do
-        mcdr_dep_plugin_installed "$plugins_dir" "$id" || missing+=("$id")
-    done
-    ((${#missing[@]})) || { log_info "MCDR 依赖插件已齐备"; return 0; }
+    local missing; missing=$(mcdr_missing_dep_plugins "$plugins_dir")
+    [[ -z "$missing" ]] && { log_info "MCDR 依赖插件已齐备"; return 0; }
 
-    log_warn "缺失 MCDR 依赖插件: ${missing[*]}"
+    log_warn "缺失 MCDR 依赖插件: ${missing}"
     if ! confirm "调用 MCDR pim 自动安装（官方插件目录 + Python 依赖）？ [Y/n]" "y"; then
         log_warn "已跳过自动安装，请手动执行:"
-        log_info "  mcdreforged pim download ${missing[*]} -o ${plugins_dir}"
+        log_info "  mcdreforged pim download ${missing} -o ${plugins_dir}"
         log_info "  mcdreforged pim pipi ${plugins_dir}/<对应 .mcdr 文件>"
         return 0
     fi
-
-    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
-    "$pim_cmd" pim download "${missing[@]}" -o "$plugins_dir" \
-        || { log_error "pim download 失败（网络 / 插件目录不可达？）"; return 1; }
-
-    # 仅对本次涉及插件的 .mcdr 跑 pipi，避免动到 plugins 目录下无关插件
-    local -a files=() f
-    for id in "${missing[@]}"; do
-        for f in "$plugins_dir"/*; do
-            [[ -e "$f" ]] || continue
-            mcdr_file_matches_plugin "$(basename "$f")" "$id" && files+=("$f")
-        done
-    done
-    ((${#files[@]})) || { log_error "pim download 后未发现新文件（pim 对部分失败静默 exit 0，详见上方输出）"; return 1; }
-    mcdr_pim_pipi "${files[@]}" \
-        && log_info "依赖插件安装完成，游戏内执行 !!MCDR reload plugin 生效"
+    # 失败降级为 warn：此时后端已起、迁移已跑，不应中止安装流程（否则部署状态不落盘、
+    # 下次 update.sh 需 --force）；依赖未装齐前 pch_system 无法加载，按指引手动补装即可
+    mcdr_install_dep_plugins "$plugins_dir" \
+        || log_warn "依赖插件安装未完成（插件本体仍会拷贝，但依赖装齐并 reload 前 pch_system 无法加载）——请按上方输出手动补装"
 }
 
 deploy_mcdr_plugin() {

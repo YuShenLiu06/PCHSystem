@@ -54,7 +54,7 @@
 
 ### Added
 
-- **部署脚本（运维）**：依赖插件安装改走 MCDR 原生 `pim` CLI——install.sh 缺失自动安装（交互确认）；update.sh 新增 `--upgrade-plugins` 升级依赖插件（latest + 换文件防同 id 双载）；TestServer 构建同链路。
+- **部署脚本（运维）**：依赖插件安装改走 MCDR 原生 `pim` CLI——install.sh 缺失自动安装（交互确认）；update.sh **每次执行自动补装缺失依赖**（置于版本比对之前，「已是最新」也生效——旧部署升级断裂后再跑一次 update 即恢复），另新增 `--upgrade-plugins` 主动升级已装依赖到 latest（换文件防同 id 双载）；依赖 id 清单从 `mcdreforged.plugin.json` 运行时解析，杜绝清单漂移；TestServer 构建同链路。
 
 ---
 

@@ -93,6 +93,7 @@ from .messages import (
     SHEET_SUBMIT_EMPTY_CHEST,
     SHEET_SUBMIT_NO_RCON,
     SHEET_SUBMIT_CHEST_FAIL,
+    SHEET_SUBMIT_CHEST_LIB_MISSING,
     SHEET_SUBMIT_CHEST_NO_API,
     SHEET_SUBMIT_CHEST_NO_POS,
 )
@@ -1608,8 +1609,10 @@ def _submitchest_impl(server, player_name, player_uuid, sheet_id, *, x=None, y=N
     """
     lib = server.get_plugin_instance("chest_scanner_lib")
     if lib is None:
-        # 理论不可达（dependencies 已声明，MCDR 加载期 DependencyWalker 校验）；防御性回执
-        server.tell(player_name, SHEET_SUBMIT_CHEST_FAIL.format(err="chest_scanner_lib 未加载"))
+        # 理论不可达（dependencies 已声明，MCDR 加载期 DependencyWalker 校验）；
+        # 真发生时（依赖被运行时禁用等）留日志供运维定位，回执不鼓励重试（重试无效）
+        server.logger.warning("chest_scanner_lib instance is None despite declared dependencies")
+        server.tell(player_name, SHEET_SUBMIT_CHEST_LIB_MISSING)
         return
     if x is not None and y is not None and z is not None:
         items, err = lib.scan_chest_rcon(server, int(x), int(y), int(z))
@@ -1617,6 +1620,9 @@ def _submitchest_impl(server, player_name, player_uuid, sheet_id, *, x=None, y=N
         items, err = lib.find_targeted_chest(server, player_name)
 
     if err:
+        if err not in _CHEST_ERR_MSG:
+            # 未知错误码兜底也留日志：外部库新增错误码时此处是唯一可观测点
+            server.logger.warning("chest_scanner_lib unknown error_code: %r", err)
         msg_tpl = _CHEST_ERR_MSG.get(err, SHEET_SUBMIT_CHEST_FAIL)
         server.tell(player_name, msg_tpl.format(err=err) if "{err}" in msg_tpl else msg_tpl)
         return

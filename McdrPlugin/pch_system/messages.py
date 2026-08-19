@@ -133,6 +133,7 @@ SHEET_SUBMIT_CHEST_NOT_CONTAINER = "§c该坐标不是容器方块"
 SHEET_SUBMIT_EMPTY_CHEST = "§7箱子为空，无可提交的材料"
 SHEET_SUBMIT_NO_RCON = "§cRCON 未运行，无法读取方块数据（请联系管理员开启 RCON）"
 SHEET_SUBMIT_CHEST_FAIL = "§c箱子提交处理失败：{err}（详见服务器日志，请稍后重试）"
+SHEET_SUBMIT_CHEST_LIB_MISSING = "§c箱子扫描组件未加载（chest_scanner_lib），请联系管理员安装依赖插件后执行 !!MCDR plugin reload pch_system"
 SHEET_SUBMIT_CHEST_NO_API = "§c无法获取玩家位置（minecraft_data_api 插件未加载），请使用 !!submitc <表id> <x> <y> <z> 指定坐标"
 SHEET_SUBMIT_CHEST_NO_POS = "§c无法获取玩家位置数据，请稍后重试或使用 !!submitc <表id> <x> <y> <z> 指定坐标"
 

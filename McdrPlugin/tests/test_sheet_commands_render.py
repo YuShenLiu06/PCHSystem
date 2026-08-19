@@ -766,13 +766,16 @@ class SubmitchestWiringTest(unittest.TestCase):
         submit_mock.assert_called_once()
 
     def test_lib_missing_defensive_receipt(self):
-        # 库未加载（被禁用等）→ 防御回执，不触 submit_batch
+        # 库未加载（被禁用等）→ 防御回执（不鼓励重试）+ 服务端 warning 日志，不触 submit_batch
         src, told = self._make_src(lib=None)
         with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
             sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
         submit_mock.assert_not_called()
         msg = " ".join(str(m) for m in told)
-        self.assertIn("chest_scanner_lib 未加载", msg)
+        self.assertIn("chest_scanner_lib", msg)
+        self.assertIn("联系管理员", msg)
+        server = src.get_server.return_value
+        server.logger.warning.assert_called_once()
 
     def test_error_code_mapped_to_receipt(self):
         # 库错误码 no_rcon → SHEET_SUBMIT_NO_RCON 中文回执，不触 submit_batch
@@ -783,6 +786,51 @@ class SubmitchestWiringTest(unittest.TestCase):
         submit_mock.assert_not_called()
         msg = " ".join(str(m) for m in told)
         self.assertIn("RCON 未运行", msg)
+
+    def test_all_known_error_codes_hit_dedicated_receipts(self):
+        # 契约护栏：_CHEST_ERR_MSG 全部 key 必须命中各自专属文案——
+        # 外部库侧 key 打错字会静默落到通用 FAIL，此表是唯一仓内防线
+        expected_substring = {
+            "no_rcon": "RCON 未运行",
+            "not_container": "不是容器方块",
+            "parse_error": "箱子提交处理失败：parse_error",
+            "unknown_format": "箱子提交处理失败：unknown_format",
+            "empty": "箱子为空",
+            "not_found": "准星 6 格内未检测到容器",
+            "no_api": "minecraft_data_api 插件未加载",
+            "no_pos": "无法获取玩家位置数据",
+        }
+        self.assertEqual(set(expected_substring), set(sheet_commands._CHEST_ERR_MSG))
+        for code, fragment in expected_substring.items():
+            with self.subTest(code=code):
+                lib = self._lib(err=code)
+                src, told = self._make_src(lib=lib)
+                with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+                    sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+                submit_mock.assert_not_called()
+                msg = " ".join(str(m) for m in told)
+                self.assertIn(fragment, msg)
+
+    def test_unknown_error_code_falls_back_with_code_echo_and_log(self):
+        # 未知错误码 → 通用 FAIL 回显码原文 + 服务端 warning（外部库新增码的唯一可观测点）
+        lib = self._lib(err="new_code")
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        submit_mock.assert_not_called()
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("箱子提交处理失败：new_code", msg)
+        src.get_server.return_value.logger.warning.assert_called_once()
+
+    def test_empty_items_receipt(self):
+        # 扫描成功但箱子空（items 空字典、err=None）→ 空箱回执，不触 submit_batch
+        lib = self._lib(items={})
+        src, told = self._make_src(lib=lib)
+        with mock.patch.object(sheet_commands.sheet_client, "submit_batch") as submit_mock:
+            sheet_commands._submitc_oneclick(src, {"sheet_id": 7})
+        submit_mock.assert_not_called()
+        msg = " ".join(str(m) for m in told)
+        self.assertIn("箱子为空", msg)
 
 
 if __name__ == "__main__":

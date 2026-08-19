@@ -25,8 +25,8 @@ TestServer/
 ├── config/
 │   ├── mcdr_config.yml           # MCDR: vanilla_handler + UTF-8（Fabric 专用）
 │   └── pch_system_config.json    # 覆盖 pch_system 默认配置，指向容器网络内 backend
-├── plugins/
-│   └── uuid_api_remake.mcdr      # pch_system 的运行时依赖
+├── plugins/                      # 构建期经 MCDR pim 从官方插件目录安装 pch_system 依赖
+│                                 # （chest_scanner_lib / uuid_api_remake / minecraft_data_api）
 └── server/                       # 持久化卷（fabric jar + world + libraries，gitignored）
 ```
 
