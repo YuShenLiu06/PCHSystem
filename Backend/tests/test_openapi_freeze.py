@@ -51,5 +51,6 @@ def test_paths_present():
         "/v1/scoring/debit",
         "/v1/scoring/ledger",
         "/v1/scoring/admin/adjust",
+        "/v1/scoring/admin/players",
     ]:
         assert p in paths, f"missing {p}"

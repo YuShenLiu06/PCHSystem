@@ -8,11 +8,16 @@
   逐条转 skip，不影响其他条目；全部处理完统一 commit，业务写 + 通知同事务原子
   （RS-9）。流水唯一写入口 = ``score_service.write_ledger``（``scoring.score_ledger``
   append-only，R-2/RS-2）。
-- ``POST /v1/scoring/admin/adjust``：管理员（服主）积分调控，**仅 service-token**
-  （admin 面板 / 服主脚本持 token 调用；面板经环境变量配置，不对 JWT 开放）。
-  与 credit/debit 共用同一条批量管线，差异仅两点：reason 放开到全集
-  （**方向由 reason 符号定**——入账 reason 加、出账 reason 减，单端点双向）；
-  ``allow_overdraft`` 语义同 debit（默认 False）。
+- ``POST /v1/scoring/admin/adjust``：管理员（服主）积分调控，**仅特权 JWT**
+  （admin/owner；积分管理面板经环境变量同步的托管账号登录调用）。**admin ≠
+  service-token**——本端点不认 ``X-Service-Token``（系统组件记账走
+  credit/debit；service-token 调用 → 401）；普通玩家 JWT → 403。与
+  credit/debit 共用同一条批量管线，差异仅两点：reason 放开到全集（**方向由
+  reason 符号定**——入账 reason 加、出账 reason 减，单端点双向）；
+  ``allow_overdraft`` 语义同 debit（默认 False）。操作者经审计日志
+  ``operator=jwt-account:<id>`` 标签记录。
+- ``GET /v1/scoring/admin/players``：特权玩家联想（面板调分/筛选选人用，
+  鉴权同 admin/adjust：仅特权 JWT）。
 - ``GET /v1/scoring/ledger``：流水查询，**多角色**——service-token 或 admin/owner
   JWT 可查全局（可按 ``player_uuid`` 收敛到单账号）；普通玩家 JWT 只能查自身
   account（他人 uuid → 403）。H-2：Authorization 头存在（即便非法）只走 JWT
@@ -39,7 +44,8 @@ from app.core.jwt import decode_token
 from app.models.scoring import ScoreLedger
 from app.models.sheet import Sheet
 from app.models.user import WebAccount
-from app.repositories import player_repo, score_repo
+from app.repositories import player_repo, score_repo, web_account_repo
+from app.schemas.player import PlayerBrief
 from app.schemas.scoring import (
     AdminAdjustBatchRequest,
     CreditBatchRequest,
@@ -77,6 +83,38 @@ class LedgerAccess:
     account_id: int | None
 
 
+async def _account_from_authorization(
+    authorization: str, session: AsyncSession
+) -> WebAccount:
+    """Authorization 头 → WebAccount（H-2：只走 JWT 通道，绝不降级 service-token）。
+
+    Bearer 解析 → decode access token（sub=account_id）→ 查 WebAccount；
+    各级失败均 401（文案与 ledger 既有契约一致）。
+    """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer")
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = decode_token(token)
+    except pyjwt.PyJWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+    if payload.get("type") != "access":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong token type")
+    sub = payload.get("sub")
+    if not isinstance(sub, str):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token subject")
+    try:
+        account_id = int(sub)
+    except ValueError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token subject")
+    account = (
+        await session.execute(select(WebAccount).where(WebAccount.id == account_id))
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "account not found")
+    return account
+
+
 async def require_ledger_access(
     x_service_token: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
@@ -100,30 +138,48 @@ async def require_ledger_access(
             )
         return LedgerAccess(is_privileged=True, account_id=None)
 
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer")
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        payload = decode_token(token)
-    except pyjwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
-    if payload.get("type") != "access":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong token type")
-    sub = payload.get("sub")
-    if not isinstance(sub, str):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token subject")
-    try:
-        account_id = int(sub)
-    except ValueError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token subject")
-    account = (
-        await session.execute(select(WebAccount).where(WebAccount.id == account_id))
-    ).scalar_one_or_none()
-    if account is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "account not found")
+    account = await _account_from_authorization(authorization, session)
     if account.role in PRIVILEGED_ROLES:
         return LedgerAccess(is_privileged=True, account_id=None)
     return LedgerAccess(is_privileged=False, account_id=account.id)
+
+
+# ---------------------------------------------------------------------------
+# 特权写通道依赖（admin/adjust · admin/players）
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PrivilegedAccess:
+    """特权端点权限解析结果（admin/adjust / admin/players **仅特权 JWT**）。
+
+    ``operator`` = ``jwt-account:<id>``（审计日志操作者标签，面板托管账号
+    无绑定玩家、不传 ``operator_uuid``，操作者经此标签记录）。
+    """
+
+    operator: str
+
+
+async def require_privileged_access(
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> PrivilegedAccess:
+    """特权端点鉴权（admin/adjust / admin/players）：**仅 admin/owner JWT**。
+
+    **admin ≠ service-token**：管理端点不认 ``X-Service-Token``（系统组件
+    记账走 credit/debit；service-token 调 admin 端点与无凭证同罪 → 401
+    ``missing authorization``）。缺 ``Authorization`` → 401；解 token 查
+    WebAccount（各级失败 401）；role ∈ {admin, owner} → 通过，**非特权
+    角色 → 403**（与 ledger 的降级自查不同：写通道直接拒绝）。
+    """
+    if authorization is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "missing authorization"
+        )
+    account = await _account_from_authorization(authorization, session)
+    if account.role not in PRIVILEGED_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    return PrivilegedAccess(operator=f"jwt-account:{account.id}")
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +223,7 @@ async def _process_one(
     path: str,
     notify: bool,
     allow_overdraft: bool,
+    operator: str | None = None,
 ) -> ScoreItemResult:
     """单条 item 六步处理（契约 ①~⑤ + 审计日志）；未预期异常不捕（500 回滚）。
 
@@ -211,14 +268,15 @@ async def _process_one(
         await _notify_score_change(
             session, item, written.entry, is_debit=is_debit
         )
-    # 审计日志（结构化、不含 token；item 维度字段）
+    # 审计日志（结构化、不含 token；item 维度字段；operator = JWT 通道操作者标签）
     logger.info(
-        "scoring_write path=%s account_id=%s reason=%s delta=%s replayed=%s",
+        "scoring_write path=%s account_id=%s reason=%s delta=%s replayed=%s operator=%s",
         path,
         player.web_account_id,
         item.reason,
         signed_delta,
         written.replayed,
+        operator,
     )
     return ScoreItemResult(
         player_uuid=item.player_uuid,
@@ -235,6 +293,7 @@ async def _process_batch(
     path: str,
     notify: bool,
     allow_overdraft: bool,
+    operator: str | None = None,
 ) -> ScoreBatchResult:
     """逐条处理 + 单事务单 commit（在 model_validate 之后提交，避免序列化过期）。"""
     results = [
@@ -244,6 +303,7 @@ async def _process_batch(
             path=path,
             notify=notify,
             allow_overdraft=allow_overdraft,
+            operator=operator,
         )
         for item in items
     ]
@@ -291,15 +351,16 @@ async def debit_batch(
 @router.post("/admin/adjust", response_model=ScoreBatchResult)
 async def admin_adjust(
     body: AdminAdjustBatchRequest,
-    _ok: None = Depends(deps.require_service_token),
+    access: PrivilegedAccess = Depends(require_privileged_access),
     session: AsyncSession = Depends(get_session),
 ) -> ScoreBatchResult:
-    """管理员（服主）积分调控（仅 service-token；admin 面板 / 服主脚本用，
-    面板经环境变量配置凭证，不对 JWT 开放）。
+    """管理员（服主）积分调控（**仅特权 JWT**：admin/owner——积分管理面板经
+    环境变量同步的托管账号登录调用；普通玩家 JWT 403、service-token 401）。
 
     与 credit/debit 共用批量管线，差异：reason 放开全集（方向由 reason 符号定，
-    单端点双向）；``allow_overdraft`` 语义同 debit。审计字段 ``operator_uuid`` /
-    ``note`` 由调用方按条提供（面板侧应记录操作者）。
+    单端点双向）；``allow_overdraft`` 语义同 debit。操作者经审计日志
+    ``operator=jwt-account:<id>`` 标签记录（面板不传 ``operator_uuid``——
+    它是 Player UUID，托管账号无绑定玩家）；``note`` 由调用方按条提供。
     """
     return await _process_batch(
         session,
@@ -307,7 +368,36 @@ async def admin_adjust(
         path="/v1/scoring/admin/adjust",
         notify=body.notify,
         allow_overdraft=body.allow_overdraft,
+        operator=access.operator,
     )
+
+
+@router.get("/admin/players", response_model=list[PlayerBrief])
+async def admin_search_players(
+    _access: PrivilegedAccess = Depends(require_privileged_access),
+    q: str = Query(default="", description="玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）"),
+    limit: int = Query(default=10, ge=1, le=20),
+    session: AsyncSession = Depends(get_session),
+) -> list[PlayerBrief]:
+    """特权玩家联想（积分管理面板调分/筛选选人用；仅特权 JWT，鉴权同
+    admin/adjust——service-token 401）。
+
+    与 ``GET /players`` 同源（``player_repo.search_for_manager``）但走特权鉴权：
+    托管 admin 账号无绑定玩家，调不了需玩家身份的 ``get_current_player`` 通道。
+    仅返回已绑 WebAccount 的玩家。
+    """
+    players = await player_repo.search_for_manager(session, q, limit)
+    display_names = await web_account_repo.resolve_display_names(
+        session, [p.uuid for p in players]
+    )
+    return [
+        PlayerBrief(
+            player_uuid=p.uuid,
+            player_name=p.current_name,
+            display_name=display_names.get(p.uuid, p.current_name),
+        )
+        for p in players
+    ]
 
 
 # ---------------------------------------------------------------------------

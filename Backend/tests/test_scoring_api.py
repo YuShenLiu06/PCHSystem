@@ -1,7 +1,9 @@
 """积分层 API 集成测试（/v1/scoring 四端点：credit / debit / ledger / admin adjust）。
 
 覆盖（用例清单 §鉴权 §schema §批量 §链路 §透支 §通知 §幂等 §ledger §分页 §admin adjust）：
-- 鉴权：写端点仅 service-token（无/错 token、合法 JWT 均 401）；ledger 无凭证 401。
+- 鉴权：credit/debit 仅 service-token（无/错 token 401）；admin/adjust 与
+  admin/players **仅特权 JWT**（admin/owner，普通玩家 403、service-token 401——admin ≠
+  service-token）；ledger 无凭证 401。
 - schema 422：reason 方向收紧、amount 正数两位小数（含 18 位上限）、批大小 1..100、
   limit ≤200 / page ≥1。
 - 批量逐条独立：混合批次 skip 原因逐条正确，互不影响。
@@ -597,7 +599,8 @@ async def test_ledger_since_until_filter(client):
 
 
 # ---------------------------------------------------------------------------
-# admin adjust ㉔㉕㉗㉘（管理员调控：仅 service-token，方向由 reason 定）
+# admin adjust ㉔㉕㉗㉘（管理员调控：**仅特权 JWT**——admin ≠ service-token，
+# 系统组件记账走 credit/debit；方向由 reason 定）
 # ---------------------------------------------------------------------------
 
 
@@ -608,52 +611,144 @@ def _adjust_body(items: list[dict], **extra) -> dict:
     return body
 
 
-async def _adjust(client, items: list[dict], **extra) -> dict:
-    """便捷单批 adjust（断言 200 后返回响应体）。"""
+async def _adjust(client, bearer: str, items: list[dict], **extra) -> dict:
+    """便捷单批 adjust（bearer = 特权 JWT；断言 200 后返回响应体）。"""
     resp = await client.post(
         "/v1/scoring/admin/adjust", json=_adjust_body(items, **extra),
-        headers=_svc(),
+        headers={"Authorization": bearer},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
-async def test_adjust_requires_service_token_401(client):
-    """㉔ 无 token / 错 token / 合法玩家 JWT → 401（仅 service-token，不对 JWT 开放）。"""
+async def test_adjust_auth_channels(client):
+    """㉔ 无 Authorization → 401；service-token（即便正确）→ 401（admin ≠ service-token）；
+    普通玩家 JWT → 403；非法 Authorization → 401（H-2 不降级）。"""
     # Arrange
-    puuid, bearer = await seed_player_with_account("alice")
+    puuid, normal_bearer = await seed_player_with_account("alice")
     body = _adjust_body([_item(puuid, "1", "manual_adj")])
     # Act + Assert（无头）
     resp = await client.post("/v1/scoring/admin/adjust", json=body)
     assert resp.status_code == 401
-    assert resp.json()["detail"] == "invalid service token"
-    # Act + Assert（错 token）
+    assert resp.json()["detail"] == "missing authorization"
+    # Act + Assert（仅 service-token（含正确值）→ 401：admin 端点不认 service-token）
     resp = await client.post(
-        "/v1/scoring/admin/adjust", json=body, headers={"X-Service-Token": "nope"}
+        "/v1/scoring/admin/adjust", json=body, headers=_svc()
     )
     assert resp.status_code == 401
-    # Act + Assert（合法 JWT 也不放行）
+    assert resp.json()["detail"] == "missing authorization"
+    # Act + Assert（合法普通玩家 JWT → 403：身份有效但非特权）
     resp = await client.post(
-        "/v1/scoring/admin/adjust", json=body, headers={"Authorization": bearer}
+        "/v1/scoring/admin/adjust", json=body, headers={"Authorization": normal_bearer}
+    )
+    assert resp.status_code == 403
+    # Act + Assert（带 Authorization 但 token 非法 → 401 走 JWT 通道，绝不降级 service-token）
+    resp = await client.post(
+        "/v1/scoring/admin/adjust",
+        json=body,
+        headers={"Authorization": "Bearer garbage", "X-Service-Token": "svc"},
     )
     assert resp.status_code == 401
-    assert resp.json()["detail"] == "invalid service token"
+    assert resp.json()["detail"] == "invalid token"
+
+
+async def test_adjust_accepts_admin_jwt_with_operator_audit(client, caplog):
+    """admin JWT 通道放行；审计日志记 operator=jwt-account:<account_id>。"""
+    import logging
+
+    from app.core.jwt import decode_token
+
+    # Arrange
+    puuid, _ = await seed_player_with_account("alice")
+    _, admin_bearer = await seed_player_with_account("boss", role="admin")
+    # seed 账号无 username，account_id 从 JWT sub 解出（即实际调用者）
+    admin_account_id = decode_token(admin_bearer.removeprefix("Bearer "))["sub"]
+    body = _adjust_body([_item(puuid, "2", "collect")])
+
+    # Act
+    with caplog.at_level(logging.INFO, logger="app.api.scoring"):
+        resp = await client.post(
+            "/v1/scoring/admin/adjust", json=body, headers={"Authorization": admin_bearer}
+        )
+
+    # Assert — 200 + 入账方向 + 审计 operator 标签
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["accepted_count"] == 1
+    assert data["results"][0]["entry"]["delta"] == "2.00"
+    assert f"operator=jwt-account:{admin_account_id}" in caplog.text
+
+
+async def test_adjust_accepts_owner_jwt(client):
+    """owner JWT 通道同样放行（env 同步托管账号即 role=owner）。"""
+    # Arrange
+    puuid, _ = await seed_player_with_account("alice")
+    _, owner_bearer = await seed_player_with_account("root", role="owner")
+    body = _adjust_body([_item(puuid, "1", "collect")])
+
+    # Act
+    resp = await client.post(
+        "/v1/scoring/admin/adjust", json=body, headers={"Authorization": owner_bearer}
+    )
+
+    # Assert
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["entry"]["delta"] == "1.00"
+
+
+async def test_admin_players_search_privileged_only(client):
+    """GET /v1/scoring/admin/players：仅特权 JWT 可联想；service-token 401、普通玩家 403。"""
+    # Arrange
+    _, normal_bearer = await seed_player_with_account("alice")
+    _, admin_bearer = await seed_player_with_account("boss", role="admin")
+
+    # Act + Assert（service-token → 401：admin 端点不认 service-token）
+    resp = await client.get(
+        "/v1/scoring/admin/players", params={"q": "ali"}, headers=_svc()
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "missing authorization"
+
+    # Act + Assert（admin JWT）
+    resp = await client.get(
+        "/v1/scoring/admin/players", params={"q": "ali"}, headers={"Authorization": admin_bearer}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "alice" in [p["player_name"] for p in resp.json()]
+
+    # Act + Assert（admin JWT）
+    resp = await client.get(
+        "/v1/scoring/admin/players", params={"q": "ali"}, headers={"Authorization": admin_bearer}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "alice" in [p["player_name"] for p in resp.json()]
+
+    # Act + Assert（普通玩家 JWT → 403）
+    resp = await client.get(
+        "/v1/scoring/admin/players", headers={"Authorization": normal_bearer}
+    )
+    assert resp.status_code == 403
+
+    # Act + Assert（无凭证 → 401）
+    resp = await client.get("/v1/scoring/admin/players")
+    assert resp.status_code == 401
 
 
 async def test_adjust_direction_by_reason_full_set(client):
     """㉕ 方向由 reason 定：全集 6 种均 200；入账 reason 正 delta、出账 reason 负。"""
     # Arrange
     puuid, _ = await seed_player_with_account("alice")
+    _, admin_bearer = await seed_player_with_account("panel_op", role="owner")
     for reason in ["collect", "build_a", "leader_bonus", "settle"]:
         # Act
-        data = await _adjust(client, [_item(puuid, "1", reason)])
+        data = await _adjust(client, admin_bearer, [_item(puuid, "1", reason)])
         # Assert
         assert data["results"][0]["accepted"] is True, reason
         assert data["results"][0]["entry"]["delta"] == "1.00"
     # Act（出账两 reason，先补足余额再扣）
-    await _adjust(client, [_item(puuid, "10", "settle")])
+    await _adjust(client, admin_bearer, [_item(puuid, "10", "settle")])
     for reason in ["manual_adj", "season_reset"]:
-        data = await _adjust(client, [_item(puuid, "1", reason)])
+        data = await _adjust(client, admin_bearer, [_item(puuid, "1", reason)])
         assert data["results"][0]["accepted"] is True, reason
         assert data["results"][0]["entry"]["delta"] == "-1.00"
 
@@ -662,14 +757,15 @@ async def test_adjust_overdraft_default_reject_and_flag(client):
     """㉗ allow_overdraft 默认 False 余额不足 skip；True 放行到负余额。"""
     # Arrange
     puuid, _ = await seed_player_with_account("alice")
+    _, admin_bearer = await seed_player_with_account("panel_op", role="owner")
     # Act（默认拒绝）
-    data = await _adjust(client, [_item(puuid, "5", "manual_adj")])
+    data = await _adjust(client, admin_bearer, [_item(puuid, "5", "manual_adj")])
     # Assert
     assert data["results"][0]["skip_reason"] == "insufficient balance"
     assert await _count_ledger() == 0
     # Act（显式开透支）
     data = await _adjust(
-        client, [_item(puuid, "5", "manual_adj")], allow_overdraft=True
+        client, admin_bearer, [_item(puuid, "5", "manual_adj")], allow_overdraft=True
     )
     # Assert
     assert data["results"][0]["entry"]["balance_after"] == "-5.00"
@@ -679,12 +775,14 @@ async def test_adjust_notify_and_operator_uuid_echo(client):
     """㉘ 默认发通知（方向对应 category）；operator_uuid / note 审计字段回显。"""
     # Arrange
     puuid, _ = await seed_player_with_account("alice")
+    _, admin_bearer = await seed_player_with_account("panel_op", role="owner")
     boss_uuid = uuid.uuid4()
-    await _adjust(client, [_item(puuid, "5", "collect")], notify=False)  # 先补足余额
+    await _adjust(client, admin_bearer, [_item(puuid, "5", "collect")], notify=False)  # 先补足余额
     # Act
     data = await _adjust(
-        client, [_item(puuid, "3", "manual_adj", operator_uuid=str(boss_uuid),
-                       note="误发回收")]
+        client, admin_bearer,
+        [_item(puuid, "3", "manual_adj", operator_uuid=str(boss_uuid),
+               note="误发回收")],
     )
     # Assert
     entry = data["results"][0]["entry"]
