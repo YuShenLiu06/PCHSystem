@@ -850,6 +850,27 @@ async def test_adjust_overdraft_default_reject_and_flag(client):
     assert data["results"][0]["entry"]["balance_after"] == "-5.00"
 
 
+async def test_credit_into_negative_balance_succeeds(client):
+    """透支守卫仅限出账：负余额账号的部分额度 credit 入账不被误伤（CR HIGH 回归）。
+
+    场景：经 allow_overdraft 出账到 -15 后，MCDR credit 5（收集入账）应成功
+    落 -10——守卫只拦 delta<0 的扣减，入账方向不应检查余额正负。
+    """
+    # Arrange
+    puuid, _ = await seed_player_with_account("alice")
+    _, admin_bearer = await seed_player_with_account("panel_op", role="owner")
+    await _adjust(
+        client, admin_bearer, [_item(puuid, "15", "manual_adj")], allow_overdraft=True
+    )
+    # Act
+    data = await _credit(client, puuid, "5", "collect")
+    # Assert
+    r = data["results"][0]
+    assert r["accepted"] is True, r
+    assert r["entry"]["balance_after"] == "-10.00"
+    assert r["entry"]["delta"] == "5.00"
+
+
 async def test_adjust_notify_and_operator_uuid_echo(client):
     """㉘ 默认发通知（方向对应 category）；operator_uuid / note 审计字段回显。"""
     # Arrange

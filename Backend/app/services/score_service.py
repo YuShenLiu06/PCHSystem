@@ -126,7 +126,9 @@ async def write_ledger(
     delta = delta.quantize(_TWO_PLACES)
     balance = await score_repo.get_latest_balance(session, account_id)
     balance_after = balance + delta
-    if balance_after < 0 and not allow_overdraft:
+    # 透支守卫仅限出账（delta<0）：入账方向不检查余额正负——负余额账号的
+    # 部分额度 credit 合法（scoring.md：allow_overdraft 仅 debit 语义）
+    if delta < 0 and balance_after < 0 and not allow_overdraft:
         raise InsufficientBalance(
             f"账号 {account_id} 余额 {balance} 不足以扣减 {abs(delta)}"
             f"（未允许透支）"
