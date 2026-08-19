@@ -22,8 +22,10 @@
   排名（面板「玩家积分」tab），鉴权同 admin/adjust：仅特权 JWT；
   balance = SUM(delta)（R-2 重建），排序 balance DESC + account_id 稳定序。
 - ``GET /v1/scoring/ledger``：流水查询，**多角色**——service-token 或 admin/owner
-  JWT 可查全局（可按 ``player_uuid`` 收敛到单账号）；普通玩家 JWT 只能查自身
-  account（他人 uuid → 403）。H-2：Authorization 头存在（即便非法）只走 JWT
+  JWT 可查全局（可按 ``player_uuid`` 收敛到单账号，或 ``account_id`` 直按账号
+  收敛——余额下钻入口，特权专用、与 ``player_uuid`` 互斥 422）；普通玩家
+  JWT 只能查自身 account（他人 uuid → 403；传 ``account_id`` → 403，自账号
+  放行为将来预留）。H-2：Authorization 头存在（即便非法）只走 JWT
   通道报 401，绝不静默降级 service-token。
 
 service-token 对比统一引用 ``app.api.deps._settings``（调用时取模块属性，
@@ -450,14 +452,32 @@ async def admin_balances(
 
 
 async def _resolve_scope(
-    session: AsyncSession, access: LedgerAccess, player_uuid: UUID | None
+    session: AsyncSession,
+    access: LedgerAccess,
+    player_uuid: UUID | None,
+    account_id: int | None = None,
 ) -> int | None:
     """ledger 作用域解析：
 
-    - 特权 + 无 uuid → 全局（None）；特权 + 有 uuid → 解析目标账号
-      （玩家不存在/未绑定 → 404）。
-    - 普通 + 无 uuid → 自身 account；普通 + 有 uuid → 解析后 ≠ 自身 → 403。
+    - 特权 + 无过滤 → 全局（None）；特权 + ``player_uuid`` → 解析目标账号
+      （玩家不存在/未绑定 → 404）；特权 + ``account_id`` → 账号存在性校验后
+      按该账号收敛（不存在 → 404；余额下钻入口）。
+    - 普通 + 无过滤 → 自身 account；普通 + ``player_uuid`` → 解析后 ≠ 自身
+      → 403；普通 + ``account_id`` → 403（显式拒绝优于静默忽略；
+      ``account_id`` = 自身账号时放行为**将来预留语义，暂未实现**）。
+    - ``player_uuid`` 与 ``account_id`` 互斥（语义重叠）→ 422。
     """
+    if player_uuid is not None and account_id is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "player_uuid and account_id are mutually exclusive",
+        )
+    if account_id is not None:
+        if not access.is_privileged:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+        if await session.get(WebAccount, account_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+        return account_id
     if player_uuid is None:
         return None if access.is_privileged else access.account_id
     player = await player_repo.get_by_uuid(session, player_uuid)
@@ -480,6 +500,7 @@ async def list_ledger(
     access: LedgerAccess = Depends(require_ledger_access),
     session: AsyncSession = Depends(get_session),
     player_uuid: UUID | None = None,
+    account_id: int | None = Query(default=None, ge=1),
     since: datetime | None = None,
     until: datetime | None = None,
     page: int = Query(1, ge=1),
@@ -487,13 +508,16 @@ async def list_ledger(
 ) -> ScoreLedgerPage:
     """积分流水查询（多角色，见 ``require_ledger_access``）。
 
-    时间过滤：``since`` 起（>=）、``until`` 止（<，开区间）；排序 id DESC、
-    分页语义由 ``score_repo.list_entries`` 保证。
+    作用域过滤：``player_uuid``（解析玩家 → 账号）或 ``account_id``（特权
+    专用直按账号收敛，余额下钻入口；与 ``player_uuid`` 互斥 422；普通玩家
+    传此参数 403——自账号放行为将来预留）。时间过滤：``since`` 起（>=）、
+    ``until`` 止（<，开区间）；排序 id DESC、分页语义由
+    ``score_repo.list_entries`` 保证。
     """
-    account_id = await _resolve_scope(session, access, player_uuid)
+    scope_account_id = await _resolve_scope(session, access, player_uuid, account_id)
     entries, total = await score_repo.list_entries(
         session,
-        account_id=account_id,
+        account_id=scope_account_id,
         since=_as_utc(since) if since is not None else None,
         until=_as_utc(until) if until is not None else None,
         page=page,

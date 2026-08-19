@@ -13,6 +13,8 @@
 - 幂等：同 key 同 payload 重放（entry 同 id、库 1 行）；同 key 不同 amount 冲突 skip。
 - ledger 权限矩阵：普通玩家限自身 / 他人 403；admin 与 service-token 全局 + 定向；
   未知 uuid 404；since（>=）/ until（<）边界语义。
+- ledger account_id 过滤（余额下钻）：特权 JWT / service-token 按账号收敛；未知账号
+  404；普通玩家 403（显式拒绝）；与 player_uuid 互斥 422。
 - 分页：id DESC、total、page 语义。
 """
 import uuid
@@ -596,6 +598,89 @@ async def test_ledger_since_until_filter(client):
         "/v1/scoring/ledger", params={"until": earliest.isoformat()}, headers=_svc()
     )
     assert resp.json()["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# ledger account_id 过滤（余额下钻入口，特权专用）
+# ---------------------------------------------------------------------------
+
+
+async def test_ledger_admin_account_id_targeted(client):
+    """特权 JWT + account_id → 仅该账号流水（余额行下钻）。"""
+    # Arrange
+    p1, b1, acc1, p2, b2, acc2 = await _seed_two_players_one_entry_each(client)
+    _, admin_bearer = await seed_player_with_account("boss", role="admin")
+    # Act
+    resp = await client.get(
+        "/v1/scoring/ledger",
+        params={"account_id": acc1},
+        headers={"Authorization": admin_bearer},
+    )
+    # Assert
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["items"][0]["account_id"] == acc1
+
+
+async def test_ledger_account_id_unknown_404(client):
+    """特权 + 不存在账号 → 404 account not found。"""
+    # Arrange
+    _, admin_bearer = await seed_player_with_account("boss", role="admin")
+    # Act
+    resp = await client.get(
+        "/v1/scoring/ledger",
+        params={"account_id": 999999},
+        headers={"Authorization": admin_bearer},
+    )
+    # Assert
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "account not found"
+
+
+async def test_ledger_account_id_regular_player_403(client):
+    """普通玩家 JWT + account_id（即便 = 自身）→ 403（显式拒绝优于静默忽略；
+    自账号放行为将来预留语义，暂不实现）。"""
+    # Arrange
+    p1, b1, acc1, *_ = await _seed_two_players_one_entry_each(client)
+    # Act
+    resp = await client.get(
+        "/v1/scoring/ledger",
+        params={"account_id": acc1},
+        headers={"Authorization": b1},
+    )
+    # Assert
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "forbidden"
+
+
+async def test_ledger_account_id_with_player_uuid_422(client):
+    """account_id 与 player_uuid 互斥（语义重叠）→ 422。"""
+    # Arrange
+    p1, b1, acc1, *_ = await _seed_two_players_one_entry_each(client)
+    # Act
+    resp = await client.get(
+        "/v1/scoring/ledger",
+        params={"account_id": acc1, "player_uuid": str(p1)},
+        headers=_svc(),
+    )
+    # Assert
+    assert resp.status_code == 422
+
+
+async def test_ledger_service_token_account_id(client):
+    """service-token + account_id → 200（MCDR 也可按账号直拉流水）。"""
+    # Arrange
+    p1, b1, acc1, p2, b2, acc2 = await _seed_two_players_one_entry_each(client)
+    # Act
+    resp = await client.get(
+        "/v1/scoring/ledger", params={"account_id": acc2}, headers=_svc()
+    )
+    # Assert
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["items"][0]["account_id"] == acc2
 
 
 # ---------------------------------------------------------------------------
