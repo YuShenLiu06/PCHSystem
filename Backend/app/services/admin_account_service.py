@@ -3,9 +3,10 @@
 ADMIN_USERNAME / ADMIN_PASSWORD 配置时，后端启动经 lifespan 幂等同步一个
 role=owner 的 WebAccount：admin 与所有 sheet owner 平级（RBAC 天然放行项目/
 积分管理），并绑定一个同名管理玩家（UUID 按 MC 离线模式确定性推导）——
-登录 JWT 带 active_uuid，可执行建项目等全部玩家级写操作；同名账号真进
-游戏时身份无缝衔接（同一 UUID）。env 是该账号的密码权威源；未配置或不
-合规 → 静默跳过（不 fail-fast，不影响未启用面板的部署与测试环境）。
+登录 JWT 带 active_uuid，可执行建项目等全部玩家级写操作。管理玩家是
+不可登录锚点（whitelist_state=removed 阻断 !!PCH login 提权链），面板
+密码登录与写操作不受影响。env 是该账号的密码权威源；未配置或不合规
+→ 静默跳过（不 fail-fast，不影响未启用面板的部署与测试环境）。
 """
 import hashlib
 import logging
@@ -43,7 +44,14 @@ def offline_player_uuid(name: str) -> str:
 async def _ensure_admin_player(
     session: AsyncSession, account: WebAccount, username: str
 ) -> None:
-    """确保 admin 账号绑定同名管理玩家；同名玩家已被他人绑定时不抢（只告警）。"""
+    """确保 admin 账号绑定同名管理玩家；同名玩家已被他人绑定时不抢（只告警）。
+
+    管理玩家一律 whitelist_state="removed"（不可登录锚点）：任何人以
+    ADMIN_USERNAME 同名进离线服（离线 UUID 同值推导）也拿不到一次性
+    token（/auth/token 的 check_whitelist 拒 403），无法经 /auth/exchange
+    无密码换 owner JWT；已绑本账号但 state 非 removed（历史同步产物）
+    幂等修正，仅该字段不符时写。
+    """
     parsed = uuid.UUID(offline_player_uuid(username))
     player = await player_repo.get_by_uuid(session, parsed)
     if player is None:
@@ -52,14 +60,25 @@ async def _ensure_admin_player(
                 uuid=parsed,
                 current_name=username,
                 role="owner",
+                whitelist_state="removed",
                 web_account_id=account.id,
             )
         )
         return
     if player.web_account_id == account.id:
-        return  # 幂等：已绑定本账号
+        if player.whitelist_state != "removed":
+            player.whitelist_state = "removed"  # 幂等修正历史产物
+        return
     if player.web_account_id is None:
+        logger.warning(
+            "admin account sync: 同名未绑定玩家 %s 挂靠到 admin 账号 "
+            "(account_id=%s)，whitelist_state 收回为 removed（阻断 !!PCH "
+            "login 提权链）——若该玩家实为真人请更换 ADMIN_USERNAME",
+            username,
+            account.id,
+        )
         player.web_account_id = account.id  # 未绑定的同名玩家（历史数据）挂靠
+        player.whitelist_state = "removed"
         return
     logger.warning(
         "admin account sync: 管理玩家 %s 已绑定其他账号 (account_id=%s)，不抢绑"
@@ -89,10 +108,12 @@ async def sync_admin_account(
 ) -> WebAccount | None:
     """幂等同步 admin 托管账号；未配置/不合规返回 None（记日志不抛错）。
 
-    - 不存在 → 新建 role=owner 永久账号 + 同名管理玩家
+    - 不存在 → 新建 role=owner 永久账号 + 同名管理玩家（不可登录锚点，
+      whitelist_state=removed）
     - 存在 → 幂等修正：role 非 admin/owner 时升为 owner（只升不降）；
       env 密码与库内哈希不符时重哈希（env 为该账号密码权威源）；
-      缺同名管理玩家时补绑（已被他人绑定则不抢）
+      缺同名管理玩家时补绑（已被他人绑定则不抢；绑定者一律
+      whitelist_state=removed）
     """
     if not settings.admin_account_configured:
         return None
