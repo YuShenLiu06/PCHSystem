@@ -6,6 +6,7 @@
 > `GET /v1/scoring/admin/players`：特权玩家联想（面板选人，仅特权 JWT）；`GET /v1/scoring/admin/balances`：全账号余额排名（面板「玩家积分」tab，仅特权 JWT）；`GET /v1/scoring/ledger`：多角色流水分页查询。全部经 `score_service.write_ledger` 落
 > append-only `scoring.score_ledger`（R-2）。settle 编排（Calculator 链、归档自动结算）未实现，
 > 设计契约见 [`../flows/scoring-settlement.md`](../flows/scoring-settlement.md)。
+> HTTP 签名以运行时 `/openapi.json` 为准（`/docs` 可联调），本文档记录业务语义与雷点。
 
 **状态**：✅ 已实现（迁移 0024，积分层首批）
 
@@ -120,7 +121,7 @@
 
 ## 5. admin adjust（`POST /v1/scoring/admin/adjust`）
 
-管理员（服主）积分调控端点：**仅特权 JWT**（`require_privileged_access`）——`Authorization: Bearer <JWT>` 且 role ∈ {admin, owner}（积分管理面板通道；普通玩家 JWT → 403）。**admin ≠ service-token**：本端点不认 `X-Service-Token`（含正确值）→ 401 `missing authorization`——系统组件代玩家记账一律走 credit/debit，管理操作与管理面板绑定。面板账号经环境变量同步：`.env` 配 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（两者均非空才启用），后端启动 lifespan 幂等同步为 role=owner 的无绑定玩家 WebAccount（`sync_admin_account`，env 为该账号密码权威源，修改需重启 backend；未配置静默跳过），复用 `POST /auth/login` 登录。
+管理员（服主）积分调控端点：**仅特权 JWT**（`require_privileged_access`）——`Authorization: Bearer <JWT>` 且 role ∈ {admin, owner}（积分管理面板通道；普通玩家 JWT → 403）。**admin ≠ service-token**：本端点不认 `X-Service-Token`（含正确值）→ 401 `missing authorization`——系统组件代玩家记账一律走 credit/debit，管理操作与管理面板绑定。面板账号经环境变量同步：`.env` 配 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（两者均非空才启用），后端启动 lifespan 经 `sync_admin_account` 幂等同步为 role=owner 的 WebAccount **并绑定同名管理玩家**——UUID 按 MC 离线模式确定性推导（`offline_player_uuid`），登录 JWT 带 `active_uuid`，可执行建项目等全部玩家级写操作。env 为该账号密码权威源（修改需重启 backend；未配置静默跳过），登录复用 `POST /auth/login`。
 
 **与 credit/debit 的差异**（其余请求/响应结构、批量语义、skip_reason 全集、通知行为完全一致，复用 §3/§4 契约）：
 
@@ -139,7 +140,7 @@
 
 ### 5.1 特权玩家联想（`GET /v1/scoring/admin/players`）
 
-面板调分/筛选「玩家名 → UUID」联想端点，鉴权同 admin/adjust（**仅特权 JWT**，普通玩家 403、service-token 401）。与 `GET /players` 同源（`player_repo.search_for_manager`）但走特权鉴权——托管 admin 账号无绑定玩家，调不了需玩家身份（`active_uuid`）的 `get_current_player` 通道。仅返回已绑 WebAccount 的玩家。
+面板调分/筛选「玩家名 → UUID」联想端点，鉴权同 admin/adjust（**仅特权 JWT**，普通玩家 403、service-token 401）。与 `GET /players` 同源（`player_repo.search_for_manager`）但走特权鉴权——不依赖玩家身份（`active_uuid`）通道，无绑定玩家的特权账号同样可调。仅返回已绑 WebAccount 的玩家。
 
 ```
 GET /v1/scoring/admin/players?q=ali&limit=10   →  [{"player_uuid": "…", "player_name": "alice", "display_name": "…"}]

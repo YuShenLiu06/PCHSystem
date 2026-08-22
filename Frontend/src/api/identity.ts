@@ -29,11 +29,11 @@ export interface AuthResponse {
   account: AccountBrief
 }
 
-/** /me 响应 */
+/** /me 响应（active_uuid 可空：无绑定玩家的托管管理账号，issue #74） */
 export interface MeResponse {
   account: AccountBrief
   players: PlayerBrief[]
-  active_uuid: string
+  active_uuid: string | null
 }
 
 /** /web-accounts/me 响应 */

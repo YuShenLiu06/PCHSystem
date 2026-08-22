@@ -2,6 +2,7 @@
 
 > 投影文件解析子服务的 HTTP API 权威参考（`Backend/app/api/parsing.py`）。
 > 相关：在线表格落点见 [`sheets.md`](./sheets.md)（`POST /sheets/from-items`）。
+> HTTP 签名以运行时 `/openapi.json` 为准（`/docs` 可联调），本文档记录业务语义与雷点。
 
 ---
 

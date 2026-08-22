@@ -57,12 +57,12 @@ def create_app() -> FastAPI:
         title="HTCMC PCHSystem", version=_backend_version(), lifespan=_lifespan
     )
 
-    @app.get("/healthz")
+    @app.get("/healthz", summary="健康检查（compose healthcheck）")
     async def healthz() -> dict[str, str]:
         # 契约不变：compose healthcheck + install.sh/update.sh 的 wait_http_ok /healthz 依赖
         return {"status": "ok"}
 
-    @app.get("/info")
+    @app.get("/info", summary="服务信息（版本 + web 可达性）")
     async def info() -> dict:
         # 公开无鉴权（同 /healthz）。供 pch_system 插件 on_load 自检嗅探后端可达性 +
         # 前端地址（web_base_url）+ 前端可达性（web_online）+ 前端版本（web_version）。

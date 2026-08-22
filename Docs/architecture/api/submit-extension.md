@@ -3,6 +3,7 @@
 > `POST /sheets/{sheet_id}/submit-batch`：客户端传材料清单，后端按行 mode 分发
 > （lock 认领人交付 / progress 任意人增量上交）+ 回执。行语义/状态机/鉴权总章见
 > [`sheets.md`](./sheets.md)；信任边界见 [`../architecture.md`](../architecture.md) §9。
+> HTTP 签名以运行时 `/openapi.json` 为准（`/docs` 可联调），本文档记录业务语义与雷点。
 
 **状态**：✅ 已实现
 

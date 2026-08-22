@@ -15,7 +15,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_account_uuids, get_current_player
+from app.api.deps import (
+    ViewerIdentity,
+    get_current_account_uuids,
+    get_current_player,
+    get_current_viewer,
+)
 from app.api.sheets._shared import (
     _can_manage,
     _load_sheet_or_404,
@@ -75,12 +80,13 @@ async def _assemble_entries(
     return entries
 
 
-@router.get("/{sheet_id}/managers", response_model=list[SheetManagerEntry])
+@router.get("/{sheet_id}/managers", response_model=list[SheetManagerEntry], summary="协管员列表")
 async def list_managers(
     sheet_id: int,
     session: AsyncSession = Depends(get_session),
-    player: Player = Depends(get_current_player),
+    _viewer: ViewerIdentity = Depends(get_current_viewer),
 ) -> list[SheetManagerEntry]:
+    """透明只读：任意登录账号可看（player-less 托管账号亦可，issue #74）。"""
     await _load_sheet_or_404(session, sheet_id)
     return await _assemble_entries(session, sheet_id)
 
@@ -89,6 +95,7 @@ async def list_managers(
     "/{sheet_id}/managers",
     response_model=list[SheetManagerEntry],
     status_code=status.HTTP_201_CREATED,
+    summary="授予协管员",
 )
 async def grant_manager(
     sheet_id: int,
@@ -166,6 +173,7 @@ async def grant_manager(
 @router.delete(
     "/{sheet_id}/managers",
     response_model=list[SheetManagerEntry],
+    summary="移除协管员",
 )
 async def revoke_manager(
     sheet_id: int,

@@ -4,7 +4,8 @@ import uuid
 from dataclasses import dataclass
 
 import jwt as pyjwt
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,8 +19,43 @@ from app.repositories import player_repo, web_account_repo
 logger = logging.getLogger(__name__)
 _settings: Settings = get_settings()
 
+# ---------------------------------------------------------------------------
+# OpenAPI security schemes（纯元数据）：``auto_error=False`` 时 ``APIKeyHeader``
+# 返回 ``str | None``，与 ``Header(default=None)`` 完全等价 → 鉴权行为零变，
+# /docs 获得 Authorize 按钮。Authorization 故意不用 ``HTTPBearer``：
+# ``auto_error=False`` 下它对「无头」与「头存在但非 Bearer」同样返回 None，
+# 无法区分，而 H-2（RS-8：Authorization 头存在绝不静默降级）依赖该区分。
+# ---------------------------------------------------------------------------
 
-def require_service_token(x_service_token: str | None = Header(default=None)) -> None:
+service_token_scheme = APIKeyHeader(
+    name="X-Service-Token",
+    scheme_name="X-Service-Token",
+    auto_error=False,
+    description="服务端组件令牌（MCDR / 服务端 mod / 服主脚本）",
+)
+player_uuid_scheme = APIKeyHeader(
+    name="X-Player-UUID",
+    scheme_name="X-Player-UUID",
+    auto_error=False,
+    description="MCDR 代理通道玩家 UUID（与 X-Service-Token 成对）",
+)
+source_id_scheme = APIKeyHeader(
+    name="X-Source-Id",
+    scheme_name="X-Source-Id",
+    auto_error=False,
+    description="施工上报源标识（服务端 mod 白名单名）",
+)
+bearer_scheme = APIKeyHeader(
+    name="Authorization",
+    scheme_name="Authorization",
+    auto_error=False,
+    description='Web JWT 通道，值形如 "Bearer <jwt>"',
+)
+
+
+def require_service_token(
+    x_service_token: str | None = Security(service_token_scheme),
+) -> None:
     """校验 X-Service-Token（外部系统如 MCDR 调用 /sheets/export、/notifications/*）。
 
     用 ``secrets.compare_digest`` 防时序攻击（红线：复用 settings.mcdr_service_token）。
@@ -158,9 +194,9 @@ async def _player_from_service_token(
 
 async def get_current_player(
     request: Request,
-    authorization: str | None = Header(default=None),
-    x_service_token: str | None = Header(default=None),
-    x_player_uuid: str | None = Header(default=None),
+    authorization: str | None = Security(bearer_scheme),
+    x_service_token: str | None = Security(service_token_scheme),
+    x_player_uuid: str | None = Security(player_uuid_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> Player:
     """双通道身份解析（JWT 通道已适配 account_id 主锚）：
@@ -201,8 +237,101 @@ async def get_current_account_uuids(
     return set(uuids) | {player.uuid}
 
 
+@dataclass(frozen=True)
+class ViewerIdentity:
+    """只读端点查看者身份（account 级，player-less 托管账号可用，issue #74）。
+
+    - ``account``：JWT 通道 = sub 账号；service-token 通道 = player 所属账号
+      （未绑 → ``None``，历史数据兼容）。
+    - ``uuids``：该账号全部绑定 UUID 集合（未绑回退 ``{player.uuid}``；
+      player-less 账号 → 空集）。
+    - ``active_uuid``：会话来源 UUID（service-token 通道 = 该 player；
+      player-less → ``None``）。已过 M1 复验（仍属 ``account``）。
+    - ``player``：会话来源 Player 对象（M1 复验顺手加载，调用方免二次查询；
+      player-less → ``None``）。
+    """
+
+    account: WebAccount | None
+    uuids: frozenset[uuid.UUID]
+    active_uuid: uuid.UUID | None
+    player: Player | None = None
+
+
+async def get_current_viewer(
+    request: Request,
+    authorization: str | None = Security(bearer_scheme),
+    x_service_token: str | None = Security(service_token_scheme),
+    x_player_uuid: str | None = Security(player_uuid_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> ViewerIdentity:
+    """只读端点身份解析：双通道同 :func:`get_current_player`，但不要求 active_uuid。
+
+    供「浏览型」GET 端点（sheets 列表/详情、construction progress）使用：
+    无绑定玩家的托管管理账号 JWT 也能通过（issue #74）。H-2 同样适用——
+    Authorization 头存在（即便非 Bearer/过期/非法）只走 JWT 通道报 401，
+    绝不静默降级到 service-token。带 active_uuid 时做 M1 复验（同
+    ``_player_from_jwt``：仍须属于该账号，防玩家迁移后旧 token 继续
+    以玩家视角读）。
+    """
+    if authorization is not None:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer")
+        token = authorization.removeprefix("Bearer ").strip()
+        account, active_uuid = await _account_and_active_uuid_from_jwt(session, token)
+        player: Player | None = None
+        if active_uuid is not None:
+            # M1 复验：防 access token 存活期内玩家迁到别的 account
+            player = (
+                await session.execute(
+                    select(Player).where(
+                        Player.uuid == active_uuid,
+                        Player.web_account_id == account.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if player is None:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, "player not bound to account"
+                )
+        merged = set(await web_account_repo.list_uuids(session, account.id))
+        if player is not None:
+            merged.add(player.uuid)
+        return ViewerIdentity(
+            account=account,
+            uuids=frozenset(merged),
+            active_uuid=active_uuid,
+            player=player,
+        )
+    player = await _player_from_service_token(
+        session, request, x_service_token, x_player_uuid
+    )
+    if player.web_account_id is None:
+        return ViewerIdentity(
+            account=None,
+            uuids=frozenset({player.uuid}),
+            active_uuid=player.uuid,
+            player=player,
+        )
+    account = await web_account_repo.get_by_id(session, player.web_account_id)
+    uuids = set(await web_account_repo.list_uuids(session, player.web_account_id))
+    uuids.add(player.uuid)
+    if account is None:  # 悬空 web_account_id 防御：按未绑回退
+        return ViewerIdentity(
+            account=None,
+            uuids=frozenset({player.uuid}),
+            active_uuid=player.uuid,
+            player=player,
+        )
+    return ViewerIdentity(
+        account=account,
+        uuids=frozenset(uuids),
+        active_uuid=player.uuid,
+        player=player,
+    )
+
+
 async def get_current_account(
-    authorization: str | None = Header(default=None),
+    authorization: str | None = Security(bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> WebAccount:
     """从 JWT 解析当前 WebAccount（Web 账号级端点用）。
@@ -218,18 +347,31 @@ async def get_current_account(
     return await _account_from_jwt(session, token)
 
 
-async def get_active_uuid(
-    authorization: str | None = Header(default=None),
+async def get_active_uuid_optional(
+    authorization: str | None = Security(bearer_scheme),
     session: AsyncSession = Depends(get_session),
-) -> uuid.UUID:
-    """从 JWT 的 active_uuid claim 解析当前会话来源 Player UUID。
+) -> uuid.UUID | None:
+    """同 :func:`get_active_uuid`，但无 ``active_uuid`` claim 时返回 ``None``。
 
-    无 active_uuid → 401（用于需要具体 Player 的 Web 账号级端点，如 /me）。
+    供「账号级端点 + 可选玩家上下文」使用（如 ``GET /me``、mod-sources 审批人）：
+    player-less 托管管理账号（``ADMIN_*`` env，issue #74）无 claim 不再 401。
     """
     if authorization is None or not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer")
     token = authorization.removeprefix("Bearer ").strip()
     _, active_uuid = await _account_and_active_uuid_from_jwt(session, token)
+    return active_uuid
+
+
+async def get_active_uuid(
+    authorization: str | None = Security(bearer_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> uuid.UUID:
+    """从 JWT 的 active_uuid claim 解析当前会话来源 Player UUID。
+
+    无 active_uuid → 401（用于需要具体 Player 的 Web 账号级端点）。
+    """
+    active_uuid = await get_active_uuid_optional(authorization, session)
     if active_uuid is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing active_uuid")
     return active_uuid
@@ -245,14 +387,18 @@ def _resolve_role(player: Player, account: WebAccount | None = None) -> str:
 
 
 def require_role(role: str):
-    """RBAC 权限检查（role 权威源改为 WebAccount）。"""
+    """RBAC 权限检查（account 级：role 权威源 = WebAccount.role，仅 Bearer JWT）。
+
+    与 scoring ``require_privileged_access`` 同范式（admin ≠ service-token）：
+    管理端点不认 ``X-Service-Token`` 通道；无绑定玩家的托管管理账号
+    （``ADMIN_*`` env，JWT 无 active_uuid）也能通过（issue #74）。
+    """
     async def _check(
-        player: Player = Depends(get_current_player),
-    ) -> Player:
-        effective_role = _resolve_role(player)
-        if effective_role != role and effective_role != "owner":
+        account: WebAccount = Depends(get_current_account),
+    ) -> WebAccount:
+        if account.role != role and account.role != "owner":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
-        return player
+        return account
     return _check
 
 
@@ -282,9 +428,9 @@ class ReporterIdentity:
 
 async def get_construction_reporter(
     request: Request,
-    authorization: str | None = Header(default=None),
-    x_service_token: str | None = Header(default=None),
-    x_source_id: str | None = Header(default=None),
+    authorization: str | None = Security(bearer_scheme),
+    x_service_token: str | None = Security(service_token_scheme),
+    x_source_id: str | None = Security(source_id_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> ReporterIdentity:
     """施工上报双通道鉴权（D1 / construction-progress.md §3）。

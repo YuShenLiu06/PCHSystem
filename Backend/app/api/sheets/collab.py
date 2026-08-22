@@ -35,7 +35,7 @@ router = APIRouter(prefix="")
 logger = logging.getLogger(__name__)
 
 
-@router.post("/{sheet_id}/rows/{row_id}/claim", response_model=RowDetail)
+@router.post("/{sheet_id}/rows/{row_id}/claim", response_model=RowDetail, summary="认领行")
 async def claim_row(
     sheet_id: int,
     row_id: int,
@@ -76,7 +76,7 @@ async def claim_row(
     return await _row_response(session, sheet_id, row)
 
 
-@router.patch("/{sheet_id}/rows/{row_id}/delivery", response_model=RowDetail)
+@router.patch("/{sheet_id}/rows/{row_id}/delivery", response_model=RowDetail, summary="登记交付数量")
 async def set_row_delivery(
     sheet_id: int,
     row_id: int,
@@ -130,7 +130,7 @@ async def set_row_delivery(
     return await _row_response(session, sheet_id, row)
 
 
-@router.post("/{sheet_id}/rows/{row_id}/release", response_model=RowDetail)
+@router.post("/{sheet_id}/rows/{row_id}/release", response_model=RowDetail, summary="解除认领")
 async def release_row(
     sheet_id: int,
     row_id: int,
@@ -217,7 +217,7 @@ async def release_row(
     return await _row_response(session, sheet_id, row)
 
 
-@router.post("/{sheet_id}/rows/{row_id}/reject", response_model=RowDetail)
+@router.post("/{sheet_id}/rows/{row_id}/reject", response_model=RowDetail, summary="打回行（重开）")
 async def reject_row(
     sheet_id: int,
     row_id: int,
@@ -265,7 +265,7 @@ async def reject_row(
     return await _row_response(session, sheet_id, row)
 
 
-@router.post("/{sheet_id}/rows/{row_id}/contribute", response_model=RowDetail)
+@router.post("/{sheet_id}/rows/{row_id}/contribute", response_model=RowDetail, summary="提交贡献数量")
 async def contribute_to_row(
     sheet_id: int,
     row_id: int,
@@ -318,7 +318,7 @@ async def contribute_to_row(
     return await _row_response(session, sheet_id, row, with_contributors=True)
 
 
-@router.patch("/{sheet_id}/rows/{row_id}/progress", response_model=RowDetail)
+@router.patch("/{sheet_id}/rows/{row_id}/progress", response_model=RowDetail, summary="更新进度数量")
 async def set_row_progress(
     sheet_id: int,
     row_id: int,

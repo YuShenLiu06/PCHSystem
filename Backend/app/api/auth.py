@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_active_uuid, get_current_account, get_current_player
+from app.api.deps import get_active_uuid_optional, get_current_account, get_current_player
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.jwt import create_access_token, create_refresh_token, decode_token
@@ -48,7 +48,7 @@ def _account_brief(account: WebAccount) -> AccountBrief:
     )
 
 
-@router.post("/token", response_model=TokenIssueResponse)
+@router.post("/token", response_model=TokenIssueResponse, summary="签发一次性登录 token（MCDR）")
 async def post_token(
     body: TokenIssueRequest,
     request: Request,
@@ -74,7 +74,7 @@ async def post_token(
     )
 
 
-@router.post("/exchange", response_model=TokenExchangeResponse)
+@router.post("/exchange", response_model=TokenExchangeResponse, summary="一次性 token 兑换 JWT 对")
 async def post_exchange(
     body: TokenExchangeRequest,
     request: Request,
@@ -101,7 +101,7 @@ async def post_exchange(
     )
 
 
-@router.post("/refresh", response_model=TokenExchangeResponse)
+@router.post("/refresh", response_model=TokenExchangeResponse, summary="续签 access token")
 async def post_refresh(
     body: RefreshRequest,
     session: AsyncSession = Depends(get_session),
@@ -123,11 +123,27 @@ async def post_refresh(
     if account is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "account not found")
 
-    # active_uuid 可能不存在（旧 token），拒绝让其重登
+    # active_uuid 可能不存在：① 无绑定玩家的托管管理账号（ADMIN_* env）——
+    # token 天然无 claim，允许续签（player=None，issue #74）；② 旧格式 token
+    # （账号有绑定玩家却无 claim）——拒绝让其重登
     active_uuid_str = payload.get("active_uuid")
     if not active_uuid_str:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "legacy token, please re-login")
-    active_uuid = uuid.UUID(active_uuid_str)
+        players = await web_account_repo.list_players(session, account.id)
+        if players:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "legacy token, please re-login"
+            )
+        access = create_access_token(account.id, account.role)
+        refresh, _ = create_refresh_token(account.id, account.role)
+        return TokenExchangeResponse(
+            access_token=access, refresh_token=refresh,
+            player=None, account=_account_brief(account),
+        )
+    try:
+        active_uuid = uuid.UUID(active_uuid_str)
+    except ValueError:
+        # 畸形 claim（签发端 bug / 伪造）→ 401，不裸抛 ValueError 变 500
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid active_uuid")
 
     # 验证 UUID 仍属于该账号
     player_stmt = select(Player).where(
@@ -147,13 +163,16 @@ async def post_refresh(
     )
 
 
-@top_router.get("/me", response_model=MeResponse)
+@top_router.get("/me", response_model=MeResponse, summary="当前身份（账号 + 活跃 UUID）")
 async def get_me(
     account: WebAccount = Depends(get_current_account),
-    active_uuid: uuid.UUID = Depends(get_active_uuid),
+    active_uuid: uuid.UUID | None = Depends(get_active_uuid_optional),
     session: AsyncSession = Depends(get_session),
 ) -> MeResponse:
-    """返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。"""
+    """返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。
+
+    player-less 托管账号（ADMIN_* env）无 active_uuid → null、players=[]（issue #74）。
+    """
     players = await web_account_repo.list_players(session, account.id)
     return MeResponse(
         account=_account_brief(account),
@@ -165,7 +184,7 @@ async def get_me(
     )
 
 
-@top_router.get("/me/last_sheet", response_model=LastSheetResponse)
+@top_router.get("/me/last_sheet", response_model=LastSheetResponse, summary="我最近访问的表")
 async def get_my_last_sheet(
     player: Player = Depends(get_current_player),
     session: AsyncSession = Depends(get_session),

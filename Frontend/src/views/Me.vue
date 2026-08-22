@@ -20,6 +20,9 @@ const router = useRouter()
 const me = ref<MeResponse | null>(null)
 const loading = ref(false)
 
+// 无绑定玩家的托管管理账号（admin 面板，issue #74）：玩家专属卡片不加载不渲染
+const hasPlayers = computed(() => (me.value?.players.length ?? 0) > 0)
+
 // 绑定新身份对话框（game_init 方向：游戏内 !!PCH bind 出码 → Web 输码确认）
 const showBindDialog = ref(false)
 const bindCode = ref('')
@@ -234,11 +237,14 @@ async function onLeaveConstruction(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  load()
-  loadConstructionSource()
-  loadReportEvents()
-  loadMyConstruction()
+onMounted(async () => {
+  await load()
+  // 玩家专属面板仅在有绑定身份时加载（player-less 托管账号调了会 401，#74）
+  if (hasPlayers.value) {
+    loadConstructionSource()
+    loadReportEvents()
+    loadMyConstruction()
+  }
 })
 </script>
 
@@ -311,8 +317,13 @@ onMounted(() => {
       </el-empty>
     </el-card>
 
-    <!-- 当前施工项目（活跃加入；同一账号同时最多 1 个，后端约束） -->
-    <el-card header="当前施工项目" style="margin-top: 16px;" v-loading="myConstructionLoading">
+    <!-- 当前施工项目（活跃加入；同一账号同时最多 1 个，后端约束；玩家专属） -->
+    <el-card
+      v-if="hasPlayers"
+      header="当前施工项目"
+      style="margin-top: 16px;"
+      v-loading="myConstructionLoading"
+    >
       <div v-if="myConstruction && activeConstruction">
         <p>
           <strong>项目：</strong>{{ myConstruction.active.sheet_title ?? ('#' + activeConstruction) }}
@@ -335,8 +346,8 @@ onMounted(() => {
       <div v-else class="pch-muted">加载中...</div>
     </el-card>
 
-    <!-- 施工上报源（玩家自助切：影响「由谁替你统计施工方块净放置」） -->
-    <el-card header="施工上报源" style="margin-top: 16px;">
+    <!-- 施工上报源（玩家自助切：影响「由谁替你统计施工方块净放置」；玩家专属） -->
+    <el-card v-if="hasPlayers" header="施工上报源" style="margin-top: 16px;">
       <div v-if="constructionSource">
         <p>
           <strong>当前：</strong>{{ describeSource(constructionSource.active) }}
@@ -397,8 +408,8 @@ onMounted(() => {
       </div>
     </el-card>
 
-    <!-- 个人上报事件流水（accepted + 所有 skip 原因逐条落库；最近 50 条；迭代 5） -->
-    <el-card v-if="me" style="margin-top: 16px;">
+    <!-- 个人上报事件流水（accepted + 所有 skip 原因逐条落库；最近 50 条；迭代 5；玩家专属） -->
+    <el-card v-if="me && hasPlayers" style="margin-top: 16px;">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span>我的上报历史</span>

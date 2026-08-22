@@ -149,18 +149,25 @@ mutation {
 ### 3.5 RBAC 权限中间件
 
 ```python
-def require_role(*roles):
-    def dep(user = Depends(current_user)):
-        if user.role not in roles:
+def require_role(role: str):
+    async def _check(account: WebAccount = Depends(get_current_account)) -> WebAccount:
+        if account.role != role and account.role != "owner":
             raise HTTPException(403)
-        return user
-    return dep
+        return account
+    return _check
 
 @app.patch("/players/{uuid}")
-async def update_player(uuid, body, _=Depends(require_role("admin", "owner"))):
+async def update_player(uuid, body, _=Depends(require_role("admin"))):
     ...
 ```
-三级：`user` / `admin`（运维）/ `owner`（超管）。FastAPI 依赖注入统一鉴权。
+
+- 三级：`user` / `admin`（运维）/ `owner`（超管，对任意 `require_role` 隐式放行）。
+- **权威源 = `WebAccount.role`（账号级）**：`get_current_account` 从 JWT（sub=account_id）解析账号。
+- **仅接受 `Bearer JWT`**（**admin ≠ service-token**：不认 `X-Service-Token` 通道，
+  与 scoring `require_privileged_access` 同范式——防服务端凭证越权）。
+- 无绑定玩家的托管管理账号（`ADMIN_*` env，JWT 无 `active_uuid`）同样通过（issue #74）。
+- 例外：sheets 层 `_is_superuser` 仍从 player 通道出发，经 `_resolve_role`
+  取 `WebAccount.role` 为权威（未绑 account 的历史数据回退 `player.role`）。
 
 ### 3.6 JWT sub=web_account_id（v0.8.0 破坏性变更）
 
@@ -168,7 +175,7 @@ async def update_player(uuid, body, _=Depends(require_role("admin", "owner"))):
 |---|---|
 | JWT `sub` | `player_uuid`（UUID）→ `web_account_id`（bigint）；现有会话全失效，需重新登录 |
 | 新增 `active_uuid` claim | 会话来源 UUID（`/auth/login` 取首个绑定 player，`/auth/exchange` 取兑换玩家） |
-| RBAC 权威源 | `player.role` → `_resolve_role(player, account)`（未绑玩家回退 `player.role`） |
+| RBAC 权威源 | `player.role` → `WebAccount.role`（账号级，鉴权细则见 §3.5） |
 | 聚合查询 | `sheet_repo.list_sheets` / `notification_repo.pending` / `aggregate_contributor_totals` 均按 `web_account_id` 分组（NULL 用 `COALESCE(web_account_id::text, uuid::text)` 回退） |
 | 积分归属 | 已聚合按 account 分组；`score_ledger` 待建时直接加 `owner_account_id` |
 
@@ -209,4 +216,4 @@ async def update_player(uuid, body, _=Depends(require_role("admin", "owner"))):
 
 ---
 
-*最后更新：2026-07-21*
+*最后更新：2026-08-22*

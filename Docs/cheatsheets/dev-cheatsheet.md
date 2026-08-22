@@ -34,6 +34,19 @@ docker attach pchsystem-mc-test-1
 
 ---
 
+## Swagger / OpenAPI（后端 API 文档）
+
+> FastAPI 自动生成，无需配置，端口随 compose `BACKEND_PORT`。
+> 业务语义（鉴权矩阵 / 状态机 / 雷点）以 [`../architecture/api/`](../architecture/api/) 为权威，`/docs` 只是 HTTP 表面。
+
+| 入口 | 用途 |
+|---|---|
+| `http://localhost:8000/docs` | Swagger UI 联调调试；右上 **Authorize** 可填 `X-Service-Token` 或 `Bearer <jwt>` |
+| `http://localhost:8000/redoc` | ReDoc 阅读版 |
+| `curl -s http://localhost:8000/openapi.json \| jq '.paths \| keys'` | 机器可读契约——改端点前后核对签名的权威源，可直接喂给 AI 防幻觉 |
+
+---
+
 ## 环境变量（根 `.env`，compose 插值读取）
 
 > compose 用 `${VAR}` 插值读**根 `.env`**（compose 文件同目录），**不是** `Backend/.env`。
@@ -109,7 +122,7 @@ docker compose exec backend pytest                  # 容器内跑测试
 
 ## 前端 Vue3（Vite）
 
-> 前端**不在 docker 里跑**（compose 只含 postgres + backend），开发时宿主机直接 `npm run dev`，依赖 Vite HMR。
+> 二选一：宿主 `npm run dev`（HMR，联调首选）或 compose web 服务（`.env` 的 `COMPOSE_PROFILES=web` 激活，nginx 托管 `Frontend/dist` + 反代 `/api`，验生产 bundle 用）。
 > 完整流程 / 排错见 [`../../Frontend/CLAUDE.md`](../../Frontend/CLAUDE.md) §6。
 
 ### 启动 / 构建
@@ -132,7 +145,8 @@ cd Frontend && npx vitest             # 跑单测（package.json 无 test script
 > - **改 `vite.config.ts` / `package.json` 不热重载**：需 Ctrl+C 重启 dev server（HMR 只覆盖 `.vue` / `.ts` 源码）。
 > - **后台 dev server 停不掉时**：`lsof -ti :5173 | xargs -r kill`（或停掉拉起它的后台任务）。
 > - **外部域名访问被 Vite 拦截**（`Blocked request. This host (...) is not allowed.`）：经反代 / tunnel 域名（如 `dev-git.xxx.nyat.app`）访问 dev server 时，需在 `vite.config.ts` 的 `server.allowedHosts` 显式加该域名（防 DNS rebinding）；改 config 不热重载，需重启 dev server。
+> - **⚠️ localhost 端口被旁路抢夺（症状：改了代码 / 换栈后浏览器行为不变，backend 日志无对应请求）**：VS Code 端口转发（Remote/Docker 会话自动转发，精确绑 `127.0.0.1:<port>`）与宿主 vite dev（绑 `[::1]:5173`）**优先级都高于 docker 的通配 `*:5173/:8000` 映射**——浏览器 `localhost` 流量进的是旁路而非 docker 栈。确认 `lsof -nP -iTCP:5173 -iTCP:8000 -sTCP:LISTEN` 谁在监听；清旁路（VS Code 底部 PORTS 面板对 5173/8000 Stop Forwarding；`lsof -ti :5173 | xargs -r kill` 杀 vite）；验证 `curl -s localhost:5173/ | grep -oE 'index-[A-Za-z0-9]+\.js'` 比对 bundle hash，命中 docker 栈产物。
 
 ---
 
-*最后更新：2026-07-21*
+*最后更新：2026-08-22*
