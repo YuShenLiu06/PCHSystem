@@ -15,6 +15,7 @@
 
 ### Added
 
+- **后端**：`ADMIN_*` 托管账号同步时绑定同名管理玩家（UUID 按 MC 离线模式确定性推导，`offline_player_uuid`）——登录 JWT 带 `active_uuid`，admin 可执行建项目/编辑等全部玩家级写操作（不再 `missing active_uuid`）；同名账号真进游戏时身份无缝衔接。同名玩家已被其他账号绑定时不抢（告警回退只读形态）。
 - **后端**：OpenAPI 文档增强——鉴权头（`X-Service-Token` / `X-Player-UUID` / `X-Source-Id` / `Authorization`）声明为 security schemes（`/docs` 出现 Authorize 按钮）、全部端点补中文 `summary`、`/players` 路由补 `tags`；`Docs/architecture/api/*.md` 头部标注「HTTP 签名以运行时 `/openapi.json` 为准」，dev-cheatsheet 增 Swagger 速查。
 
 ### Changed

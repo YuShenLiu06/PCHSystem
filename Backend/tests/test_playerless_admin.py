@@ -1,10 +1,12 @@
-"""player-less 管理账号（托管 admin）全链路测试（issue #74）。
+"""player-less 管理账号全链路测试（issue #74）。
 
-托管账号（``ADMIN_*`` env 同步）不绑定游戏玩家：JWT 无 ``active_uuid``。
+player-less = 账号无任何绑定玩家（JWT 无 ``active_uuid``）的泛化防御形态
+（如 ``ADMIN_*`` 托管账号撞名不抢绑的回退、运维手建账号）。
 历史缺陷：``require_role`` 基于 ``get_current_player``（需 active_uuid）→
 施工管理端点 401；``GET /me`` 硬依赖 ``get_active_uuid``；``/auth/refresh``
 对无 claim token 一律拒；``GET /sheets`` 列表/详情同踩——401 又触发前端
-拦截器清会话踢回登录页。
+拦截器清会话踢回登录页。注：``ADMIN_*`` 托管账号现已默认绑定管理玩家
+（``sync_admin_account``），常态不再 player-less（见 test_admin_account_sync）。
 
 本套锁定修复后契约：
 - 管理端点鉴权 = account 级 JWT（admin ≠ service-token；无玩家可用）

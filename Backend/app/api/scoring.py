@@ -160,8 +160,8 @@ async def require_ledger_access(
 class PrivilegedAccess:
     """特权端点权限解析结果（admin/adjust / admin/players **仅特权 JWT**）。
 
-    ``operator`` = ``jwt-account:<id>``（审计日志操作者标签，面板托管账号
-    无绑定玩家、不传 ``operator_uuid``，操作者经此标签记录）。
+    ``operator`` = ``jwt-account:<id>``（审计日志操作者标签，面板调用不传
+    ``operator_uuid``，操作者经此标签记录）。
     """
 
     operator: str
@@ -372,8 +372,8 @@ async def admin_adjust(
 
     与 credit/debit 共用批量管线，差异：reason 放开全集（方向由 reason 符号定，
     单端点双向）；``allow_overdraft`` 语义同 debit。操作者经审计日志
-    ``operator=jwt-account:<id>`` 标签记录（面板不传 ``operator_uuid``——
-    它是 Player UUID，托管账号无绑定玩家）；``note`` 由调用方按条提供。
+    ``operator=jwt-account:<id>`` 标签记录（面板不传 ``operator_uuid``；
+    ``note`` 由调用方按条提供）。
     """
     return await _process_batch(
         session,

@@ -83,10 +83,11 @@ async def password_login(
 ) -> TokenExchangeResponse:
     """用户名+密码登录（必须永久账号）→ 完整 AuthResponse。
 
-    契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久），
-    player 取该账号首个绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。
-    例外：环境同步的托管管理账号（admin 面板，sync_admin_account 产物）无绑定玩家，
-    player=None、JWT 无 active_uuid（限 /admin 面板端点使用）。
+    契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久；
+    ``ADMIN_*`` 托管账号经 ``sync_admin_account`` 绑定同名管理玩家），player 取该账号首个
+    绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。
+    例外：无绑定玩家的特权账号（如托管账号撞名不抢绑回退）player=None、
+    JWT 无 active_uuid（仅 /admin 面板端点与只读浏览可用，issue #74）。
     限频：入口按 IP + (username, ip) 双维度滑窗（bcrypt 慢哈希配合防爆破/撞库）；成功后清零。
     """
     ip = request.client.host if request.client else None

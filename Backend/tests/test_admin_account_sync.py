@@ -1,8 +1,9 @@
 """admin 托管账号环境同步测试（sync_admin_account + /auth/login 联动）。
 
 ADMIN_USERNAME / ADMIN_PASSWORD 配置时启动同步一个 role=owner 的 WebAccount：
-admin 与所有 sheet owner 平级（RBAC 天然放行）、不绑定游戏玩家（player=None，
-JWT 无 active_uuid）。env 是该账号的密码权威源；未配置或不合规 → 静默跳过
+admin 与所有 sheet owner 平级（RBAC 天然放行），并绑定一个同名管理玩家
+（UUID 按 MC 离线模式确定性推导 → JWT 带 active_uuid，可执行建项目等
+全部玩家级写操作）。env 是该账号的密码权威源；未配置或不合规 → 静默跳过
 （不 fail-fast，不破坏未启用面板的部署与测试）。
 """
 import logging
@@ -15,7 +16,7 @@ from app.core.db import async_session_factory
 from app.core.security import hash_password, verify_password
 from app.models.user import Player, WebAccount
 from app.repositories import web_account_repo
-from app.services.admin_account_service import sync_admin_account
+from app.services.admin_account_service import offline_player_uuid, sync_admin_account
 
 
 def _settings(**overrides) -> "get_settings().__class__":
@@ -68,27 +69,39 @@ async def test_sync_skips_invalid_password():
 # ===== 建号 / 幂等 / 升降级 / 密码轮换 =====
 
 
-async def test_sync_creates_owner_account_without_players(client):
+async def test_sync_creates_owner_account_with_admin_player(client):
     # Act
     async with async_session_factory() as s:
         created = await sync_admin_account(s, _settings())
 
-    # Assert — role=owner、无绑定玩家
+    # Assert — role=owner、绑定同名管理玩家（MC 离线 UUID 推导，可进游戏无缝衔接）
     assert created is not None
     assert created.role == "owner"
     async with async_session_factory() as s:
         players = await web_account_repo.list_players(s, created.id)
-    assert players == []
+    assert len(players) == 1
+    assert players[0].current_name == "panel_admin"
+    assert str(players[0].uuid) == offline_player_uuid("panel_admin")
 
-    # 联动：/auth/login 可登录，player=None（托管账号无玩家）
+    # 联动：/auth/login 可登录，player 非 None → JWT 带 active_uuid（写端点可用）
     resp = await client.post(
         "/auth/login", json={"username": "panel_admin", "password": "PanelPass1"}
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["player"] is None
+    assert body["player"] is not None
+    assert body["player"]["uuid"] == offline_player_uuid("panel_admin")
     assert body["account"]["role"] == "owner"
     assert body["account"]["username"] == "panel_admin"
+
+    # 联动：带 active_uuid 的 JWT 可建项目（此前 player-less 形态会 401 missing active_uuid）
+    created_sheet = await client.post(
+        "/sheets",
+        json={"title": "admin 建的项目"},
+        headers={"Authorization": f"Bearer {body['access_token']}"},
+    )
+    assert created_sheet.status_code == 201, created_sheet.text
+    assert created_sheet.json()["title"] == "admin 建的项目"
 
 
 async def test_sync_idempotent_on_second_run():
@@ -98,9 +111,36 @@ async def test_sync_idempotent_on_second_run():
     async with async_session_factory() as s:
         second = await sync_admin_account(s, _settings())
 
-    # Assert — 同一账号，不重复建
+    # Assert — 同一账号，不重复建；管理玩家也不重复
     assert first is not None and second is not None
     assert first.id == second.id
+    async with async_session_factory() as s:
+        players = await web_account_repo.list_players(s, second.id)
+    assert len(players) == 1
+
+
+async def test_sync_does_not_steal_player_bound_to_other_account(caplog):
+    """同名管理玩家已被其他账号绑定（真实玩家先注册了该用户名）→ 不抢绑。"""
+    # Arrange — 其他账号 + 已绑定同名玩家（离线 UUID 推导同值）
+    other_uuid = uuid.UUID(offline_player_uuid("panel_admin"))
+    async with async_session_factory() as s:
+        other = WebAccount(username="someone_else", password_hash=hash_password("P1"), role="user")
+        s.add(other)
+        await s.flush()
+        s.add(Player(uuid=other_uuid, current_name="panel_admin", role="user", web_account_id=other.id))
+        await s.commit()
+
+    # Act
+    with caplog.at_level(logging.WARNING, logger="app.services.admin_account_service"):
+        async with async_session_factory() as s:
+            account = await sync_admin_account(s, _settings())
+
+    # Assert — 账号照常建，但不抢他人玩家（admin 账号保持无玩家，回退只读形态）
+    assert account is not None
+    async with async_session_factory() as s:
+        players = await web_account_repo.list_players(s, account.id)
+    assert players == []
+    assert "不抢绑" in caplog.text
 
 
 async def test_sync_upgrades_existing_user_role_to_owner(caplog):
