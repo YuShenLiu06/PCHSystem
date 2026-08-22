@@ -75,7 +75,7 @@ def _issue_jwt_for_account(
 # ===== POST /auth/login（密码登录）=====
 
 
-@auth_router.post("/login", response_model=TokenExchangeResponse)
+@auth_router.post("/login", response_model=TokenExchangeResponse, summary="密码登录（签发 JWT 对）")
 async def password_login(
     body: PasswordLoginRequest,
     request: Request,
@@ -128,7 +128,7 @@ async def password_login(
 # ===== POST /web-accounts/register（临时账号转永久）=====
 
 
-@router.post("/register", response_model=TokenExchangeResponse)
+@router.post("/register", response_model=TokenExchangeResponse, summary="临时账号注册为永久（设用户名+密码）")
 async def register(
     body: RegisterRequest,
     account: WebAccount = Depends(get_current_account),
@@ -167,7 +167,7 @@ async def register(
 # ===== GET /web-accounts/me（当前账号 + players）=====
 
 
-@router.get("/me", response_model=MyAccountResponse)
+@router.get("/me", response_model=MyAccountResponse, summary="我的账号信息")
 async def get_my_account(
     account: WebAccount = Depends(get_current_account),
     session: AsyncSession = Depends(get_session),
@@ -180,7 +180,7 @@ async def get_my_account(
     )
 
 
-@router.patch("/me", response_model=MyAccountResponse)
+@router.patch("/me", response_model=MyAccountResponse, summary="更新账号（昵称等）")
 async def update_my_account(
     body: UpdateDisplayNameRequest,
     account: WebAccount = Depends(get_current_account),
@@ -207,6 +207,7 @@ async def update_my_account(
     "/token",
     response_model=BindTokenIssueResponse,
     dependencies=[Depends(require_service_token)],
+    summary="游戏内发起绑定（生成 game_init 短码）",
 )
 async def issue_bind_token_from_game(
     body: BindTokenRequest,
@@ -231,7 +232,7 @@ async def issue_bind_token_from_game(
 # ===== POST /bind/issue（Web 发起）=====
 
 
-@bind_router.post("/issue", response_model=BindTokenIssueResponse)
+@bind_router.post("/issue", response_model=BindTokenIssueResponse, summary="Web 发起绑定（生成 web_init 短码）")
 async def issue_bind_token_from_web(
     account: WebAccount = Depends(get_current_account),
     session: AsyncSession = Depends(get_session),
@@ -254,7 +255,7 @@ async def issue_bind_token_from_web(
 # ===== POST /bind/confirm（Web 确认 game_init）=====
 
 
-@bind_router.post("/confirm", response_model=BindConfirmResponse)
+@bind_router.post("/confirm", response_model=BindConfirmResponse, summary="Web 确认游戏内发起的绑定（输短码挂接玩家）")
 async def confirm_bind_from_game(
     body: BindConfirmRequest,
     account: WebAccount = Depends(get_current_account),
@@ -296,6 +297,7 @@ async def confirm_bind_from_game(
     "/consume",
     response_model=BindConsumeResponse,
     dependencies=[Depends(require_service_token)],
+    summary="游戏内消费 web_init 短码（双头通道）",
 )
 async def consume_bind_from_web(
     body: BindConsumeRequest,
@@ -339,7 +341,7 @@ async def consume_bind_from_web(
 # ===== POST /bind/claim（临时账号绑定到永久账号）=====
 
 
-@bind_router.post("/claim", response_model=TokenExchangeResponse)
+@bind_router.post("/claim", response_model=TokenExchangeResponse, summary="临时账号绑定到永久账号（换发 JWT）")
 async def claim_bind_to_permanent(
     body: ClaimBindRequest,
     account: WebAccount = Depends(get_current_account),

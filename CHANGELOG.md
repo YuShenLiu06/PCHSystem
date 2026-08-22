@@ -15,7 +15,7 @@
 
 ### Added
 
-- _暂无_
+- **后端**：OpenAPI 文档增强——鉴权头（`X-Service-Token` / `X-Player-UUID` / `X-Source-Id` / `Authorization`）声明为 security schemes（`/docs` 出现 Authorize 按钮）、全部端点补中文 `summary`、`/players` 路由补 `tags`；`Docs/architecture/api/*.md` 头部标注「HTTP 签名以运行时 `/openapi.json` 为准」，dev-cheatsheet 增 Swagger 速查。
 
 ### Changed
 
@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- _暂无_
+- **后端/前端**：修复 player-less 托管管理账号（`ADMIN_*` env）登录后访问「个人信息」「施工管理」被 401 `missing active_uuid` 踢回登录页（#74）——admin 端点鉴权升 account 级 JWT（`require_role` 不再要求绑定玩家，admin ≠ service-token）；`GET /me` 对无玩家账号返回 `active_uuid=null`；`/auth/refresh` 放行无玩家账号续签（有玩家却无 claim 的旧格式 token 仍拒绝）；`GET /sheets` 列表/详情/协管员列表与 `GET /v1/construction/{id}/progress` 对无玩家账号开放只读浏览（写端点仍需玩家身份）。前端配套：401 `missing active_uuid` 不再清会话/跳登录（页面 toast）、Me.vue 玩家专属卡片仅在有绑定身份时加载渲染、续签接受 `player=null`。`Backend/openapi.json` 工件再生成（连带补齐 v0.7.0 以来的签名漂移）。
 
 ### Security
 

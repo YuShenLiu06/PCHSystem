@@ -6,6 +6,7 @@
 > (sheet × account × registry) 聚合，归档时喂给积分层 `BuildAScoreCalculator`
 > （[scoring-settlement.md](../flows/scoring-settlement.md) §4）。
 > 设计契约见 [`../flows/construction-progress.md`](../flows/construction-progress.md)。
+> HTTP 签名以运行时 `/openapi.json` 为准（`/docs` 可联调），本文档记录业务语义与雷点。
 
 **状态**：✅ 已实现（后端 + 前端 + MCDR 默认追踪器 v0.9.0）。剩余 TODO（switch-self mod_id 归属校验、mod-token 签发流）见 §6 / CLAUDE.md §7。
 
@@ -79,7 +80,7 @@
 | **POST** | **`/me/leave`** | 任意 auth player | **退出当前活跃加入（幂等空态）** |
 | **POST** | **`/active-by-uuids`** | service-token 单头 | **批量 UUID → 活跃 sheet_id（tracker 按玩家路由用，非敏感）** |
 
-admin 端点挂 `require_role("admin")`（后端 RBAC 真实拒绝 403，R-9/RS-2）。
+admin 端点挂 `require_role("admin")`——**account 级 JWT**（仅 `Authorization: Bearer`，admin ≠ service-token，与 scoring `require_privileged_access` 同范式；role 权威源 `WebAccount.role`，**无绑定玩家的托管账号（`ADMIN_*` env，JWT 无 `active_uuid`）可正常调用**，issue #74；非 admin/owner → 403，R-9/RS-2）。`GET /{sheet_id}/progress` 走 `get_current_viewer`（双通道，player-less 托管账号亦可浏览）。
 
 > **路由顺序**：`/me/...` 字面路由 + `/active-by-uuids` 必须在 `/{sheet_id}/progress` 之前注册（FastAPI 按声明顺序匹配），避免被 `{sheet_id}` 路径参数吞没——见 [`Backend/app/api/construction.py`](../../../Backend/app/api/construction.py) 末尾注释。
 

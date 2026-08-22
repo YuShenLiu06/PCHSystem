@@ -53,10 +53,14 @@ class RefreshRequest(BaseModel):
 
 
 class MeResponse(BaseModel):
-    """当前身份响应（升级为 account + players + active_uuid）。"""
+    """当前身份响应（升级为 account + players + active_uuid）。
+
+    active_uuid 可空：player-less 托管管理账号（ADMIN_* env）无会话来源
+    UUID（issue #74）。
+    """
     account: AccountBrief
     players: list[PlayerBrief]
-    active_uuid: uuid.UUID
+    active_uuid: uuid.UUID | None
 
 
 class LastSheetResponse(BaseModel):

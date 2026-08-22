@@ -77,7 +77,7 @@ async def _sheet_detail_or_404(
     )
 
 
-@router.post("/{sheet_id}/advance", response_model=SheetDetail)
+@router.post("/{sheet_id}/advance", response_model=SheetDetail, summary="项目阶段流转（含归档）")
 async def advance_sheet_phase(
     sheet_id: int,
     to: str | None = Query(
@@ -163,7 +163,7 @@ async def advance_sheet_phase(
     return await _sheet_detail_or_404(session, sheet_id, viewer_uuids=account_uuids)
 
 
-@router.get("/{sheet_id}/archive", response_class=PlainTextResponse)
+@router.get("/{sheet_id}/archive", response_class=PlainTextResponse, summary="读归档 markdown")
 async def get_sheet_archive(
     sheet_id: int,
     session: AsyncSession = Depends(get_session),
@@ -186,6 +186,7 @@ async def get_sheet_archive(
     "/{sheet_id}/archive/assets/{filename}",
     response_class=Response,
     responses={200: {"content": {"image/png": {}}}},
+    summary="读归档资产（PNG）",
 )
 async def get_sheet_archive_asset(
     sheet_id: int,

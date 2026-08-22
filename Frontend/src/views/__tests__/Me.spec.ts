@@ -99,9 +99,11 @@ const JOINED_CONSTRUCTION = {
 }
 
 function mockMeResponse() {
+  // 玩家账号场景（players 非空才有玩家专属卡片；空 = player-less 托管账号，#74）
   mocks.fetchMe.mockResolvedValue({
     account: { id: 1, username: 'u', display_name: 'U', role: 'player', is_temporary: false },
-    players: [],
+    players: [{ uuid: '00000000-0000-0000-0000-000000000001', name: 'u', role: 'player' }],
+    active_uuid: '00000000-0000-0000-0000-000000000001',
   })
   mocks.getMyConstructionSource.mockResolvedValue({
     active: { source_type: 'mcdr', source_id: 'official', is_default: true },
@@ -122,6 +124,29 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('Me.vue · player-less 托管账号（#74）', () => {
+  it('玩家专属卡片不渲染 + 玩家端点不调用', async () => {
+    // Arrange — 无绑定玩家的托管账号（admin 面板）
+    mocks.fetchMe.mockResolvedValue({
+      account: { id: 2, username: 'panel', display_name: null, role: 'owner', is_temporary: false },
+      players: [],
+      active_uuid: null,
+    })
+    // Act
+    const wrapper = mountMe()
+    await flushPromises()
+    // Assert — 账号卡片在、玩家专属卡片全隐藏
+    expect(wrapper.text()).toContain('账号信息')
+    expect(wrapper.text()).not.toContain('当前施工项目')
+    expect(wrapper.text()).not.toContain('施工上报源')
+    expect(wrapper.text()).not.toContain('我的上报历史')
+    // 玩家专属端点未被调用（调了会 401）
+    expect(mocks.getMyConstructionSource).not.toHaveBeenCalled()
+    expect(mocks.getMyReportEvents).not.toHaveBeenCalled()
+    expect(mocks.getMyConstruction).not.toHaveBeenCalled()
+  })
 })
 
 describe('Me.vue · 当前施工项目卡片', () => {

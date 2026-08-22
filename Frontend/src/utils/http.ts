@@ -35,8 +35,8 @@ function refreshSession(): Promise<void> {
   const auth = useAuthStore()
   refreshPromise = refreshTokens(auth.refreshToken)
     .then((resp) => {
-      // refresh 端点对有效 token 必返 player；null 视为失败兜底（auth.set 要求非空）
-      if (!resp.player) throw new Error('refresh returned no player')
+      // player 可空（无绑定玩家的托管管理账号，issue #74）；account 缺失才是异常
+      if (!resp.account) throw new Error('refresh returned no account')
       auth.set(
         { access_token: resp.access_token, refresh_token: resp.refresh_token },
         resp.player,
@@ -62,6 +62,13 @@ http.interceptors.response.use(
   async (err: AxiosError) => {
     const auth = useAuthStore()
     const url = err.config?.url ?? ''
+    // 「missing active_uuid」= 会话有效但账号无绑定玩家（托管管理账号，#74），
+    // 调了需要具体玩家身份的端点。续签无济于事（refresh 后依旧无 claim）、
+    // 会话本身也没失效 → 不 refresh、不清场、不跳转，直接抛给页面层 toast。
+    const detail = (err.response?.data as { detail?: string } | undefined)?.detail
+    if (err.response?.status === 401 && detail === 'missing active_uuid') {
+      return Promise.reject(err)
+    }
     // 续签触发条件：401 + 有 refresh + 原请求是鉴权请求（有 access → 拦截器加过 Bearer）
     // + 不是凭证端点（避免死循环 / refresh 递归）。
     const canRefresh =

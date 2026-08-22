@@ -34,6 +34,19 @@ docker attach pchsystem-mc-test-1
 
 ---
 
+## Swagger / OpenAPI（后端 API 文档）
+
+> 后端 FastAPI 自动生成，无需配置；dev 地址 `http://localhost:8000`（compose `BACKEND_PORT`）。
+> 业务语义（鉴权矩阵 / 状态机 / 雷点）仍以 [`../architecture/api/`](../architecture/api/) 为权威，`/docs` 只是 HTTP 表面。
+
+| 入口 | 用途 |
+|---|---|
+| `http://localhost:8000/docs` | Swagger UI 联调调试；右上 **Authorize** 可填 `X-Service-Token` 或 `Bearer <jwt>` |
+| `http://localhost:8000/redoc` | ReDoc 阅读版 |
+| `curl -s http://localhost:8000/openapi.json \| jq '.paths \| keys'` | 机器可读契约——改端点前后核对签名的权威源，可直接喂给 AI 防幻觉 |
+
+---
+
 ## 环境变量（根 `.env`，compose 插值读取）
 
 > compose 用 `${VAR}` 插值读**根 `.env`**（compose 文件同目录），**不是** `Backend/.env`。

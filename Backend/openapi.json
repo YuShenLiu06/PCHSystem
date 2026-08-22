@@ -2,12 +2,12 @@
   "openapi": "3.1.0",
   "info": {
     "title": "HTCMC PCHSystem",
-    "version": "0.7.0"
+    "version": "0.8.2"
   },
   "paths": {
     "/healthz": {
       "get": {
-        "summary": "Healthz",
+        "summary": "健康检查（compose healthcheck）",
         "operationId": "healthz_healthz_get",
         "responses": {
           "200": {
@@ -29,7 +29,7 @@
     },
     "/info": {
       "get": {
-        "summary": "Info",
+        "summary": "服务信息（版本 + web 可达性）",
         "operationId": "info_info_get",
         "responses": {
           "200": {
@@ -52,8 +52,8 @@
         "tags": [
           "auth"
         ],
-        "summary": "Password Login",
-        "description": "用户名+密码登录（必须永久账号）→ 完整 AuthResponse。\n\n契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久），\nplayer 取该账号首个绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。\n限频：入口按 IP + (username, ip) 双维度滑窗（bcrypt 慢哈希配合防爆破/撞库）；成功后清零。",
+        "summary": "密码登录（签发 JWT 对）",
+        "description": "用户名+密码登录（必须永久账号）→ 完整 AuthResponse。\n\n契约：永久账号必有至少一个绑定 player（!!PCH login 即自动挂临时账号 → register 转永久），\nplayer 取该账号首个绑定 player 并作为 active_uuid（会话来源 UUID，/me 等端点依赖）。\n例外：环境同步的托管管理账号（admin 面板，sync_admin_account 产物）无绑定玩家，\nplayer=None、JWT 无 active_uuid（限 /admin 面板端点使用）。\n限频：入口按 IP + (username, ip) 双维度滑窗（bcrypt 慢哈希配合防爆破/撞库）；成功后清零。",
         "operationId": "password_login_auth_login_post",
         "requestBody": {
           "content": {
@@ -94,35 +94,17 @@
         "tags": [
           "auth"
         ],
-        "summary": "Post Token",
+        "summary": "签发一次性登录 token（MCDR）",
         "operationId": "post_token_auth_token_post",
-        "parameters": [
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/TokenIssueRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -145,7 +127,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
       }
     },
     "/auth/exchange": {
@@ -153,7 +140,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Post Exchange",
+        "summary": "一次性 token 兑换 JWT 对",
         "operationId": "post_exchange_auth_exchange_post",
         "requestBody": {
           "content": {
@@ -194,7 +181,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Post Refresh",
+        "summary": "续签 access token",
         "operationId": "post_refresh_auth_refresh_post",
         "requestBody": {
           "content": {
@@ -235,36 +222,18 @@
         "tags": [
           "identity"
         ],
-        "summary": "Register",
+        "summary": "临时账号注册为永久（设用户名+密码）",
         "description": "临时账号注册为永久账号（设置用户名+密码）。\n\n换发新 JWT（active_uuid 保持当前会话的绑定 UUID；若账号尚无 player 则无 active_uuid）。",
         "operationId": "register_web_accounts_register_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RegisterRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -287,7 +256,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       }
     },
     "/web-accounts/me": {
@@ -295,27 +269,9 @@
         "tags": [
           "identity"
         ],
-        "summary": "Get My Account",
+        "summary": "我的账号信息",
         "description": "返回当前账号 + 绑定 players 列表（前端 MyAccountResponse shape）。",
         "operationId": "get_my_account_web_accounts_me_get",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -326,53 +282,30 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       },
       "patch": {
         "tags": [
           "identity"
         ],
-        "summary": "Update My Account",
+        "summary": "更新账号（昵称等）",
         "description": "更新当前账号的自定义昵称（display_name，sheets 三端显示名主源）。\n\n空白 strip；schema ``min_length=1`` 拒纯空白（与迁移 CHECK 一致）。",
         "operationId": "update_my_account_web_accounts_me_patch",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateDisplayNameRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -395,7 +328,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       }
     },
     "/bind/token": {
@@ -403,36 +341,18 @@
         "tags": [
           "bind"
         ],
-        "summary": "Issue Bind Token From Game",
+        "summary": "游戏内发起绑定（生成 game_init 短码）",
         "description": "游戏内发起绑定（!!PCH bind）→ 生成 game_init 短码。\n\nbody {uuid, name} 由 MCDR bind_client.request_bind_token POST JSON 传入；\n若 Player 不存在则 get_or_create（自动挂临时账号）。",
         "operationId": "issue_bind_token_from_game_bind_token_post",
-        "parameters": [
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BindTokenRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -455,7 +375,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
       }
     },
     "/bind/issue": {
@@ -463,27 +388,9 @@
         "tags": [
           "bind"
         ],
-        "summary": "Issue Bind Token From Web",
+        "summary": "Web 发起绑定（生成 web_init 短码）",
         "description": "Web 发起绑定 → 生成 web_init 短码（供游戏内 !!PCH bind <code> 消费）。",
         "operationId": "issue_bind_token_from_web_bind_issue_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -494,18 +401,13 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       }
     },
     "/bind/confirm": {
@@ -513,36 +415,18 @@
         "tags": [
           "bind"
         ],
-        "summary": "Confirm Bind From Game",
+        "summary": "Web 确认游戏内发起的绑定（输短码挂接玩家）",
         "description": "Web 确认游戏内发起的绑定（输入短码）→ 挂接 player_uuid 到当前账号。\n\n契约：返回 {player, account}（**不含 token**，绑定不改 account，前端继续用现有 JWT）。\n临时账号 → 403（必须先 register 或 claim 到永久账号）。",
         "operationId": "confirm_bind_from_game_bind_confirm_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BindConfirmRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -565,7 +449,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       }
     },
     "/bind/consume": {
@@ -573,9 +462,14 @@
         "tags": [
           "bind"
         ],
-        "summary": "Consume Bind From Web",
+        "summary": "游戏内消费 web_init 短码（双头通道）",
         "description": "游戏内消费 Web 发起的绑定（!!PCH bind <code>）。\n\n契约：MCDR bind_client.consume_bind_code 双头通道（X-Service-Token + X-Player-UUID）POST {short_code}；\n成功响应 {status, account, player}（MCDR 客户端依赖 account+player 渲染回执）。\n\n注：MCDR 仅传 UUID（不传 name）；player 不存在时 get_or_create 用 UUID 字符串作占位名，\n下次 !!PCH login 会刷新 current_name。",
         "operationId": "consume_bind_from_web_bind_consume_post",
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ],
         "parameters": [
           {
             "name": "X-Player-UUID",
@@ -585,22 +479,6 @@
               "type": "string",
               "format": "uuid",
               "title": "X-Player-Uuid"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
             }
           }
         ],
@@ -643,36 +521,18 @@
         "tags": [
           "bind"
         ],
-        "summary": "Claim Bind To Permanent",
+        "summary": "临时账号绑定到永久账号（换发 JWT）",
         "description": "临时账号绑定到已有永久账号（输入永久账号用户名+密码）。\n\n将当前临时账号名下所有 player 迁移到目标永久账号；返回目标账号的 JWT。",
         "operationId": "claim_bind_to_permanent_bind_claim_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ClaimBindRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -695,7 +555,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       }
     },
     "/sheets": {
@@ -703,56 +568,17 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Create Sheet",
+        "summary": "新建表格",
         "operationId": "create_sheet_sheets_post",
-        "parameters": [
+        "security": [
           {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
+            "Authorization": []
           },
           {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
+            "X-Service-Token": []
           },
           {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
+            "X-Player-UUID": []
           }
         ],
         "requestBody": {
@@ -792,8 +618,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "List Sheets",
+        "summary": "表格列表（status/owner 过滤）",
         "operationId": "list_sheets_sheets_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "owner",
@@ -830,54 +667,6 @@
               "title": "Status"
             },
             "description": "阶段过滤：collecting / constructing / archived / active"
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
           }
         ],
         "responses": {
@@ -913,68 +702,18 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Create Sheet From Items",
+        "summary": "清单一次性建表（解析→建表+批量行）",
         "description": "按材料清单一次性建表 + 批量行（mode 默认 lock）；调用方=拥有者。单事务 commit。",
         "operationId": "create_sheet_from_items_sheets_from_items_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SheetFromItemsRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "201": {
@@ -997,7 +736,18 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
       }
     },
     "/sheets/export": {
@@ -1005,26 +755,8 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Export All",
+        "summary": "全量 CSV 导出（service-token）",
         "operationId": "export_all_sheets_export_get",
-        "parameters": [
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1035,18 +767,13 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
       }
     },
     "/sheets/{sheet_id}": {
@@ -1054,8 +781,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Get Sheet",
+        "summary": "表详情（?format=csv 返回 CSV）",
         "operationId": "get_sheet_sheets__sheet_id__get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1101,54 +839,6 @@
               "title": "Q"
             },
             "description": "按 item_name/registry_id 大小写不敏感过滤行"
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
           }
         ],
         "responses": {
@@ -1178,8 +868,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Patch Sheet",
+        "summary": "更新表（标题等）",
         "operationId": "patch_sheet_sheets__sheet_id__patch",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1188,54 +889,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1276,8 +929,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Delete Sheet",
+        "summary": "删除表",
         "operationId": "delete_sheet_sheets__sheet_id__delete",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1286,54 +950,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1359,9 +975,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Upsert Row",
+        "summary": "行新建/更新",
         "description": "行新建 / 更新（单端点按 ``row_id`` 分流）。",
         "operationId": "upsert_row_sheets__sheet_id__rows_put",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1370,54 +997,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1460,8 +1039,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Delete Row",
+        "summary": "删除行",
         "operationId": "delete_row_sheets__sheet_id__rows__row_id__delete",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1479,54 +1069,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1552,8 +1094,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Claim Row",
+        "summary": "认领行",
         "operationId": "claim_row_sheets__sheet_id__rows__row_id__claim_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1571,54 +1124,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1651,8 +1156,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Set Row Delivery",
+        "summary": "登记交付数量",
         "operationId": "set_row_delivery_sheets__sheet_id__rows__row_id__delivery_patch",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1670,54 +1186,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1760,8 +1228,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Release Row",
+        "summary": "解除认领",
         "operationId": "release_row_sheets__sheet_id__rows__row_id__release_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1779,54 +1258,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1859,8 +1290,19 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Reject Row",
+        "summary": "打回行（重开）",
         "operationId": "reject_row_sheets__sheet_id__rows__row_id__reject_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1878,54 +1320,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -1958,9 +1352,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Contribute To Row",
+        "summary": "提交贡献数量",
         "description": "progress 行增量上交（任意登录玩家）。",
         "operationId": "contribute_to_row_sheets__sheet_id__rows__row_id__contribute_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -1978,54 +1383,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2068,9 +1425,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Set Row Progress",
+        "summary": "更新进度数量",
         "description": "progress 行 owner 直接修正进度（绝对值，可增可减）。",
         "operationId": "set_row_progress_sheets__sheet_id__rows__row_id__progress_patch",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2088,54 +1456,6 @@
             "schema": {
               "type": "integer",
               "title": "Row Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2178,9 +1498,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Advance Sheet Phase",
+        "summary": "项目阶段流转（含归档）",
         "description": "项目阶段流转。\n\ntier 分流（迁移 0014）：归档（→archived）是 tier A 高危操作，仅 owner/超管；\n进入施工（→constructing）是 tier B 常规操作，manager 也可触发。先按 target\n分流权限，再做状态机校验——manager 调 ``?to=archived`` 立即收到 403，不被\n先报 409 误导。",
         "operationId": "advance_sheet_phase_sheets__sheet_id__advance_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2208,54 +1539,6 @@
               "title": "To"
             },
             "description": "目标阶段：constructing / archived；缺省按状态机推进"
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
           }
         ],
         "responses": {
@@ -2287,9 +1570,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Get Sheet Archive",
+        "summary": "读归档 markdown",
         "description": "读归档 markdown（text/markdown）。未归档 / 文件缺失 → 404。",
         "operationId": "get_sheet_archive_sheets__sheet_id__archive_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2298,54 +1592,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2378,9 +1624,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Get Sheet Archive Asset",
+        "summary": "读归档资产（PNG）",
         "description": "读归档产物（如 contributions.png，image/png）。",
         "operationId": "get_sheet_archive_asset_sheets__sheet_id__archive_assets__filename__get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2398,54 +1655,6 @@
             "schema": {
               "type": "string",
               "title": "Filename"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2474,8 +1683,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "List Managers",
+        "summary": "协管员列表",
+        "description": "透明只读：任意登录账号可看（player-less 托管账号亦可，issue #74）。",
         "operationId": "list_managers_sheets__sheet_id__managers_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2484,54 +1705,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2566,9 +1739,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Grant Manager",
+        "summary": "授予协管员",
         "description": "授予协管员（account 锚）。\n\n- 非 tier A → 403；archived → 409。\n- target Player 不存在或 ``web_account_id is None`` → 422（B7）。\n- target account == owner account → 409 ``SheetOwnerCannotBeManager``（B7）。\n- 幂等重授（is_new=False）不重发通知（PK 防重复）。",
         "operationId": "grant_manager_sheets__sheet_id__managers_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2577,54 +1761,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2669,9 +1805,20 @@
         "tags": [
           "sheets"
         ],
-        "summary": "Revoke Manager",
+        "summary": "移除协管员",
         "description": "撤销协管员（account 锚）。\n\n- self-revoke 放行当 ``player.web_account_id is not None`` 且等于\n  ``body.web_account_id``（B6：显式拒 ``None==None`` 误匹配）。\n- 否则需 tier A；archived → 409；manager 不存在 → 404。\n- self-revoke 不通知（发起方即受影响方）；其他撤销通知 target 账号全部 UUID。",
         "operationId": "revoke_manager_sheets__sheet_id__managers_delete",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "sheet_id",
@@ -2680,54 +1827,6 @@
             "schema": {
               "type": "integer",
               "title": "Sheet Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -2769,73 +1868,87 @@
         }
       }
     },
-    "/parsing/batch": {
+    "/sheets/{sheet_id}/submit-batch": {
       "post": {
         "tags": [
-          "parsing"
+          "sheets"
         ],
-        "summary": "Parse Batch",
-        "description": "批量上传多个 ``.litematic`` / ``.nbt`` → 每文件独立预览（不落库、不收 multiplier）。\n\n单文件失败不影响其他文件（per-file error isolation）；倍数与跨文件聚合由前端在\n解析结果上计算（便于随时调倍数无需重新上传）。执行分两阶段：\n\n1. async 阶段：逐文件 ``await read()`` + 单文件级校验（扩展名 / 非空 / 单文件大小），\n   累计总字节做整请求总大小护栏。``await file.read()`` 不能进线程，故在读阶段完成。\n2. 单个 ``asyncio.to_thread``：一个线程内顺序解析所有合法文件（不并行——大文件解析\n   已是 CPU 密集，并行反而抢线程池），``try/except`` per-file 隔离解析失败。",
-        "operationId": "parse_batch_parsing_batch_post",
+        "summary": "程序化批量提交（双鉴权）",
+        "description": "批量提交：客户端传材料列表，后端按 mode 分发 deliver/contribute。\n\n鉴权身份决定 actor（JWT=``JWT.active_uuid`` / service-token=``X-Player-UUID``）；\n请求体不带 ``player_uuid``。actor 与 owner 同 account 时跳过 owner 通知。",
+        "operationId": "submit_batch_sheets__sheet_id__submit_batch_post",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
+              "type": "integer",
+              "title": "Sheet Id"
             }
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSubmitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchSubmitResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/parsing/batch": {
+      "post": {
+        "tags": [
+          "parsing"
+        ],
+        "summary": "批量解析 .litematic/.nbt（混型逐文件预览）",
+        "description": "批量上传多个 ``.litematic`` / ``.nbt`` → 每文件独立预览（不落库、不收 multiplier）。\n\n单文件失败不影响其他文件（per-file error isolation）；倍数与跨文件聚合由前端在\n解析结果上计算（便于随时调倍数无需重新上传）。执行分两阶段：\n\n1. async 阶段：逐文件 ``await read()`` + 单文件级校验（扩展名 / 非空 / 单文件大小），\n   累计总字节做整请求总大小护栏。``await file.read()`` 不能进线程，故在读阶段完成。\n2. 单个 ``asyncio.to_thread``：一个线程内顺序解析所有合法文件（不并行——大文件解析\n   已是 CPU 密集，并行反而抢线程池），``try/except`` per-file 隔离解析失败。",
+        "operationId": "parse_batch_parsing_batch_post",
+        "requestBody": {
+          "content": {
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/Body_parse_batch_parsing_batch_post"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -2858,7 +1971,18 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
       }
     },
     "/notifications/pending": {
@@ -2866,8 +1990,13 @@
         "tags": [
           "notifications"
         ],
-        "summary": "List Pending",
+        "summary": "拉取未投递通知（MCDR 轮询）",
         "operationId": "list_pending_notifications_pending_get",
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ],
         "parameters": [
           {
             "name": "player_uuid",
@@ -2898,22 +2027,6 @@
               "minimum": 1,
               "default": 20,
               "title": "Limit"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
             }
           }
         ],
@@ -2950,36 +2063,18 @@
         "tags": [
           "notifications"
         ],
-        "summary": "Ack",
+        "summary": "批量标记通知投递",
         "description": "标投递：仅命中 body.player_uuid 同账号名下的 id（C-1 防跨账号越权）。",
         "operationId": "ack_notifications_ack_post",
-        "parameters": [
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/NotificationAckRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -3002,7 +2097,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
       }
     },
     "/notifications/{notification_id}/read": {
@@ -3010,9 +2110,14 @@
         "tags": [
           "notifications"
         ],
-        "summary": "Mark Read",
+        "summary": "标记通知已读",
         "description": "标已读：仅当 notification 归属 player_uuid 同账号（C-1 防跨账号越权，跨账号 404）。\n\nL-2：已读必然已投递，mark_read 同步幂等置 delivered_at。",
         "operationId": "mark_read_notifications__notification_id__read_post",
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ],
         "parameters": [
           {
             "name": "notification_id",
@@ -3034,22 +2139,6 @@
               "title": "Player Uuid"
             },
             "description": "目标玩家 UUID（归属校验）"
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
           }
         ],
         "responses": {
@@ -3078,8 +2167,22 @@
     },
     "/players": {
       "get": {
-        "summary": "Search Players",
+        "tags": [
+          "players"
+        ],
+        "summary": "玩家联想（名/昵称前缀）",
         "operationId": "search_players_players_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
             "name": "q",
@@ -3087,11 +2190,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "玩家名前缀（大小写不敏感，至少 1 字符）",
+              "description": "玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）",
               "default": "",
               "title": "Q"
             },
-            "description": "玩家名前缀（大小写不敏感，至少 1 字符）"
+            "description": "玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）"
           },
           {
             "name": "limit",
@@ -3103,54 +2206,6 @@
               "minimum": 1,
               "default": 10,
               "title": "Limit"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
             }
           }
         ],
@@ -3182,30 +2237,485 @@
         }
       }
     },
-    "/me": {
+    "/v1/construction/report": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "方块净放置批量上报（双通道鉴权，严格单源）",
+        "description": "施工方块净放置上报。\n\n显式 ``sheet_id`` 须存在且处于 constructing（否则 404/409）；``None`` → 启发式\n归因。严格单源（C-7）：非活跃源的玩家 entries 全 skip，不隐式切源。",
+        "operationId": "report_placements_v1_construction_report_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlacementReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementReportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Source-Id": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/active-sheets": {
       "get": {
         "tags": [
-          "me"
+          "construction"
         ],
-        "summary": "Get Me",
-        "description": "返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。",
-        "operationId": "get_me_me_get",
+        "summary": "上报归属查询（活跃施工表）",
+        "description": "当前 constructing 项目列表 + 启发式归因可用性（追踪器启动/定期查）。",
+        "operationId": "get_active_sheets_v1_construction_active_sheets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveSheetsResult"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/settings": {
+      "get": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "施工设置读取（admin）",
+        "operationId": "get_settings_v1_construction_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConstructionSettings"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "施工设置更新（admin）",
+        "operationId": "patch_settings_v1_construction_settings_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConstructionSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConstructionSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/mod-sources": {
+      "get": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "服务端 mod 源白名单列表（admin）",
+        "operationId": "list_mod_sources_v1_construction_mod_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ServerModSourceEntry"
+                  },
+                  "type": "array",
+                  "title": "Response List Mod Sources V1 Construction Mod Sources Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "新增服务端 mod 源（admin）",
+        "operationId": "create_mod_source_v1_construction_mod_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerModSourceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerModSourceEntry"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/mod-sources/{name}": {
+      "patch": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "启停服务端 mod 源（admin）",
+        "description": "逐源启停（迭代 3 卡片开关）。不存在 → 404。",
+        "operationId": "toggle_mod_source_v1_construction_mod_sources__name__patch",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
         "parameters": [
           {
-            "name": "authorization",
-            "in": "header",
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerModSourceToggle"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerModSourceEntry"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "删除服务端 mod 源（admin）",
+        "operationId": "delete_mod_source_v1_construction_mod_sources__name__delete",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/construction/source/switch-server": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "管理员切换玩家上报源（admin）",
+        "description": "admin 切某玩家服务端源（mcdr→official / server_mod→白名单内 source_id）。",
+        "operationId": "switch_server_source_v1_construction_source_switch_server_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceSwitchServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/source/switch-self": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "玩家自助切换上报源（JWT）",
+        "description": "玩家切自己的上报模式（server=退回官方代报 / local=客户端 mod）。",
+        "operationId": "switch_self_source_v1_construction_source_switch_self_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceSwitchSelfRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/source/me": {
+      "get": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "我的上报源状态（含休眠源）",
+        "operationId": "get_source_me_v1_construction_source_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceMeResult"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/me/reports": {
+      "get": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "我的上报记录",
+        "description": "玩家个人的上报历史（每次 report 成功 = 一条 ``placement_snapshot``）。\n\n归因锚 account（R-5）：未绑 Web 账号的玩家 403。展示用，非权威源。字面路由\n``/me/reports`` 置于 ``/{sheet_id}/progress`` 之前注册，避免被路径参数吞掉。",
+        "operationId": "get_my_reports_v1_construction_me_reports_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "最近 N 条上报事件",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "最近 N 条上报事件"
           }
         ],
         "responses": {
@@ -3214,7 +2724,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MeResponse"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MyReportHistoryItem"
+                  },
+                  "title": "Response Get My Reports V1 Construction Me Reports Get"
                 }
               }
             }
@@ -3232,61 +2746,39 @@
         }
       }
     },
-    "/me/last_sheet": {
+    "/v1/construction/me/report-events": {
       "get": {
         "tags": [
-          "me"
+          "construction"
         ],
-        "summary": "Get My Last Sheet",
-        "operationId": "get_my_last_sheet_me_last_sheet_get",
+        "summary": "我的上报事件流水（含 skip 原因）",
+        "description": "玩家个人的完整上报事件流水（accepted + 所有 skip 原因，迭代 5）。\n\n每次 ``POST /report`` 产出的 ``PlacementOutcome`` 逐条落 ``report_events`` ——\n让玩家看到「为什么我的上报被拒」。归因锚 account（R-5）：未绑 Web 账号 403。\n字面路由置于 ``/{sheet_id}/progress`` 之前注册，避免被路径参数吞掉。",
+        "operationId": "get_my_report_events_v1_construction_me_report_events_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
         "parameters": [
           {
-            "name": "authorization",
-            "in": "header",
+            "name": "limit",
+            "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "x-service-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Token"
-            }
-          },
-          {
-            "name": "x-player-uuid",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Player-Uuid"
-            }
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "最近 N 条上报事件流水",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "最近 N 条上报事件流水"
           }
         ],
         "responses": {
@@ -3295,7 +2787,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LastSheetResponse"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReportEventItem"
+                  },
+                  "title": "Response Get My Report Events V1 Construction Me Report Events Get"
                 }
               }
             }
@@ -3311,6 +2807,740 @@
             }
           }
         }
+      }
+    },
+    "/v1/construction/me/construction": {
+      "get": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "查询我的活跃施工加入",
+        "description": "查自己当前活跃加入的施工项目（Me.vue「当前施工项目」卡片）。\n\n字面路由前置（避免被 ``/{sheet_id}`` 吞掉）。未绑 Web 账号 / 未加入 → 空态。",
+        "operationId": "get_my_construction_v1_construction_me_construction_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyConstructionResult"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/me/join": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "加入施工",
+        "description": "手动加入指定 sheet 的施工。\n\n- 未绑 Web 账号 → 403；sheet 不存在 → 404；archived → 409。\n- ``enforce_single_construction=True`` 且已活跃加入他 sheet → 409\n  「已活跃加入项目 X，先退出或切换」（ParticipantConflict）。\n- 已活跃加入本 sheet → 幂等返回当前状态（不报错）。",
+        "operationId": "join_construction_v1_construction_me_join_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyConstructionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/me/switch": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "切换施工项目",
+        "description": "切换到指定 sheet（leave 旧活跃 + join 新 sheet 同事务）。\n\n与 ``/me/join`` 的区别：``enforce_single_construction=True`` 且已活跃加入他 sheet\n时，``/me/join`` 抛 409，``/me/switch`` 自动切换（enforce=False 时两者等价）。\n实现统一走显式 leave + join：先 ``leave_construction`` 当前（如存在），再\n``join_construction`` 目标，绕开 enforce=True 的 ParticipantConflict。",
+        "operationId": "switch_construction_v1_construction_me_switch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyConstructionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/me/leave": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "退出施工",
+        "description": "退出当前活跃加入（未活跃加入 → 幂等返回空态）。",
+        "operationId": "leave_construction_v1_construction_me_leave_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyConstructionResult"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/active-by-uuids": {
+      "post": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "批量 UUID→sheet_id（tracker 按玩家路由）",
+        "description": "批量 UUID → 当前活跃 sheet_id（tracker 按玩家路由用，service-token 单头）。\n\n非敏感数据（仅 sheet_id，无 account 信息）。未绑账号 / 未加入任何项目 → None。",
+        "operationId": "get_active_by_uuids_v1_construction_active_by_uuids_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActiveByUuidsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveByUuidsResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
+      }
+    },
+    "/v1/construction/{sheet_id}/progress": {
+      "get": {
+        "tags": [
+          "construction"
+        ],
+        "summary": "施工进度（材料完成度 + 时间线）",
+        "operationId": "get_construction_progress_v1_construction__sheet_id__progress_get",
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConstructionProgress"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/scoring/credit": {
+      "post": {
+        "tags": [
+          "scoring"
+        ],
+        "summary": "批量积分新增（仅 service-token）",
+        "description": "批量积分入账（仅 service-token；credit 恒为正 delta，无透支概念）。",
+        "operationId": "credit_batch_v1_scoring_credit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBatchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/debit": {
+      "post": {
+        "tags": [
+          "scoring"
+        ],
+        "summary": "批量积分扣除（仅 service-token，可开透支）",
+        "description": "批量积分扣除（仅 service-token；默认拒绝透支，可显式 allow_overdraft）。",
+        "operationId": "debit_batch_v1_scoring_debit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DebitBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBatchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "X-Service-Token": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/admin/adjust": {
+      "post": {
+        "tags": [
+          "scoring"
+        ],
+        "summary": "管理员积分调控（仅特权 JWT，方向由 reason 定）",
+        "description": "管理员（服主）积分调控（**仅特权 JWT**：admin/owner——积分管理面板经\n环境变量同步的托管账号登录调用；普通玩家 JWT 403、service-token 401）。\n\n与 credit/debit 共用批量管线，差异：reason 放开全集（方向由 reason 符号定，\n单端点双向）；``allow_overdraft`` 语义同 debit。操作者经审计日志\n``operator=jwt-account:<id>`` 标签记录（面板不传 ``operator_uuid``——\n它是 Player UUID，托管账号无绑定玩家）；``note`` 由调用方按条提供。",
+        "operationId": "admin_adjust_v1_scoring_admin_adjust_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAdjustBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBatchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/admin/players": {
+      "get": {
+        "tags": [
+          "scoring"
+        ],
+        "summary": "特权玩家联想（面板选人）",
+        "description": "特权玩家联想（积分管理面板调分/筛选选人用；仅特权 JWT，鉴权同\nadmin/adjust——service-token 401）。\n\n与 ``GET /players`` 同源（``player_repo.search_for_manager``）但走特权鉴权：\n托管 admin 账号无绑定玩家，调不了需玩家身份的 ``get_current_player`` 通道。\n仅返回已绑 WebAccount 的玩家。",
+        "operationId": "admin_search_players_v1_scoring_admin_players_get",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）",
+              "default": "",
+              "title": "Q"
+            },
+            "description": "玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/app__schemas__player__PlayerBrief"
+                  },
+                  "title": "Response Admin Search Players V1 Scoring Admin Players Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/scoring/admin/balances": {
+      "get": {
+        "tags": [
+          "scoring"
+        ],
+        "summary": "全账号余额排名（玩家积分 tab）",
+        "description": "所有玩家当前积分余额排名（积分管理面板「玩家积分」tab）。\n\n仅特权 JWT（鉴权同 admin/adjust：无凭证/service-token → 401、普通玩家\n403）。行 = 有绑定玩家的 WebAccount（R-5 归属锚）；``balance`` = SUM(delta)\n（R-2 append-only 重建，与最新 balance_after 恒一致）；排序 balance DESC +\naccount_id 稳定序。聚合与 display_name 回退链细节见\n``score_repo.list_balances``。",
+        "operationId": "admin_balances_v1_scoring_admin_balances_get",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBalancesPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/scoring/ledger": {
+      "get": {
+        "tags": [
+          "scoring"
+        ],
+        "summary": "积分流水分页查询（多角色）",
+        "description": "积分流水查询（多角色，见 ``require_ledger_access``）。\n\n作用域过滤：``player_uuid``（解析玩家 → 账号）或 ``account_id``（特权\n专用直按账号收敛，余额下钻入口；与 ``player_uuid`` 互斥 422；普通玩家\n传此参数 403——自账号放行为将来预留）。时间过滤：``since`` 起（>=）、\n``until`` 止（<，开区间）；排序 id DESC、分页语义由\n``score_repo.list_entries`` 保证。",
+        "operationId": "list_ledger_v1_scoring_ledger_get",
+        "security": [
+          {
+            "X-Service-Token": []
+          },
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "player_uuid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Player Uuid"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreLedgerPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "当前身份（账号 + 活跃 UUID）",
+        "description": "返回当前账号 + 绑定 players + active_uuid（会话来源 UUID）。\n\nplayer-less 托管账号（ADMIN_* env）无 active_uuid → null、players=[]（issue #74）。",
+        "operationId": "get_me_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/me/last_sheet": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "我最近访问的表",
+        "operationId": "get_my_last_sheet_me_last_sheet_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastSheetResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          },
+          {
+            "X-Service-Token": []
+          },
+          {
+            "X-Player-UUID": []
+          }
+        ]
       }
     }
   },
@@ -3361,6 +3591,211 @@
         ],
         "title": "AccountBrief",
         "description": "Web 账号摘要（与前端 Frontend/src/api/identity.ts AccountBrief 对齐）。"
+      },
+      "ActiveByUuidsRequest": {
+        "properties": {
+          "player_uuids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Player Uuids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuids"
+        ],
+        "title": "ActiveByUuidsRequest",
+        "description": "``POST /active-by-uuids`` body：批量 UUID → 当前活跃 sheet_id（tracker 用）。\n\nservice-token 单头鉴权；非敏感数据（仅 sheet_id，无 account 信息）。"
+      },
+      "ActiveByUuidsResult": {
+        "properties": {
+          "mappings": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "type": "object",
+            "title": "Mappings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mappings"
+        ],
+        "title": "ActiveByUuidsResult",
+        "description": "``POST /active-by-uuids`` 响应：``{player_uuid: sheet_id | None}``。\n\n未绑账号 / 未加入任何项目 → ``None``。"
+      },
+      "ActiveSheet": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "ActiveSheet"
+      },
+      "ActiveSheetsResult": {
+        "properties": {
+          "sheets": {
+            "items": {
+              "$ref": "#/components/schemas/ActiveSheet"
+            },
+            "type": "array",
+            "title": "Sheets"
+          },
+          "heuristic_eligible": {
+            "type": "boolean",
+            "title": "Heuristic Eligible"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheets",
+          "heuristic_eligible"
+        ],
+        "title": "ActiveSheetsResult",
+        "description": "活跃 constructing 项目列表 + 启发式归因是否可用（恰 1 个）。"
+      },
+      "AdjustItem": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,19}0*$)\\d{0,16}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "operator_uuid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Uuid"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "collect",
+              "build_a",
+              "leader_bonus",
+              "settle",
+              "manual_adj",
+              "season_reset"
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "amount",
+          "reason"
+        ],
+        "title": "AdjustItem",
+        "description": "管理员调控条目：reason 放开到全集（方向由 reason 符号定，单端点双向）。"
+      },
+      "AdminAdjustBatchRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdjustItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          },
+          "notify": {
+            "type": "boolean",
+            "title": "Notify",
+            "default": true
+          },
+          "allow_overdraft": {
+            "type": "boolean",
+            "title": "Allow Overdraft",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "AdminAdjustBatchRequest"
       },
       "BatchFilePreview": {
         "properties": {
@@ -3423,6 +3858,165 @@
         ],
         "title": "BatchParsedPreview",
         "description": "``POST /parsing/batch`` 响应：每文件独立预览（聚合在前端做，后端不收 multiplier）。"
+      },
+      "BatchRowOutcome": {
+        "properties": {
+          "row_id": {
+            "type": "integer",
+            "title": "Row Id"
+          },
+          "registry_id": {
+            "type": "string",
+            "title": "Registry Id"
+          },
+          "item_name": {
+            "type": "string",
+            "title": "Item Name"
+          },
+          "mode": {
+            "type": "integer",
+            "title": "Mode"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "delivered",
+              "contributed",
+              "skipped"
+            ],
+            "title": "Action"
+          },
+          "qty": {
+            "type": "integer",
+            "title": "Qty",
+            "default": 0
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "is_claimant": {
+            "type": "boolean",
+            "title": "Is Claimant",
+            "default": false
+          },
+          "delivered_qty": {
+            "type": "integer",
+            "title": "Delivered Qty"
+          },
+          "need_qty": {
+            "type": "integer",
+            "title": "Need Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row_id",
+          "registry_id",
+          "item_name",
+          "mode",
+          "action",
+          "delivered_qty",
+          "need_qty"
+        ],
+        "title": "BatchRowOutcome",
+        "description": "批量提交单行结果。\n\n- ``action``：``delivered``（lock 完成）/ ``contributed``（progress 上交）/ ``skipped``。\n- ``qty``：实际交付/上交量；skipped=0。\n- ``reason``：skipped 时填（``BATCH_REASON_READY``/``BATCH_REASON_NO_ITEM``/\n  ``需先认领``/``已被他人认领``/``无需求``/``数量不足（{have}/{need}）``/\n  ``不满足上交条件``/``行状态变化``/``行已删除``）。\n- ``is_claimant``：lock 行 claimant ∈ actor account_uuids（P3 MCDR skip_is_noise\n  折叠用——非本人认领的 lock skip 行折叠）。\n- ``delivered_qty``/``need_qty``：写后行快照（skipped 取当前值）。"
+      },
+      "BatchSubmitItem": {
+        "properties": {
+          "registry_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Registry Id"
+          },
+          "qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "registry_id",
+          "qty"
+        ],
+        "title": "BatchSubmitItem",
+        "description": "批量提交单条材料（``POST /sheets/{id}/submit-batch``）。\n\n``registry_id`` 精确匹配行（``namespace:path``，如 ``minecraft:oak_log``）；\n``qty`` 为本次申报数量（0 = 未携带/申报零；progress 视为「未提交此物」→ skip）。"
+      },
+      "BatchSubmitRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSubmitItem"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "BatchSubmitRequest",
+        "description": "批量提交请求体：仅材料列表，actor 由鉴权决定（JWT 或 service-token+UUID）。\n\n``to_map`` 聚合重复 registry_id（求和 qty），用于 batch_submit 内部按\nregistry_id 单次匹配行。"
+      },
+      "BatchSubmitResult": {
+        "properties": {
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          },
+          "actor_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Actor Uuid"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/BatchRowOutcome"
+            },
+            "type": "array",
+            "title": "Outcomes"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/BatchSubmitTotals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheet_id",
+          "actor_uuid",
+          "outcomes",
+          "totals"
+        ],
+        "title": "BatchSubmitResult",
+        "description": "批量提交完整结果（HTTP 200 响应体）。\n\n``actor_uuid`` 由鉴权决定：JWT 通道 = ``JWT.active_uuid``；service-token 通道\n= ``X-Player-UUID``。客户端据此渲染回执。"
+      },
+      "BatchSubmitTotals": {
+        "properties": {
+          "delivered": {
+            "type": "integer",
+            "title": "Delivered",
+            "default": 0
+          },
+          "contributed": {
+            "type": "integer",
+            "title": "Contributed",
+            "default": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "BatchSubmitTotals",
+        "description": "批量提交汇总（按 action 分类计数）。"
       },
       "BindConfirmRequest": {
         "properties": {
@@ -3499,6 +4093,11 @@
           "expires_in": {
             "type": "integer",
             "title": "Expires In"
+          },
+          "bind_url": {
+            "type": "string",
+            "title": "Bind Url",
+            "default": ""
           }
         },
         "type": "object",
@@ -3564,6 +4163,440 @@
         ],
         "title": "ClaimBindRequest"
       },
+      "ConstructionProgress": {
+        "properties": {
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          },
+          "account_totals": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressAccountTotal"
+            },
+            "type": "array",
+            "title": "Account Totals"
+          },
+          "breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressBreakdownItem"
+            },
+            "type": "array",
+            "title": "Breakdown"
+          },
+          "material_completion": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressMaterialItem"
+            },
+            "type": "array",
+            "title": "Material Completion"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressTimelinePoint"
+            },
+            "type": "array",
+            "title": "Timeline"
+          },
+          "construction_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Construction Started At"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheet_id",
+          "account_totals",
+          "breakdown",
+          "material_completion",
+          "timeline"
+        ],
+        "title": "ConstructionProgress",
+        "description": "进度端点响应（字段只增不减，向后兼容）。"
+      },
+      "ConstructionSettings": {
+        "properties": {
+          "allow_client_mods": {
+            "type": "boolean",
+            "title": "Allow Client Mods"
+          },
+          "official_tracker_enabled": {
+            "type": "boolean",
+            "title": "Official Tracker Enabled"
+          },
+          "allow_server_mods": {
+            "type": "boolean",
+            "title": "Allow Server Mods"
+          },
+          "report_interval_seconds": {
+            "type": "integer",
+            "title": "Report Interval Seconds"
+          },
+          "anti_cheat_threshold": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anti Cheat Threshold"
+          },
+          "enforce_single_construction": {
+            "type": "boolean",
+            "title": "Enforce Single Construction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "allow_client_mods",
+          "official_tracker_enabled",
+          "allow_server_mods",
+          "report_interval_seconds",
+          "anti_cheat_threshold",
+          "enforce_single_construction"
+        ],
+        "title": "ConstructionSettings",
+        "description": "system.settings ``construction.*`` 读出（DB 值优先，回退 config 默认）。"
+      },
+      "ConstructionSettingsUpdate": {
+        "properties": {
+          "allow_client_mods": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Client Mods"
+          },
+          "official_tracker_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Tracker Enabled"
+          },
+          "allow_server_mods": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Server Mods"
+          },
+          "report_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Interval Seconds"
+          },
+          "anti_cheat_threshold": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anti Cheat Threshold"
+          },
+          "enforce_single_construction": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enforce Single Construction"
+          }
+        },
+        "type": "object",
+        "title": "ConstructionSettingsUpdate",
+        "description": "PATCH body：部分更新（仅给定字段写入 system.settings）。\n\n``model_dump(exclude_unset=True)`` 区分「未提供」与「显式 null」：\n``anti_cheat_threshold=None`` 表示关闭阈值限制（合法写入）。"
+      },
+      "CreditBatchRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CreditItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          },
+          "notify": {
+            "type": "boolean",
+            "title": "Notify",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CreditBatchRequest"
+      },
+      "CreditItem": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,19}0*$)\\d{0,16}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "operator_uuid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Uuid"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "collect",
+              "build_a",
+              "leader_bonus",
+              "settle"
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "amount",
+          "reason"
+        ],
+        "title": "CreditItem"
+      },
+      "DebitBatchRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DebitItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          },
+          "notify": {
+            "type": "boolean",
+            "title": "Notify",
+            "default": true
+          },
+          "allow_overdraft": {
+            "type": "boolean",
+            "title": "Allow Overdraft",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "DebitBatchRequest"
+      },
+      "DebitItem": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,19}0*$)\\d{0,16}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "operator_uuid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Uuid"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "manual_adj",
+              "season_reset"
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "amount",
+          "reason"
+        ],
+        "title": "DebitItem"
+      },
+      "DormantSource": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "last_active_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Active At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "last_active_at"
+        ],
+        "title": "DormantSource",
+        "description": "休眠源（曾活跃、当前 ``disabled_at IS NOT NULL`` 的 client_mod 源，可一键切回）。\n\n严格单源策略不变（同时仅 1 个活跃源）；休眠源仅作「快速切回历史 mod_id」的展示层\n列表。``last_active_at`` = 该 source_id 最近一次激活时间（``activated_at``）。"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3576,6 +4609,20 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "JoinRequest": {
+        "properties": {
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheet_id"
+        ],
+        "title": "JoinRequest",
+        "description": "``POST /me/join`` body：手动加入指定 sheet 的施工。\n\nsheet 须存在且非 archived（api 层校验 → 404/409）。"
       },
       "LastSheetResponse": {
         "properties": {
@@ -3639,8 +4686,15 @@
             "title": "Players"
           },
           "active_uuid": {
-            "type": "string",
-            "format": "uuid",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Active Uuid"
           }
         },
@@ -3651,7 +4705,7 @@
           "active_uuid"
         ],
         "title": "MeResponse",
-        "description": "当前身份响应（升级为 account + players + active_uuid）。"
+        "description": "当前身份响应（升级为 account + players + active_uuid）。\n\nactive_uuid 可空：player-less 托管管理账号（ADMIN_* env）无会话来源\nUUID（issue #74）。"
       },
       "MyAccountResponse": {
         "properties": {
@@ -3673,6 +4727,60 @@
         ],
         "title": "MyAccountResponse",
         "description": "GET /web-accounts/me 响应（前端 MyAccountResponse）。\n\n契约：{account: AccountBrief, players: [PlayerBrief]}。"
+      },
+      "MyConstructionResult": {
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/ParticipantState"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "title": "MyConstructionResult",
+        "description": "``GET /me/construction`` 响应：自己当前活跃加入的施工项目。"
+      },
+      "MyReportHistoryItem": {
+        "properties": {
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          },
+          "sheet_title": {
+            "type": "string",
+            "title": "Sheet Title"
+          },
+          "total_net": {
+            "type": "integer",
+            "title": "Total Net"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recorded_at",
+          "sheet_id",
+          "sheet_title",
+          "total_net"
+        ],
+        "title": "MyReportHistoryItem",
+        "description": "个人上报历史单条（``GET /v1/construction/me/reports``，``placement_snapshots`` 投影）。\n\n每次 report 成功落 placement 后为涉及 account 写一条 snapshot —— 此即「一次上报\n事件」。``delta`` = 本次上报相对同项目上一条快照的净增量（最旧/首条为 None）。"
       },
       "NotificationAckRequest": {
         "properties": {
@@ -3816,6 +4924,62 @@
         "title": "ParsedMaterialPreview",
         "description": "``POST /parsing/batch`` 响应中每文件的 ``preview`` 负载：分组材料预览（不落库）。"
       },
+      "ParticipantState": {
+        "properties": {
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "sheet_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Title"
+          },
+          "joined_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joined At"
+          },
+          "join_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Join Source"
+          }
+        },
+        "type": "object",
+        "title": "ParticipantState",
+        "description": "当前活跃加入状态的对外契约（``ParticipantState.sheet_id`` 为 None = 未加入）。"
+      },
       "PasswordLoginRequest": {
         "properties": {
           "username": {
@@ -3833,6 +4997,168 @@
           "password"
         ],
         "title": "PasswordLoginRequest"
+      },
+      "PlacementEntry": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "registry_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Registry Id"
+          },
+          "placed_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Placed Qty",
+            "default": 0
+          },
+          "broken_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Broken Qty",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "registry_id"
+        ],
+        "title": "PlacementEntry",
+        "description": "单条方块净放置上报。\n\n- service-token 通道：``player_uuid`` 为代报目标（后端逐个验证存在）。\n- JWT 通道：``player_uuid`` 被服务端**强制覆盖**为 ``active_uuid``（payload 值忽略）。\n- ``registry_id``：方块 registry id（``namespace:path``）。后端校验必须在\n  该 sheet 收集清单内（``sheet_rows.registry_id`` 集合，含子物品），否则 skip\n  （reason `方块不在项目材料清单内`）；空气/水等过滤归追踪器侧（C-6）。"
+      },
+      "PlacementOutcome": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "registry_id": {
+            "type": "string",
+            "title": "Registry Id"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "skipped"
+            ],
+            "title": "Action"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "net_delta": {
+            "type": "integer",
+            "title": "Net Delta",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "registry_id",
+          "action"
+        ],
+        "title": "PlacementOutcome",
+        "description": "单条上报结果。``accepted`` 落库；``skipped`` 附 reason（不写库）。"
+      },
+      "PlacementReport": {
+        "properties": {
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/PlacementEntry"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Placements"
+          }
+        },
+        "type": "object",
+        "required": [
+          "placements"
+        ],
+        "title": "PlacementReport",
+        "description": "``POST /v1/construction/report`` 请求体。\n\n``sheet_id`` 非空 → 显式归因（须 constructing，否则 api 层 409/404）；\n``None`` → 后端启发式归因（恰 1 个 constructing sheet 自动归因，否则全 skip）。"
+      },
+      "PlacementReportResult": {
+        "properties": {
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "attribution_source": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "heuristic",
+              "none"
+            ],
+            "title": "Attribution Source"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/PlacementTotals"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/PlacementOutcome"
+            },
+            "type": "array",
+            "title": "Outcomes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheet_id",
+          "attribution_source",
+          "totals",
+          "outcomes"
+        ],
+        "title": "PlacementReportResult",
+        "description": "上报响应（HTTP 200）。"
+      },
+      "PlacementTotals": {
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "title": "Accepted",
+            "default": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "PlacementTotals"
       },
       "PreviewItem": {
         "properties": {
@@ -3901,6 +5227,145 @@
         "title": "PreviewMeta",
         "description": "投影元信息。"
       },
+      "ProgressAccountTotal": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "placed_qty": {
+            "type": "integer",
+            "title": "Placed Qty"
+          },
+          "broken_qty": {
+            "type": "integer",
+            "title": "Broken Qty"
+          },
+          "net_qty": {
+            "type": "integer",
+            "title": "Net Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "display_name",
+          "placed_qty",
+          "broken_qty",
+          "net_qty"
+        ],
+        "title": "ProgressAccountTotal",
+        "description": "按 Web 账号聚合的施工总量（R-5 锚 account）。"
+      },
+      "ProgressBreakdownItem": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "registry_id": {
+            "type": "string",
+            "title": "Registry Id"
+          },
+          "placed_qty": {
+            "type": "integer",
+            "title": "Placed Qty"
+          },
+          "broken_qty": {
+            "type": "integer",
+            "title": "Broken Qty"
+          },
+          "net_qty": {
+            "type": "integer",
+            "title": "Net Qty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "display_name",
+          "registry_id",
+          "placed_qty",
+          "broken_qty",
+          "net_qty"
+        ],
+        "title": "ProgressBreakdownItem",
+        "description": "按 account × registry 明细（进度展示 + 归档 md 复用）。"
+      },
+      "ProgressMaterialItem": {
+        "properties": {
+          "registry_id": {
+            "type": "string",
+            "title": "Registry Id"
+          },
+          "item_name": {
+            "type": "string",
+            "title": "Item Name"
+          },
+          "need_qty": {
+            "type": "integer",
+            "title": "Need Qty"
+          },
+          "net_qty": {
+            "type": "integer",
+            "title": "Net Qty"
+          },
+          "completion_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "registry_id",
+          "item_name",
+          "need_qty",
+          "net_qty",
+          "completion_pct"
+        ],
+        "title": "ProgressMaterialItem",
+        "description": "材料完成度（按 registry 聚合，对照 ``sheet_rows.need_qty``）。\n\n- ``need_qty``：该 registry 在收集清单中的需求总量（多行同 registry 求和）。\n- ``net_qty``：该 registry 的净放置（``placement_records`` 聚合）。\n- ``completion_pct``：``need > 0`` 时为 ``clamp(net/need, 0, 1) * 100``（保留 1 位，\n  百分比视觉封顶 100%）；``need == 0`` → ``None``（不显示百分比）。"
+      },
+      "ProgressTimelinePoint": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "total_net": {
+            "type": "integer",
+            "title": "Total Net"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "total_net",
+          "recorded_at"
+        ],
+        "title": "ProgressTimelinePoint",
+        "description": "时序快照点（某 account 截至该时刻的累计净放置，迭代 2）。"
+      },
       "RefreshRequest": {
         "properties": {
           "refresh_token": {
@@ -3931,6 +5396,79 @@
           "password"
         ],
         "title": "RegisterRequest"
+      },
+      "ReportEventItem": {
+        "properties": {
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "sheet_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Title"
+          },
+          "registry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Id"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "skipped"
+            ],
+            "title": "Action"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "net_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Delta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recorded_at",
+          "action",
+          "reason"
+        ],
+        "title": "ReportEventItem",
+        "description": "个人上报事件流水单条（``GET /v1/construction/me/report-events``，``report_events`` 投影）。\n\n迭代 5：玩家可见的完整事件流水——``accepted`` + **所有 skip 原因**逐条落库。\n- ``sheet_id`` / ``sheet_title``：归因失败等场景可能为 None（时间线展示时回退显示\n  「未归因」）。\n- ``registry_id``：理论上必有（outcome 都带），防御性 nullable。\n- ``action`` ∈ {``accepted``, ``skipped``}；``reason``：accepted=\"\"; skipped 为中文。\n- ``net_delta``：accepted=本次计入；skipped=被拒/尝试量（部分接受场景的 over 部分）。"
       },
       "RowContributeRequest": {
         "properties": {
@@ -4233,6 +5771,373 @@
         "type": "object",
         "title": "RowUpsertRequest",
         "description": "行 upsert / 更新请求（``PUT /sheets/{sid}/rows``，单端点按 row_id 分流）。\n\n- **带 ``row_id``**：按主键 **更新**该行（\"修改\"以 id 为定位主轴）。此时\n  ``item_name``/``registry_id``/``need_qty``/``mode``/``sort_order`` 全可选\n  （部分更新，传哪个改哪个）；**改名 = 只传 ``row_id`` + ``item_name``**。\n  更新路径不校验 name/registry 至少一个（可只改 need/mode/sort）。\n- **不带 ``row_id``**：按 ``item_name`` **新建**（原 upsert 新建语义），\n  ``item_name`` 与 ``registry_id`` 至少提供一个（model_validator 校验）：\n  - Web / 投影解析路径：传中文 ``item_name`` + 可选 ``registry_id``。\n  - MCDR 手持新建行（addhand）：仅传 ``registry_id``，API 层用 LangJsonTranslator\n    翻译补默认 ``item_name``（未命中回退 registry_id 本身）。\n\nissue #20：旧实现无 row_id，改名走 by-``item_name`` upsert 查不到旧行 → 新建 → 重复。\n\n子物品嵌套行（0012，0013 放宽倍数为小数）：\n- ``parent_row_id`` 非空时为子行：要求 ``registry_id`` 非空 + ``qty_per_unit`` > 0（支持 0.5 等小数）。\n- 子行 ``need_qty`` 由 API 派生（= ceil(qty_per_unit × 父行.need_qty)，向上取整成整数），请求传入时忽略。"
+      },
+      "ScoreBalanceRow": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "player_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Player Names"
+          },
+          "balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance"
+          },
+          "entries_count": {
+            "type": "integer",
+            "title": "Entries Count"
+          },
+          "last_entry_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Entry At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "display_name",
+          "player_names",
+          "balance",
+          "entries_count"
+        ],
+        "title": "ScoreBalanceRow",
+        "description": "单账号余额行（排名榜；余额归属锚 = WebAccount，R-5）。\n\n``balance`` = SUM(delta)（append-only 可审计重建，R-2，与最新\n``balance_after`` 恒一致）；``player_names`` 按 last_seen_at DESC；\n``display_name`` 空 → 回退最新玩家名（#41 回退链）。"
+      },
+      "ScoreBalancesPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreBalanceRow"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "title": "ScoreBalancesPage",
+        "description": "余额排名分页响应（排序 balance DESC + account_id 稳定序由 repo 保证）。"
+      },
+      "ScoreBatchResult": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreItemResult"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "accepted_count": {
+            "type": "integer",
+            "title": "Accepted Count"
+          },
+          "skipped_count": {
+            "type": "integer",
+            "title": "Skipped Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "accepted_count",
+          "skipped_count"
+        ],
+        "title": "ScoreBatchResult"
+      },
+      "ScoreItemResult": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScoreLedgerEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotent_replay": {
+            "type": "boolean",
+            "title": "Idempotent Replay",
+            "default": false
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "accepted"
+        ],
+        "title": "ScoreItemResult",
+        "description": "单条 item 处理结果（accepted / skip 原因 / 幂等重放标记）。"
+      },
+      "ScoreLedgerEntry": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "delta": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Delta"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "balance_after": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance After"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "operator_uuid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Uuid"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "account_id",
+          "delta",
+          "reason",
+          "balance_after",
+          "sheet_id",
+          "operator_uuid",
+          "idempotency_key",
+          "note",
+          "created_at"
+        ],
+        "title": "ScoreLedgerEntry",
+        "description": "score_ledger 行投影（append-only，R-2；只读，无任何写路径）。"
+      },
+      "ScoreLedgerPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreLedgerEntry"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "title": "ScoreLedgerPage",
+        "description": "流水分页响应（total 为过滤后总数；排序 id DESC 由 repo 保证）。"
+      },
+      "ServerModSourceCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ServerModSourceCreate"
+      },
+      "ServerModSourceEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "approved_by_uuid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By Uuid"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Approved At"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "enabled",
+          "approved_by_uuid",
+          "approved_at",
+          "notes"
+        ],
+        "title": "ServerModSourceEntry"
+      },
+      "ServerModSourceToggle": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ServerModSourceToggle",
+        "description": "``PATCH /mod-sources/{name}`` body：逐源启停（迭代 3 卡片开关）。"
       },
       "SheetCreateRequest": {
         "properties": {
@@ -4588,6 +6493,243 @@
         ],
         "title": "SheetSummary"
       },
+      "SourceHistoryEntry": {
+        "properties": {
+          "from_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Type"
+          },
+          "from_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Id"
+          },
+          "to_type": {
+            "type": "string",
+            "title": "To Type"
+          },
+          "to_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Id"
+          },
+          "switched_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Switched At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from_type",
+          "from_id",
+          "to_type",
+          "to_id",
+          "switched_at",
+          "reason"
+        ],
+        "title": "SourceHistoryEntry"
+      },
+      "SourceMeResult": {
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/SourceState"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/SourceHistoryEntry"
+            },
+            "type": "array",
+            "title": "History"
+          },
+          "dormant_sources": {
+            "items": {
+              "$ref": "#/components/schemas/DormantSource"
+            },
+            "type": "array",
+            "title": "Dormant Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "history",
+          "dormant_sources"
+        ],
+        "title": "SourceMeResult"
+      },
+      "SourceState": {
+        "properties": {
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_type",
+          "source_id",
+          "is_default"
+        ],
+        "title": "SourceState",
+        "description": "玩家当前活跃上报源。``is_default=True`` 表示无显式记录、走默认 mcdr/official。"
+      },
+      "SourceSwitchSelfRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "server",
+              "local"
+            ],
+            "title": "Mode"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "SourceSwitchSelfRequest",
+        "description": "玩家切自己的上报模式。\n\n``mode=\"server\"`` → 退回服务端代报（mcdr/official）；\n``mode=\"local\"`` → ``source_id`` 必填（= mod_id；归属校验留 mod-token PR）。"
+      },
+      "SourceSwitchServerRequest": {
+        "properties": {
+          "player_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Player Uuid"
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "mcdr",
+              "server_mod"
+            ],
+            "title": "Source Type"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_uuid",
+          "source_type"
+        ],
+        "title": "SourceSwitchServerRequest",
+        "description": "admin 切某玩家的服务端源。\n\n``source_type=\"mcdr\"`` → ``source_id`` 强制 \"official\"（忽略 payload）；\n``source_type=\"server_mod\"`` → ``source_id`` 必填且须在白名单（api 层校验 → 422）。"
+      },
+      "SwitchRequest": {
+        "properties": {
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheet_id"
+        ],
+        "title": "SwitchRequest",
+        "description": "``POST /me/switch`` body：切换到指定 sheet（leave 旧活跃 + join 新 sheet 同事务）。\n\n与 ``/me/join`` 的区别：``enforce_single_construction=True`` 且已活跃加入他 sheet 时，\n``/me/join`` 抛 409（要求玩家显式选择），``/me/switch`` 自动切换。"
+      },
       "TokenExchangeRequest": {
         "properties": {
           "token": {
@@ -4783,15 +6925,46 @@
           "player_name": {
             "type": "string",
             "title": "Player Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
           }
         },
         "type": "object",
         "required": [
           "player_uuid",
-          "player_name"
+          "player_name",
+          "display_name"
         ],
         "title": "PlayerBrief",
         "description": "玩家简要信息（联想 / 列表用）。身份锚 = player_uuid。"
+      }
+    },
+    "securitySchemes": {
+      "X-Service-Token": {
+        "type": "apiKey",
+        "description": "服务端组件令牌（MCDR / 服务端 mod / 服主脚本）",
+        "in": "header",
+        "name": "X-Service-Token"
+      },
+      "Authorization": {
+        "type": "apiKey",
+        "description": "Web JWT 通道，值形如 \"Bearer <jwt>\"",
+        "in": "header",
+        "name": "Authorization"
+      },
+      "X-Player-UUID": {
+        "type": "apiKey",
+        "description": "MCDR 代理通道玩家 UUID（与 X-Service-Token 成对）",
+        "in": "header",
+        "name": "X-Player-UUID"
+      },
+      "X-Source-Id": {
+        "type": "apiKey",
+        "description": "施工上报源标识（服务端 mod 白名单名）",
+        "in": "header",
+        "name": "X-Source-Id"
       }
     }
   }

@@ -41,7 +41,7 @@ async function onLogin(): Promise<void> {
     )
     ElMessage.success(`欢迎，${resolveDisplayName(resp.account, resp.player)}`)
     // 优先跳 redirect（如 bind 链接带来的 /bind/confirm?code=XXX）；
-    // 无玩家 = 托管管理账号 → 直达积分管理（/me 需 active_uuid 会 401）
+    // 无玩家 = 托管管理账号 → 落管理页（/me 现已可访问，#74，但管理页更贴合用途）
     const redirect = route.query.redirect as string | undefined
     router.replace(redirect || (resp.player ? '/me' : '/admin/scoring'))
   } catch (e: unknown) {

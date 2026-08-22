@@ -103,7 +103,7 @@ def _parse_bytes_to_preview(filename: str, kind: str, data: bytes) -> ParsedMate
     )
 
 
-@router.post("/batch", response_model=BatchParsedPreview)
+@router.post("/batch", response_model=BatchParsedPreview, summary="批量解析 .litematic/.nbt（混型逐文件预览）")
 async def parse_batch(
     files: list[UploadFile] = File(...),
     player: Player = Depends(get_current_player),

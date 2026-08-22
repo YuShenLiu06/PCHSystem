@@ -2,6 +2,27 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 
 
+def test_security_schemes_present():
+    spec = TestClient(create_app()).get("/openapi.json").json()
+    schemes = spec["components"]["securitySchemes"]
+    for name in ["X-Service-Token", "X-Player-UUID", "X-Source-Id", "Authorization"]:
+        assert name in schemes, f"missing security scheme {name}"
+        assert schemes[name]["type"] == "apiKey"
+
+
+def test_docs_ui_available():
+    response = TestClient(create_app()).get("/docs")
+    assert response.status_code == 200
+
+
+def test_authed_endpoint_declares_security():
+    spec = TestClient(create_app()).get("/openapi.json").json()
+    operation = spec["paths"]["/v1/scoring/credit"]["post"]
+    assert operation["security"], "credit 应声明 security（service-token）"
+    assert any("X-Service-Token" in req for req in operation["security"])
+    assert operation.get("summary"), "credit 应有中文 summary"
+
+
 def test_paths_present():
     paths = TestClient(create_app()).get("/openapi.json").json()["paths"]
     for p in [

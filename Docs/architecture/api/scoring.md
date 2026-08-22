@@ -6,6 +6,7 @@
 > `GET /v1/scoring/admin/players`：特权玩家联想（面板选人，仅特权 JWT）；`GET /v1/scoring/admin/balances`：全账号余额排名（面板「玩家积分」tab，仅特权 JWT）；`GET /v1/scoring/ledger`：多角色流水分页查询。全部经 `score_service.write_ledger` 落
 > append-only `scoring.score_ledger`（R-2）。settle 编排（Calculator 链、归档自动结算）未实现，
 > 设计契约见 [`../flows/scoring-settlement.md`](../flows/scoring-settlement.md)。
+> HTTP 签名以运行时 `/openapi.json` 为准（`/docs` 可联调），本文档记录业务语义与雷点。
 
 **状态**：✅ 已实现（迁移 0024，积分层首批）
 

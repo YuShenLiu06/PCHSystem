@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import jwt as pyjwt
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,8 +123,8 @@ async def _account_from_authorization(
 
 
 async def require_ledger_access(
-    x_service_token: str | None = Header(default=None),
-    authorization: str | None = Header(default=None),
+    x_service_token: str | None = Security(deps.service_token_scheme),
+    authorization: str | None = Security(deps.bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> LedgerAccess:
     """ledger 多角色鉴权：
@@ -168,7 +168,7 @@ class PrivilegedAccess:
 
 
 async def require_privileged_access(
-    authorization: str | None = Header(default=None),
+    authorization: str | None = Security(deps.bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> PrivilegedAccess:
     """特权端点鉴权（admin/adjust / admin/players）：**仅 admin/owner JWT**。
@@ -329,7 +329,7 @@ async def _process_batch(
     )
 
 
-@router.post("/credit", response_model=ScoreBatchResult)
+@router.post("/credit", response_model=ScoreBatchResult, summary="批量积分新增（仅 service-token）")
 async def credit_batch(
     body: CreditBatchRequest,
     _ok: None = Depends(deps.require_service_token),
@@ -345,7 +345,7 @@ async def credit_batch(
     )
 
 
-@router.post("/debit", response_model=ScoreBatchResult)
+@router.post("/debit", response_model=ScoreBatchResult, summary="批量积分扣除（仅 service-token，可开透支）")
 async def debit_batch(
     body: DebitBatchRequest,
     _ok: None = Depends(deps.require_service_token),
@@ -361,7 +361,7 @@ async def debit_batch(
     )
 
 
-@router.post("/admin/adjust", response_model=ScoreBatchResult)
+@router.post("/admin/adjust", response_model=ScoreBatchResult, summary="管理员积分调控（仅特权 JWT，方向由 reason 定）")
 async def admin_adjust(
     body: AdminAdjustBatchRequest,
     access: PrivilegedAccess = Depends(require_privileged_access),
@@ -385,7 +385,7 @@ async def admin_adjust(
     )
 
 
-@router.get("/admin/players", response_model=list[PlayerBrief])
+@router.get("/admin/players", response_model=list[PlayerBrief], summary="特权玩家联想（面板选人）")
 async def admin_search_players(
     _access: PrivilegedAccess = Depends(require_privileged_access),
     q: str = Query(default="", description="玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）"),
@@ -418,7 +418,7 @@ async def admin_search_players(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/admin/balances", response_model=ScoreBalancesPage)
+@router.get("/admin/balances", response_model=ScoreBalancesPage, summary="全账号余额排名（玩家积分 tab）")
 async def admin_balances(
     _access: PrivilegedAccess = Depends(require_privileged_access),
     session: AsyncSession = Depends(get_session),
@@ -501,7 +501,7 @@ def _as_utc(value: datetime) -> datetime:
     return value
 
 
-@router.get("/ledger", response_model=ScoreLedgerPage)
+@router.get("/ledger", response_model=ScoreLedgerPage, summary="积分流水分页查询（多角色）")
 async def list_ledger(
     access: LedgerAccess = Depends(require_ledger_access),
     session: AsyncSession = Depends(get_session),
