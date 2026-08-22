@@ -17,7 +17,11 @@ server {
     index index.html;
 
     # SPA history 模式 fallback（createWebHistory 必须，否则刷新 /sheets/3 → 404）
-    location / { try_files $uri $uri/ /index.html; }
+    # no-cache：入口文档每次回源验证（可 304），防浏览器启发式缓存旧 index.html 引旧 chunk
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
 
     # /api 反代到后端：末尾 / 必带 → 去掉 /api 前缀（对齐 vite dev 的 rewrite）
     # 浏览器 /api/me → 后端收到 /me。漏了末尾 / → /api/me 变 :8000/api/me 后端 404。

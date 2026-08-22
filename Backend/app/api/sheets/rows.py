@@ -413,7 +413,7 @@ async def _merge_rows(
     return row
 
 
-@router.put("/{sheet_id}/rows", response_model=RowDetail)
+@router.put("/{sheet_id}/rows", response_model=RowDetail, summary="行新建/更新")
 async def upsert_row(
     sheet_id: int,
     body: RowUpsertRequest,
@@ -454,7 +454,7 @@ async def upsert_row(
     return RowDetail(**_row_dict(row, None))
 
 
-@router.delete("/{sheet_id}/rows/{row_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{sheet_id}/rows/{row_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除行")
 async def delete_row(
     sheet_id: int,
     row_id: int,

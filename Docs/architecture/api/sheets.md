@@ -1,5 +1,8 @@
 <!-- omit in toc -->
 # sheets API 参考 
+
+> HTTP 签名以运行时 `/openapi.json` 为准（`/docs` 可联调），本文档记录业务语义与雷点。
+
 - [1. 概述](#1-%E6%A6%82%E8%BF%B0)
 - [2. 鉴权](#2-%E9%89%B4%E6%9D%83)
 - [3. 数据模型](#3-%E6%95%B0%E6%8D%AE%E6%A8%A1%E5%9E%8B)
@@ -60,6 +63,7 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 - JWT 经 `POST /auth/exchange`（一次性 token → JWT pair）获取，详见 auth API。
 - **service-token + `X-Player-UUID` 代玩家写**：后端校验 service token 后用该 UUID 加载 `Player` 注入，下游 `_can_edit` / `claimant_uuid == player.uuid` 等 RBAC 完全复用，**与 JWT 写等价**。MCDR 无需管 JWT。
 - 权限以**后端 RBAC 为准**（红线 R-9）：前端按钮显隐只是 UX，真实拒绝是后端 403/409。
+- **player-less 托管账号浏览（issue #74）**：`GET /sheets`、`GET /sheets/{id}`（含 csv）、`GET /sheets/{id}/managers` 用 account 级 `get_current_viewer`（双通道语义不变）——托管账号（JWT 无 `active_uuid`）只读浏览（`owner=me` 返回空集、无「我参与的行」高亮、不记 `last_sheet`）；**写端点仍需玩家身份**（player-less 调用 → 401 `missing active_uuid`，前端 toast 不登出）。`ADMIN_*` 托管账号已默认绑定同名管理玩家（`offline_player_uuid` 推导，见 [`scoring.md`](./scoring.md) §5），登录即带 `active_uuid`、写端点可用；player-less 仅剩「撞名不抢绑」回退等场景（同名玩家已被其他账号绑定时，告警回退只读）。
 
 ---
 
@@ -198,8 +202,8 @@ stateDiagram-v2
 |---|---|---|---|---|---|
 | POST | `/sheets` | JWT 或 service-token+UUID | `SheetCreateRequest{title}` | 201 `SheetDetail` | 建表，owner=self。MCDR 可经 service-token+`X-Player-UUID` 代玩家调用 |
 | POST | `/sheets/from-items` | JWT 或 service-token+UUID | `SheetFromItemsRequest{title, items[]}`（`items` 元素 = `SheetItemIn`：`item_name`/`registry_id` 均可选但至少一个、`need_qty`、`mode`、`sort_order`） | 201 `SheetDetail` | 一次性建表 + 批量行（`mode` 默认 lock、`items` ≤2000），用于「投影解析→生成表格」。现透传 `registry_id`（= 投影解析 `PreviewItem.item_id`），`item_name` 缺失时后端翻译补中文名。详见 [`parsing.md`](./parsing.md) |
-| GET | `/sheets` | JWT 或 service-token+UUID | `?owner=me`（只看自己）+ `?status=collecting\|constructing\|archived\|active`（`active`=collecting+constructing，前端默认） | 200 `[SheetSummary]` | 列所有表（含他人表可读），可按阶段过滤。**参与优先排序**：请求带玩家身份（JWT 或代玩家 UUID）时，该玩家参与过的表（owner / lock 行 claimant / progress 行 contributor 三源 UNION）置顶，组内按 id 升序，未参与表在后（`order_by id.in_(involved).desc(), id.asc()`）。MCDR 同上 |
-| GET | `/sheets/{sheet_id}` | JWT 或 service-token+UUID | `?format=csv` `?q=<关键词>` | 200 `SheetDetail` \| `text/csv` | 表详情。`?q=` 按 `item_name`/`registry_id` 大小写不敏感子串过滤行（`registry_id` 可空→NULL 不匹配，天然 null-safe；LIKE 通配符 `%`/`_`/`\` 已转义，搜 `oak_log` 不会误匹配 `oakXlog`）。**行序（JSON 路径）= 玩家相关五档优先级**（按请求者 UUID 排）：0=我认领的 lock / 1=我参与的 progress / 2=我未参与的 progress / 3=非我认领的 lock（open+他人认领）/ 4=done；同档内按还需数量(`need-delivered`) **降序**，末位 tiebreak `sort_order, id`。**仅顶层行参与主排序键**——每个顶层行排定后，其子行按 `(sort_order, id)` **紧跟父行**（子行不参与独立优先级，避免脱离父行甚至排到父行上方）。`format=csv` 用**自然序**（`list_rows` 的分组序：全部父行段在前、全部子行段在后，**子行不紧跟各自父行而是按 `parent_row_id` 分组相邻**，组内再 `sort_order, id`；与导出者身份无关）；`?q=` 对 JSON 与 CSV 均生效。**副作用**：JSON 详情路径（非 csv、非 404）成功返回前 best-effort 记录 `users.players.last_sheet_id = sheet_id`（供 `GET /me/last_sheet` 快速重开；写失败仅记日志，不影响返回）。MCDR 经 `X-Player-UUID` 代玩家→同样玩家相关排序；分页由 MCDR 客户端做（30 行/页，issue #17）。 |
+| GET | `/sheets` | JWT 或 service-token+UUID（player-less JWT 亦可，#74） | `?owner=me`（只看自己）+ `?status=collecting\|constructing\|archived\|active`（`active`=collecting+constructing，前端默认） | 200 `[SheetSummary]` | 列所有表（含他人表可读），可按阶段过滤。**参与优先排序**：请求带玩家身份（JWT 或代玩家 UUID）时，该玩家参与过的表（owner / lock 行 claimant / progress 行 contributor 三源 UNION）置顶，组内按 id 升序，未参与表在后（`order_by id.in_(involved).desc(), id.asc()`）。MCDR 同上 |
+| GET | `/sheets/{sheet_id}` | JWT 或 service-token+UUID（player-less JWT 亦可，#74） | `?format=csv` `?q=<关键词>` | 200 `SheetDetail` \| `text/csv` | 表详情。`?q=` 按 `item_name`/`registry_id` 大小写不敏感子串过滤行（`registry_id` 可空→NULL 不匹配，天然 null-safe；LIKE 通配符 `%`/`_`/`\` 已转义，搜 `oak_log` 不会误匹配 `oakXlog`）。**行序（JSON 路径）= 玩家相关五档优先级**（按请求者 UUID 排）：0=我认领的 lock / 1=我参与的 progress / 2=我未参与的 progress / 3=非我认领的 lock（open+他人认领）/ 4=done；同档内按还需数量(`need-delivered`) **降序**，末位 tiebreak `sort_order, id`。**仅顶层行参与主排序键**——每个顶层行排定后，其子行按 `(sort_order, id)` **紧跟父行**（子行不参与独立优先级，避免脱离父行甚至排到父行上方）。`format=csv` 用**自然序**（`list_rows` 的分组序：全部父行段在前、全部子行段在后，**子行不紧跟各自父行而是按 `parent_row_id` 分组相邻**，组内再 `sort_order, id`；与导出者身份无关）；`?q=` 对 JSON 与 CSV 均生效。**副作用**：JSON 详情路径（非 csv、非 404）成功返回前 best-effort 记录 `users.players.last_sheet_id = sheet_id`（供 `GET /me/last_sheet` 快速重开；写失败仅记日志，不影响返回）。MCDR 经 `X-Player-UUID` 代玩家→同样玩家相关排序；分页由 MCDR 客户端做（30 行/页，issue #17）。 |
 | PATCH | `/sheets/{sheet_id}` | JWT·**owner** 或 service-token+UUID·owner | `SheetPatchRequest{title}` | 200 `SheetDetail` | 改标题。MCDR 同上 |
 | DELETE | `/sheets/{sheet_id}` | JWT·**owner** 或 service-token+UUID·owner | — | 204 | 删表（级联 rows + 认领）。MCDR 同上；**archived 态 → 409**（先 advance 不可逆，不能直接删） |
 

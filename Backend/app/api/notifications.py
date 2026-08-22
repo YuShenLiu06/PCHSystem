@@ -67,6 +67,7 @@ def _to_out(record) -> NotificationOut:
     "/pending",
     response_model=list[NotificationOut],
     dependencies=[Depends(require_service_token)],
+    summary="拉取未投递通知（MCDR 轮询）",
 )
 async def list_pending(
     player_uuid: UUID | None = Query(default=None, description="目标玩家 UUID"),
@@ -82,6 +83,7 @@ async def list_pending(
     "/ack",
     response_model=NotificationAckResponse,
     dependencies=[Depends(require_service_token)],
+    summary="批量标记通知投递",
 )
 async def ack(
     body: NotificationAckRequest,
@@ -98,6 +100,7 @@ async def ack(
     "/{notification_id}/read",
     response_model=NotificationOut,
     dependencies=[Depends(require_service_token)],
+    summary="标记通知已读",
 )
 async def mark_read(
     notification_id: int,

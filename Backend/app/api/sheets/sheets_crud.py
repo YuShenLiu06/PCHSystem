@@ -8,8 +8,10 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    ViewerIdentity,
     get_current_account_uuids,
     get_current_player,
+    get_current_viewer,
     require_service_token,
 )
 from app.api.sheets._shared import (
@@ -39,7 +41,7 @@ router = APIRouter(prefix="")
 logger = logging.getLogger(__name__)
 
 
-@router.post("", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SheetDetail, status_code=status.HTTP_201_CREATED, summary="新建表格")
 async def create_sheet(
     body: SheetCreateRequest,
     session: AsyncSession = Depends(get_session),
@@ -60,7 +62,7 @@ async def create_sheet(
     )
 
 
-@router.post("/from-items", response_model=SheetDetail, status_code=status.HTTP_201_CREATED)
+@router.post("/from-items", response_model=SheetDetail, status_code=status.HTTP_201_CREATED, summary="清单一次性建表（解析→建表+批量行）")
 async def create_sheet_from_items(
     body: SheetFromItemsRequest,
     session: AsyncSession = Depends(get_session),
@@ -105,7 +107,7 @@ async def create_sheet_from_items(
     )
 
 
-@router.get("", response_model=list[SheetSummary])
+@router.get("", response_model=list[SheetSummary], summary="表格列表（status/owner 过滤）")
 async def list_sheets(
     owner: str | None = Query(default=None, description="过滤：传 me 只看自己"),
     status_filter: str | None = Query(
@@ -114,10 +116,12 @@ async def list_sheets(
         description="阶段过滤：collecting / constructing / archived / active",
     ),
     session: AsyncSession = Depends(get_session),
-    player: Player = Depends(get_current_player),
-    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
+    viewer: ViewerIdentity = Depends(get_current_viewer),
 ) -> list[SheetSummary]:
-    owner_uuid = player.uuid if owner == "me" else None
+    # player-less 托管账号（无会话玩家）：「我的项目」为空集，不回退泄漏全量（issue #74）
+    if owner == "me" and viewer.active_uuid is None:
+        return []
+    owner_uuid = viewer.active_uuid if owner == "me" else None
 
     # 聚合查询：按 account 的 UUID 集合参与优先排序（未绑账号回退 {self.uuid}）。
     # viewer_web_account_id 让 manager 关系表也纳入「参与过」UNION（第 4 源，account 锚）。
@@ -125,13 +129,13 @@ async def list_sheets(
         session,
         owner_uuid=owner_uuid,
         status_filter=status_filter,
-        player_uuids=list(account_uuids),
-        viewer_web_account_id=player.web_account_id,
+        player_uuids=list(viewer.uuids),
+        viewer_web_account_id=viewer.account.id if viewer.account else None,
     )
     return [_to_summary(s, name) for s, name in sheets_with_names]
 
 
-@router.get("/export", response_class=PlainTextResponse)
+@router.get("/export", response_class=PlainTextResponse, summary="全量 CSV 导出（service-token）")
 async def export_all(
     session: AsyncSession = Depends(get_session),
     _svc: None = Depends(require_service_token),
@@ -141,14 +145,13 @@ async def export_all(
     return PlainTextResponse(content=csv_str, media_type="text/csv")
 
 
-@router.get("/{sheet_id}", response_model=SheetDetail)
+@router.get("/{sheet_id}", response_model=SheetDetail, summary="表详情（?format=csv 返回 CSV）")
 async def get_sheet(
     sheet_id: int,
     format: str | None = Query(default=None, description="传 csv 返回 text/csv"),
     q: str | None = Query(default=None, description="按 item_name/registry_id 大小写不敏感过滤行"),
     session: AsyncSession = Depends(get_session),
-    player: Player = Depends(get_current_player),
-    account_uuids: set[uuid.UUID] = Depends(get_current_account_uuids),
+    viewer: ViewerIdentity = Depends(get_current_viewer),
 ):
     result = await sheet_repo.get_sheet(session, sheet_id)
     if result is None:
@@ -162,32 +165,40 @@ async def get_sheet(
         session, [r.id for r, _ in rows_with_names]
     )
     # 「我参与的行」高亮升 account 级：同 account 的 UUID 贡献过的行都算我的
+    # （player-less 托管账号 uuids=∅ → 无高亮，浏览视角，issue #74）
     my_row_ids = {
         rid
         for rid, members in contributors_map.items()
         if any(
-            (player.web_account_id is not None and aid == player.web_account_id)
-            or bool(account_uuids & set(member_uuids))
+            (viewer.account is not None and aid == viewer.account.id)
+            or bool(viewer.uuids & set(member_uuids))
             for aid, _dn, member_uuids, _qty in members
         )
     }
-    ordered = sort_sheet_rows(rows_with_names, account_uuids, my_row_ids)
-    try:
-        await set_last_sheet(session, player, sheet_id)
-        await session.commit()
-    except Exception:
-        logger.exception("record last_sheet_id failed player=%s sheet=%s", player.uuid, sheet_id)
+    ordered = sort_sheet_rows(rows_with_names, set(viewer.uuids), my_row_ids)
+    # 会话有来源玩家才记 last_sheet（player-less 托管账号跳过）；
+    # viewer.player 已由 M1 复验顺手加载，免二次查询
+    if viewer.player is not None:
+        try:
+            await set_last_sheet(session, viewer.player, sheet_id)
+            await session.commit()
+        except Exception:
+            logger.exception(
+                "record last_sheet_id failed uuid=%s sheet=%s",
+                viewer.player.uuid,
+                sheet_id,
+            )
     return await _to_detail(
         session,
         sheet,
         ordered,
         owner_name,
         contributors_map,
-        viewer_uuids=account_uuids,
+        viewer_uuids=set(viewer.uuids),
     )
 
 
-@router.patch("/{sheet_id}", response_model=SheetDetail)
+@router.patch("/{sheet_id}", response_model=SheetDetail, summary="更新表（标题等）")
 async def patch_sheet(
     sheet_id: int,
     body: SheetPatchRequest,
@@ -220,7 +231,7 @@ async def patch_sheet(
     )
 
 
-@router.delete("/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除表")
 async def delete_sheet(
     sheet_id: int,
     session: AsyncSession = Depends(get_session),

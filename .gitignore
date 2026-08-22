@@ -55,3 +55,5 @@ backups/
 # 禁用的 SKILL
 .claude/skills/beautify-github-readme/
 .agents/skills/beautify-github-readme/
+
+.claude/tmp/

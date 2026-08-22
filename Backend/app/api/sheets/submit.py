@@ -40,7 +40,7 @@ router = APIRouter(prefix="")
 logger = logging.getLogger(__name__)
 
 
-@router.post("/{sheet_id}/submit-batch", response_model=BatchSubmitResult)
+@router.post("/{sheet_id}/submit-batch", response_model=BatchSubmitResult, summary="程序化批量提交（双鉴权）")
 async def submit_batch(
     sheet_id: int,
     body: BatchSubmitRequest,

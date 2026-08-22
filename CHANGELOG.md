@@ -15,7 +15,8 @@
 
 ### Added
 
-- _暂无_
+- **后端**：`ADMIN_*` 托管账号同步时绑定同名管理玩家（UUID 按 MC 离线模式确定性推导，`offline_player_uuid`）——登录 JWT 带 `active_uuid`，admin 可执行建项目/编辑等全部玩家级写操作（不再 `missing active_uuid`）；管理玩家为不可登录锚点（见 Security）。同名玩家已被其他账号绑定时不抢（告警回退只读形态）。
+- **后端**：OpenAPI 文档增强——鉴权头（`X-Service-Token` / `X-Player-UUID` / `X-Source-Id` / `Authorization`）声明为 security schemes（`/docs` 出现 Authorize 按钮）、全部端点补中文 `summary`、`/players` 路由补 `tags`；`Docs/architecture/api/*.md` 头部标注「HTTP 签名以运行时 `/openapi.json` 为准」，dev-cheatsheet 增 Swagger 速查。
 
 ### Changed
 
@@ -23,11 +24,14 @@
 
 ### Fixed
 
-- _暂无_
+- **后端**：施工 mod 源新增端点的审批人补 M1 复验——`active_uuid` 不再只解码，须仍属当前 admin 账号才记为审批人（玩家迁移到其他账号后旧 token 不冒名，不属则记 null）。
+- **后端**：`Backend/openapi.json` 工件再生成（补齐 655db5f 起 `/auth/login`、`/v1/scoring/admin/adjust` docstring 与版本号漂移），freeze 测试升全量相等断言（工件与运行时 spec 任一漂移即失败）。
+- **后端/前端**：修复 player-less 托管管理账号（`ADMIN_*` env）登录后访问「个人信息」「施工管理」被 401 `missing active_uuid` 踢回登录页（#74）——admin 端点鉴权升 account 级 JWT（`require_role` 不再要求绑定玩家，admin ≠ service-token）；`GET /me` 对无玩家账号返回 `active_uuid=null`；`/auth/refresh` 放行无玩家账号续签（有玩家却无 claim 的旧格式 token 仍拒绝）；`GET /sheets` 列表/详情/协管员列表与 `GET /v1/construction/{id}/progress` 对无玩家账号开放只读浏览（写端点仍需玩家身份）。前端配套：401 `missing active_uuid` 不再清会话/跳登录（页面 toast）、Me.vue 玩家专属卡片仅在有绑定身份时加载渲染、续签接受 `player=null`。`Backend/openapi.json` 工件再生成（连带补齐 v0.7.0 以来的签名漂移）。
+- **部署**：web（nginx）`location /` 缺 `Cache-Control: no-cache`——浏览器对 index.html 启发式缓存，发版后可能继续跑旧 bundle 引用旧 chunk（`/assets/` 一年 immutable），表现为「改了代码浏览器行为不变」；容器版 `Frontend/nginx.conf` 与 host 模板 `Deploy/Nginx/pchsystem.host.conf.example` 同步补头。dev-cheatsheet 增「VS Code 端口转发 / 宿主 vite dev 抢占 localhost 端口高于 docker 通配映射」排错条目。
 
 ### Security
 
-- _暂无_
+- **后端**：`ADMIN_*` 托管账号的同名管理玩家改为不可登录锚点（`whitelist_state` 一律 `removed`）——阻断「任何人以 ADMIN_USERNAME 同名进离线服 → `!!PCH login` → `/auth/exchange` 无密码换 owner JWT」提权链（`/auth/token` 对 removed 玩家 403）；面板密码登录与玩家级写操作不受影响，历史同步产物与同名未绑定玩家挂靠时同步收回并告警。
 
 ---
 

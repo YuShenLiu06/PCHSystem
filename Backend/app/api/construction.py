@@ -14,8 +14,11 @@
 - ``POST /source/switch-self`` —— 玩家切自己上报模式（D9）
 - ``GET /source/me`` —— 玩家查活跃源 + 历史
 
-权限（R-9/RS-2）：admin 端点挂 ``require_role("admin")``（后端真实拒绝 403）；
-report 走专用 ``get_construction_reporter``；其余任意登录玩家可读。
+权限（R-9/RS-2）：admin 端点挂 ``require_role("admin")``（account 级 JWT，
+仅 Bearer、admin ≠ service-token、无绑定玩家的托管账号可用，issue #74；
+后端真实拒绝 403）；report 走专用 ``get_construction_reporter``；
+``/{sheet_id}/progress`` 走 ``get_current_viewer``（player-less 托管账号可浏览）；
+其余任意登录玩家可读。
 """
 import logging
 import uuid
@@ -25,15 +28,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    ViewerIdentity,
     get_active_uuid,
+    get_active_uuid_optional,
     get_construction_reporter,
     get_current_player,
+    get_current_viewer,
     require_role,
     require_service_token,
 )
 from app.core.db import get_session
 from app.models.sheet import Sheet
-from app.models.user import Player
+from app.models.user import Player, WebAccount
 from app.repositories import construction_repo, player_repo
 from app.schemas.construction import (
     ActiveByUuidsRequest,
@@ -67,7 +73,7 @@ router = APIRouter(prefix="/v1/construction", tags=["construction"])
 # 上报 + 归因查询
 # ===========================================================================
 
-@router.post("/report", response_model=PlacementReportResult)
+@router.post("/report", response_model=PlacementReportResult, summary="方块净放置批量上报（双通道鉴权，严格单源）")
 async def report_placements(
     body: PlacementReport,
     session: AsyncSession = Depends(get_session),
@@ -96,7 +102,7 @@ async def report_placements(
     return result
 
 
-@router.get("/active-sheets", response_model=ActiveSheetsResult)
+@router.get("/active-sheets", response_model=ActiveSheetsResult, summary="上报归属查询（活跃施工表）")
 async def get_active_sheets(
     _player: Player = Depends(get_current_player),
     session: AsyncSession = Depends(get_session),
@@ -109,18 +115,18 @@ async def get_active_sheets(
 # admin 设置
 # ===========================================================================
 
-@router.get("/settings", response_model=ConstructionSettings)
+@router.get("/settings", response_model=ConstructionSettings, summary="施工设置读取（admin）")
 async def get_settings(
-    _admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> ConstructionSettings:
     return await construction_repo.get_settings_snapshot(session)
 
 
-@router.patch("/settings", response_model=ConstructionSettings)
+@router.patch("/settings", response_model=ConstructionSettings, summary="施工设置更新（admin）")
 async def patch_settings(
     body: ConstructionSettingsUpdate,
-    _admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> ConstructionSettings:
     result = await construction_repo.update_settings(session, body)
@@ -132,9 +138,9 @@ async def patch_settings(
 # admin 白名单
 # ===========================================================================
 
-@router.get("/mod-sources", response_model=list[ServerModSourceEntry])
+@router.get("/mod-sources", response_model=list[ServerModSourceEntry], summary="服务端 mod 源白名单列表（admin）")
 async def list_mod_sources(
-    _admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> list[ServerModSourceEntry]:
     rows = await construction_repo.list_server_mod_sources(session)
@@ -151,15 +157,34 @@ async def list_mod_sources(
 
 
 @router.post(
-    "/mod-sources", response_model=ServerModSourceEntry, status_code=status.HTTP_201_CREATED
+    "/mod-sources",
+    response_model=ServerModSourceEntry,
+    status_code=status.HTTP_201_CREATED,
+    summary="新增服务端 mod 源（admin）",
 )
 async def create_mod_source(
     body: ServerModSourceCreate,
-    admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
+    approver_uuid: uuid.UUID | None = Depends(get_active_uuid_optional),
     session: AsyncSession = Depends(get_session),
 ) -> ServerModSourceEntry:
+    # 审批人 = 会话来源玩家 UUID；player-less 托管账号（admin 面板）→ None
+    # （列本就可空，审计另有 jwt-account 请求日志）。M1 复验：
+    # get_active_uuid_optional 只解码不校验归属，须确认 active_uuid 仍属
+    # _admin 账号（防玩家迁到别的账号后旧 token 继续冒充审批人），不属则 None。
+    if approver_uuid is not None:
+        bound = (
+            await session.execute(
+                select(Player).where(
+                    Player.uuid == approver_uuid,
+                    Player.web_account_id == _admin.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if bound is None:
+            approver_uuid = None
     row = await construction_repo.create_server_mod_source(
-        session, name=body.name, approved_by_uuid=admin.uuid, notes=body.notes
+        session, name=body.name, approved_by_uuid=approver_uuid, notes=body.notes
     )
     await session.commit()
     return ServerModSourceEntry(
@@ -171,11 +196,11 @@ async def create_mod_source(
     )
 
 
-@router.patch("/mod-sources/{name}", response_model=ServerModSourceEntry)
+@router.patch("/mod-sources/{name}", response_model=ServerModSourceEntry, summary="启停服务端 mod 源（admin）")
 async def toggle_mod_source(
     name: str,
     body: ServerModSourceToggle,
-    _admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> ServerModSourceEntry:
     """逐源启停（迭代 3 卡片开关）。不存在 → 404。"""
@@ -194,10 +219,10 @@ async def toggle_mod_source(
     )
 
 
-@router.delete("/mod-sources/{name}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/mod-sources/{name}", status_code=status.HTTP_204_NO_CONTENT, summary="删除服务端 mod 源（admin）")
 async def delete_mod_source(
     name: str,
-    _admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     deleted = await construction_repo.delete_server_mod_source(session, name)
@@ -210,10 +235,10 @@ async def delete_mod_source(
 # 切源（D9）
 # ===========================================================================
 
-@router.post("/source/switch-server", response_model=SourceState)
+@router.post("/source/switch-server", response_model=SourceState, summary="管理员切换玩家上报源（admin）")
 async def switch_server_source(
     body: SourceSwitchServerRequest,
-    _admin: Player = Depends(require_role("admin")),
+    _admin: WebAccount = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> SourceState:
     """admin 切某玩家服务端源（mcdr→official / server_mod→白名单内 source_id）。"""
@@ -242,7 +267,7 @@ async def switch_server_source(
     return state
 
 
-@router.post("/source/switch-self", response_model=SourceState)
+@router.post("/source/switch-self", response_model=SourceState, summary="玩家自助切换上报源（JWT）")
 async def switch_self_source(
     body: SourceSwitchSelfRequest,
     player_uuid: uuid.UUID = Depends(get_active_uuid),
@@ -272,7 +297,7 @@ async def switch_self_source(
     return state
 
 
-@router.get("/source/me", response_model=SourceMeResult)
+@router.get("/source/me", response_model=SourceMeResult, summary="我的上报源状态（含休眠源）")
 async def get_source_me(
     player_uuid: uuid.UUID = Depends(get_active_uuid),
     session: AsyncSession = Depends(get_session),
@@ -280,7 +305,7 @@ async def get_source_me(
     return await construction_repo.get_source_me(session, player_uuid)
 
 
-@router.get("/me/reports", response_model=list[MyReportHistoryItem])
+@router.get("/me/reports", response_model=list[MyReportHistoryItem], summary="我的上报记录")
 async def get_my_reports(
     limit: int = Query(default=50, ge=1, le=200, description="最近 N 条上报事件"),
     player: Player = Depends(get_current_player),
@@ -298,7 +323,7 @@ async def get_my_reports(
     )
 
 
-@router.get("/me/report-events", response_model=list[ReportEventItem])
+@router.get("/me/report-events", response_model=list[ReportEventItem], summary="我的上报事件流水（含 skip 原因）")
 async def get_my_report_events(
     limit: int = Query(default=50, ge=1, le=200, description="最近 N 条上报事件流水"),
     player: Player = Depends(get_current_player),
@@ -323,7 +348,7 @@ async def get_my_report_events(
 # （下方）之前注册，避免被 ``{sheet_id}`` 路径参数吞没（仿 ``/me/reports`` 前置）。
 # ===========================================================================
 
-@router.get("/me/construction", response_model=MyConstructionResult)
+@router.get("/me/construction", response_model=MyConstructionResult, summary="查询我的活跃施工加入")
 async def get_my_construction(
     player: Player = Depends(get_current_player),
     session: AsyncSession = Depends(get_session),
@@ -367,7 +392,7 @@ async def _assert_sheet_joinable(
     return sheet
 
 
-@router.post("/me/join", response_model=MyConstructionResult)
+@router.post("/me/join", response_model=MyConstructionResult, summary="加入施工")
 async def join_construction(
     body: JoinRequest,
     player: Player = Depends(get_current_player),
@@ -412,7 +437,7 @@ async def join_construction(
     )
 
 
-@router.post("/me/switch", response_model=MyConstructionResult)
+@router.post("/me/switch", response_model=MyConstructionResult, summary="切换施工项目")
 async def switch_construction(
     body: SwitchRequest,
     player: Player = Depends(get_current_player),
@@ -461,7 +486,7 @@ async def switch_construction(
     )
 
 
-@router.post("/me/leave", response_model=MyConstructionResult)
+@router.post("/me/leave", response_model=MyConstructionResult, summary="退出施工")
 async def leave_construction(
     player: Player = Depends(get_current_player),
     session: AsyncSession = Depends(get_session),
@@ -476,7 +501,7 @@ async def leave_construction(
     return MyConstructionResult(active=ParticipantState())
 
 
-@router.post("/active-by-uuids", response_model=ActiveByUuidsResult)
+@router.post("/active-by-uuids", response_model=ActiveByUuidsResult, summary="批量 UUID→sheet_id（tracker 按玩家路由）")
 async def get_active_by_uuids(
     body: ActiveByUuidsRequest,
     _ok: None = Depends(require_service_token),
@@ -494,10 +519,10 @@ async def get_active_by_uuids(
 # 进度查询（放最后，避免 {sheet_id} 与上方字面路由歧义）
 # ===========================================================================
 
-@router.get("/{sheet_id}/progress", response_model=ConstructionProgress)
+@router.get("/{sheet_id}/progress", response_model=ConstructionProgress, summary="施工进度（材料完成度 + 时间线）")
 async def get_construction_progress(
     sheet_id: int,
-    _player: Player = Depends(get_current_player),
+    _viewer: ViewerIdentity = Depends(get_current_viewer),
     session: AsyncSession = Depends(get_session),
 ) -> ConstructionProgress:
     exists = (

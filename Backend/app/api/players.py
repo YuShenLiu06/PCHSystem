@@ -14,10 +14,10 @@ from app.models.user import Player
 from app.repositories import player_repo, web_account_repo
 from app.schemas.player import PlayerBrief
 
-router = APIRouter()
+router = APIRouter(tags=["players"])
 
 
-@router.get("/players", response_model=list[PlayerBrief])
+@router.get("/players", response_model=list[PlayerBrief], summary="玩家联想（名/昵称前缀）")
 async def search_players(
     q: str = Query(default="", description="玩家名 / 昵称前缀（大小写不敏感，至少 1 字符）"),
     limit: int = Query(default=10, ge=1, le=20),
