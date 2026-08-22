@@ -122,7 +122,7 @@ docker compose exec backend pytest                  # 容器内跑测试
 
 ## 前端 Vue3（Vite）
 
-> 前端**不在 docker 里跑**（compose 只含 postgres + backend），开发时宿主机直接 `npm run dev`，依赖 Vite HMR。
+> 两种工作流二选一：宿主 `npm run dev`（HMR，联调首选）或 compose web 服务（`.env` 的 `COMPOSE_PROFILES=web` 激活，nginx 托管 `Frontend/dist` + 反代 `/api`，验生产 bundle 用）。
 > 完整流程 / 排错见 [`../../Frontend/CLAUDE.md`](../../Frontend/CLAUDE.md) §6。
 
 ### 启动 / 构建
@@ -145,7 +145,8 @@ cd Frontend && npx vitest             # 跑单测（package.json 无 test script
 > - **改 `vite.config.ts` / `package.json` 不热重载**：需 Ctrl+C 重启 dev server（HMR 只覆盖 `.vue` / `.ts` 源码）。
 > - **后台 dev server 停不掉时**：`lsof -ti :5173 | xargs -r kill`（或停掉拉起它的后台任务）。
 > - **外部域名访问被 Vite 拦截**（`Blocked request. This host (...) is not allowed.`）：经反代 / tunnel 域名（如 `dev-git.xxx.nyat.app`）访问 dev server 时，需在 `vite.config.ts` 的 `server.allowedHosts` 显式加该域名（防 DNS rebinding）；改 config 不热重载，需重启 dev server。
+> - **⚠️ localhost 端口被旁路抢夺（症状：改了代码 / 换栈后浏览器行为不变，backend 日志无对应请求）**：VS Code 端口转发（Remote/Docker 会话自动转发，精确绑 `127.0.0.1:<port>`）与宿主 vite dev（绑 `[::1]:5173`）**优先级都高于 docker 的通配 `*:5173/:8000` 映射**——浏览器 `localhost` 流量进的是旁路而非 docker 栈。排查 `lsof -nP -iTCP:5173 -iTCP:8000 -sTCP:LISTEN`，清旁路（VS Code 底部 PORTS 面板对 5173/8000 Stop Forwarding；`lsof -ti :5173 | xargs -r kill` 杀 vite）后 `curl -s localhost:5173/ | grep -oE 'index-[A-Za-z0-9]+\.js'` 比对 bundle hash 确认命中 docker 栈产物。
 
 ---
 
-*最后更新：2026-07-21*
+*最后更新：2026-08-22*

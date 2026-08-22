@@ -24,6 +24,7 @@
 ### Fixed
 
 - **后端/前端**：修复 player-less 托管管理账号（`ADMIN_*` env）登录后访问「个人信息」「施工管理」被 401 `missing active_uuid` 踢回登录页（#74）——admin 端点鉴权升 account 级 JWT（`require_role` 不再要求绑定玩家，admin ≠ service-token）；`GET /me` 对无玩家账号返回 `active_uuid=null`；`/auth/refresh` 放行无玩家账号续签（有玩家却无 claim 的旧格式 token 仍拒绝）；`GET /sheets` 列表/详情/协管员列表与 `GET /v1/construction/{id}/progress` 对无玩家账号开放只读浏览（写端点仍需玩家身份）。前端配套：401 `missing active_uuid` 不再清会话/跳登录（页面 toast）、Me.vue 玩家专属卡片仅在有绑定身份时加载渲染、续签接受 `player=null`。`Backend/openapi.json` 工件再生成（连带补齐 v0.7.0 以来的签名漂移）。
+- **部署**：web（nginx）`location /` 缺 `Cache-Control: no-cache`——浏览器对 index.html 启发式缓存，发版后可能继续跑旧 bundle 引用旧 chunk（`/assets/` 一年 immutable），表现为「改了代码浏览器行为不变」；容器版 `Frontend/nginx.conf` 与 host 模板 `Deploy/Nginx/pchsystem.host.conf.example` 同步补头。dev-cheatsheet 增「VS Code 端口转发 / 宿主 vite dev 抢占 localhost 端口高于 docker 通配映射」排错条目。
 
 ### Security
 
