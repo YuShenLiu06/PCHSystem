@@ -585,10 +585,15 @@ run_step() {
 # ============================================================
 # MCDR 拓扑推断
 # ============================================================
+# 路径是否为 docker named volume 挂载点形态（MCDR 容器化部署的启发式）
+mcdr_is_docker_volume_path() {
+    [[ "$1" == *"/var/lib/docker/volumes/"* || "$1" == *"/docker/volumes/"* ]]
+}
+
 # detect_mcdr_topology <mcdr_root>: 按 MCDR 路径形态推断后端 api_url 默认值
 detect_mcdr_topology() {
     local root=$1
-    if [[ "$root" == *"/var/lib/docker/volumes/"* || "$root" == *"/docker/volumes/"* ]]; then
+    if mcdr_is_docker_volume_path "$root"; then
         # MCDR 数据在 docker named volume 挂载点 → 假设与 backend 同网络，用服务名
         echo "http://pchsystem-backend-1:8000"
     else
@@ -626,6 +631,18 @@ mcdr_dep_plugin_patterns() {
         chest_scanner_lib)  echo '*chest_scanner_lib*' ;;
         uuid_api_remake)    echo '*uuid_api_remake*' ;;
         minecraft_data_api) echo '*MinecraftDataAPI* *minecraft_data_api*' ;;
+        *) return 1 ;;
+    esac
+}
+
+# 插件 id → GitHub 仓库（owner/name）。老方案 fallback 直连各仓库 Releases 下载 .mcdr。
+# 映射与官方插件目录 PluginCatalogue 的 plugins/<id>/plugin_info.json repository 字段一致
+# （https://docs.mcdreforged.com/en/latest/plugin_dev/plugin_catalogue.html）
+mcdr_dep_plugin_repos() {
+    case "$1" in
+        chest_scanner_lib)  echo 'YuShenLiu06/mcdr-chest-scanner' ;;
+        uuid_api_remake)    echo 'gubaiovo/MCDR_uuid_api_remake' ;;
+        minecraft_data_api) echo 'Fallen-Breath/MinecraftDataAPI' ;;
         *) return 1 ;;
     esac
 }
@@ -693,18 +710,185 @@ mcdr_missing_dep_plugins() {
     done
 }
 
+# ---- 无 pim CLI 时的老方案 fallback（issue #73）----
+# 场景：MCDR 容器化部署（宿主机无 mcdreforged CLI）或 venv 未激活。
+# 老方案 = 直连各插件 GitHub Releases 下载 .mcdr 放入 plugins/，
+# Python 依赖不自动装（.mcdr 内 requirements.txt 需 pim pipi / 手动 pip），只给指引。
+# 返回码约定：0=成功；2=网络端点不可达（调用方可短路后续下载）；1=其余失败。
+
+# GitHub release 资产 URL 的镜像候选（直连优先，后接 PCH_GH_MIRRORS 重写，构造法同 pick_github_mirror）
+mcdr_gh_asset_url_candidates() {
+    local url=$1 entry rewrite insteadof
+    echo "$url"
+    for entry in "${PCH_GH_MIRRORS[@]}"; do
+        rewrite="${entry%|*}"; insteadof="${entry#*|}"
+        echo "${rewrite}${url#"${insteadof}"}"
+    done
+}
+
+# 单插件老方案下载：GitHub API releases/latest → 按 id glob 过滤资产 → curl 直下（镜像重试）→ zip 校验
+mcdr_download_dep_plugin_manual() {
+    local id=$1 plugins_dir=$2
+    local repo; repo=$(mcdr_dep_plugin_repos "$id") \
+        || { log_error "依赖插件 ${id} 无仓库映射（老方案不可用；新增依赖须同步 mcdr_dep_plugin_repos），需手动安装"; return 1; }
+
+    command -v curl >/dev/null 2>&1 \
+        || { log_error "缺少 curl，老方案下载不可用；请安装 curl 后重跑"; return 1; }
+
+    local api_url="https://api.github.com/repos/${repo}/releases/latest"
+    local api_timeout=30 dl_timeout=300
+    local resp
+    resp=$(curl -fsSL --max-time "$api_timeout" "$api_url" 2>/dev/null) \
+        || { log_error "获取 ${repo} release 信息失败（api.github.com 不可达或被限速；注意 API 域不走镜像）；手动下载: https://github.com/${repo}/releases/latest"; return 2; }
+
+    # 解析资产清单为「名称<TAB>下载URL」行（jq 优先，python3 回落；均无则无法继续）
+    local asset_lines
+    asset_lines=$(
+        if command -v jq >/dev/null 2>&1; then
+            jq -r '.assets[] | select(.name | endswith(".mcdr") or endswith(".pyz")) | "\(.name)\t\(.browser_download_url)"' <<<"$resp"
+        elif command -v python3 >/dev/null 2>&1; then
+            python3 -c '
+import json, sys
+for a in json.load(sys.stdin).get("assets", []):
+    if a.get("name", "").endswith((".mcdr", ".pyz")):
+        print(a["name"] + "\t" + a["browser_download_url"])
+' <<<"$resp"
+        else
+            exit 1
+        fi
+    ) || { log_error "解析 ${repo} release 资产失败（jq / python3 均不可用？）"; return 1; }
+
+    # 官方目录约定每个 release 恰一个 .mcdr 资产；再按插件 id glob 收敛，防下错。
+    # 双格式分发（.mcdr + .pyz 同发）时优先唯一 .mcdr
+    local -a matched=()
+    local name url
+    while IFS=$'\t' read -r name url; do
+        [[ -n "$name" ]] || continue
+        mcdr_file_matches_plugin "$name" "$id" && matched+=("${name}"$'\t'"${url}")
+    done <<<"$asset_lines"
+    if ((${#matched[@]} > 1)); then
+        local -a mcdr_only=()
+        while IFS=$'\t' read -r name url; do
+            [[ "$name" == *.mcdr ]] && mcdr_only+=("${name}"$'\t'"${url}")
+        done < <(printf '%s\n' "${matched[@]}")
+        ((${#mcdr_only[@]} == 1)) && matched=("${mcdr_only[0]}")
+    fi
+    ((${#matched[@]} == 1)) || {
+        log_error "${repo} latest release 无匹配 ${id} 的 .mcdr 资产（或多个歧义）；手动下载: https://github.com/${repo}/releases/latest"
+        return 1
+    }
+    IFS=$'\t' read -r name url <<<"${matched[0]}"
+
+    # 资产名守门：白名单字符集，防路径逃逸（API 字段属外部输入，仓库可信也守边界）
+    [[ "$name" =~ ^[A-Za-z0-9._+-]+$ ]] || { log_error "${repo} 资产名异常: ${name}（拒绝落盘）"; return 1; }
+
+    # 原子落盘：先下 .part 再 mv，防中断留半截文件被文件名 glob 判「已装」（MCDR 热加载窗口同理）
+    local dest="${plugins_dir}/${name}" part="${plugins_dir}/.${name}.part" cand dl_ok=1
+    for cand in $(mcdr_gh_asset_url_candidates "$url"); do
+        if curl -fsSL --max-time "$dl_timeout" -o "$part" "$cand"; then
+            dl_ok=0
+            break
+        fi
+        rm -f "$part"
+    done
+    if [[ $dl_ok -ne 0 ]]; then
+        rm -f "$part"
+        log_error "下载 ${name} 失败（直连与镜像均不可达）；手动下载: ${url}"
+        return 2
+    fi
+    mv -f "$part" "$dest" || { rm -f "$part"; log_error "落盘失败: ${dest}"; return 1; }
+
+    # 完整性校验：.mcdr 是 zip，根级 mcdreforged.plugin.json 的 id 必须匹配（防错包）
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$dest" "$id" <<'PY' || { rm -f "$dest"; log_error "${name} 校验失败（损坏或 id 不符）"; return 1; }
+import json, sys, zipfile
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        meta = json.loads(z.read("mcdreforged.plugin.json"))
+except Exception:
+    print("压缩包损坏或缺少 mcdreforged.plugin.json")
+    sys.exit(1)
+if meta.get("id") != sys.argv[2]:
+    print(f"插件 id 不符: {meta.get('id')} != {sys.argv[2]}")
+    sys.exit(1)
+PY
+    else
+        log_warn "无 python3，跳过 ${name} 完整性校验"
+    fi
+    log_info "老方案下载完成: ${dest}"
+}
+
+# 老方案落盘后的 Python 依赖指引（两种部署形态都给 docker exec 与 venv 两条路：
+# 路径启发式只认 named volume，bind-mount 容器化会落入「裸进程」分支，故不能只给一条）
+mcdr_manual_pip_hint() {
+    local plugins_dir=$1
+    log_warn "老方案只落盘 .mcdr，各插件 requirements.txt 的 Python 依赖未自动安装（该提醒仅本次输出），装齐并 reload 前 pch_system 无法加载："
+    if mcdr_is_docker_volume_path "$plugins_dir"; then
+        log_info "MCDR 容器化部署（容器内有 mcdreforged CLI），在宿主机执行（容器名 / 容器内路径按实际调整）："
+    else
+        log_info "若为裸进程部署：激活 MCDR 所用 Python 环境后执行 mcdreforged pim pipi ${plugins_dir}/*.mcdr"
+        log_info "（或解包各 .mcdr 的 requirements.txt 后 python -m pip install -r）"
+        log_info "若 MCDR 跑在容器（含 bind-mount 挂载），在宿主机执行（容器名 / 容器内路径按实际调整）："
+    fi
+    log_info "  docker exec <MCDR容器> sh -c 'mcdreforged pim pipi <容器内>/plugins/*.mcdr'"
+}
+
+# 老方案批量补装（$1=plugins 目录, $2=缺失 id 列表）：逐 id 下载 → 复检 → pip 指引
+mcdr_install_dep_plugins_manual() {
+    local plugins_dir=$1 missing=$2
+    if mcdr_is_docker_volume_path "$plugins_dir"; then
+        log_warn "MCDR 容器化部署，宿主机无 mcdreforged CLI，无法走 pim（issue #73），回退老方案直连 GitHub Releases"
+    else
+        log_warn "宿主机未找到 mcdreforged CLI（PATH / venv 未激活？），回退老方案直连 GitHub Releases"
+    fi
+
+    local id repo rc fail=0 net_dead=0
+    for id in $missing; do
+        mcdr_download_dep_plugin_manual "$id" "$plugins_dir"
+        rc=$?
+        [[ $rc -eq 2 ]] && { net_dead=1; break; }  # 端点已死，后续必败不再空等
+        [[ $rc -ne 0 ]] && fail=1
+    done
+
+    # pim 老教训同款：按 id 逐个复检，缺一即报并列出对应 Releases 页
+    local still_missing; still_missing=$(mcdr_missing_dep_plugins "$plugins_dir")
+    if [[ -n "$still_missing" ]]; then
+        # 部分成功时，已落盘插件的 pip 指引不能丢（文件名 glob 判「已装」，下次不会再提示）
+        [[ $missing != "$still_missing" ]] && mcdr_manual_pip_hint "$plugins_dir"
+        log_error "老方案下载后依赖插件仍缺失: ${still_missing}；请手动下载 .mcdr 放入 ${plugins_dir}/："
+        for id in $still_missing; do
+            if repo=$(mcdr_dep_plugin_repos "$id"); then
+                log_error "  https://github.com/${repo}/releases/latest"
+            else
+                log_error "  ${id}: 无仓库映射，请在 MCDR 官方插件目录检索"
+            fi
+        done
+        return 1
+    fi
+    [[ $fail -eq 0 && $net_dead -eq 0 ]] || return 1
+
+    mcdr_manual_pip_hint "$plugins_dir"
+    log_info "缺失依赖插件已按老方案落盘到 ${plugins_dir}/（游戏内执行 !!MCDR reload plugin 生效）"
+}
+
 # 自动补装缺失的依赖插件（幂等、无交互）。install.sh 与 update.sh 共用：
 # update 每次执行都调本函数，兜底老部署升级断裂——旧 update.sh 无 pim 逻辑，
 # 升到声明新依赖的版本后（如 v0.10.0 的 chest_scanner_lib），pch_system 会因
 # 依赖校验失败被 MCDR 卸载（重启也无效），必须补装依赖后 reload 才恢复。
-# 返回 0=已齐或补装成功；1=失败（调用方提示手动恢复，不阻断其余更新步骤）
+# 宿主机有 pim CLI → pim download + pipi；无（如 MCDR 容器化，issue #73）→
+# 老方案 fallback：直连 GitHub Releases 落盘 .mcdr + Python 依赖手动指引。
+# 返回 0=已齐或 .mcdr 补装成功（pip 欠账已警告）；1=失败（调用方提示手动恢复，不阻断其余更新步骤）
 mcdr_install_dep_plugins() {
     local plugins_dir=$1
     local missing; missing=$(mcdr_missing_dep_plugins "$plugins_dir")
     [[ -z "$missing" ]] && { log_info "MCDR 依赖插件已齐备"; return 0; }
 
     log_warn "缺失 MCDR 依赖插件: ${missing}（pch_system 依赖校验将失败被卸载，自动补装）"
-    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
+    local pim_cmd
+    if ! pim_cmd=$(mcdr_pim_cmd); then
+        mcdr_install_dep_plugins_manual "$plugins_dir" "$missing"
+        return $?
+    fi
     "$pim_cmd" pim download $missing -o "$plugins_dir" \
         || { log_error "pim download 失败（网络 / 插件目录不可达？）"; return 1; }
 

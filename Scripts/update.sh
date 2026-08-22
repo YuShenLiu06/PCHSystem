@@ -391,7 +391,7 @@ ensure_dep_plugins() {
     local mcdr_root; mcdr_root="${MCDR_ROOT_OVERRIDE:-$(cfg_get PCH_MCDR_ROOT)}"
     [[ -n "$mcdr_root" && -d "$mcdr_root/plugins" ]] || { log_info "未配置 MCDR 根目录，跳过依赖插件检查"; return 0; }
     mcdr_install_dep_plugins "$mcdr_root/plugins" \
-        || log_error "依赖插件补装失败，请手动执行: mcdreforged pim download <缺失插件id> -o ${mcdr_root}/plugins && mcdreforged pim pipi <对应 .mcdr>"
+        || log_error "依赖插件补装失败；手动恢复：下载缺失插件 .mcdr 放入 ${mcdr_root}/plugins/ 并装其 Python 依赖（各仓库 Releases 链接见 Scripts/README.md §7）"
 }
 
 upgrade_dep_plugins() {
@@ -403,16 +403,35 @@ upgrade_dep_plugins() {
     local plugins_dir="$mcdr_root/plugins"
     [[ -d "$plugins_dir" ]] || { log_warn "MCDR 根目录无效: ${mcdr_root}（跳过依赖插件升级）"; return 0; }
 
-    local pim_cmd; pim_cmd=$(mcdr_pim_cmd) || { mcdr_pim_missing; return 1; }
+    local pim_cmd
+    if ! pim_cmd=$(mcdr_pim_cmd); then
+        # issue #73：宿主机无 pim CLI（如 MCDR 容器化），升级同样回退老方案直连 GitHub Releases
+        if mcdr_is_docker_volume_path "$plugins_dir"; then
+            log_warn "宿主机无 mcdreforged CLI（MCDR 容器化，issue #73），--upgrade-plugins 回退老方案直连 GitHub Releases"
+        else
+            log_warn "宿主机未找到 mcdreforged CLI（PATH / venv 未激活？），--upgrade-plugins 回退老方案直连 GitHub Releases"
+        fi
+    fi
     local tmp; tmp=$(mktemp -d)
     # RETURN trap 不会随函数返回自动撤销——不自清则 main() 返回时再次触发，
     # $tmp 越作用域 → set -u 下 unbound variable 中止（E2E --upgrade-plugins 实测抓到）
     trap 'rm -rf "$tmp"; trap - RETURN' RETURN
 
-    log_step "升级 MCDR 依赖插件（pim latest）"
-    # shellcheck disable=SC2046  # 故意分词：id 列表逐个传参
-    "$pim_cmd" pim download $(mcdr_dep_plugin_ids) -o "$tmp" \
-        || { log_error "pim download 失败（网络 / 插件目录不可达？）"; return 1; }
+    log_step "升级 MCDR 依赖插件（latest）"
+    if [[ -n "$pim_cmd" ]]; then
+        # shellcheck disable=SC2046  # 故意分词：id 列表逐个传参
+        "$pim_cmd" pim download $(mcdr_dep_plugin_ids) -o "$tmp" \
+            || { log_error "pim download 失败（网络 / 插件目录不可达？）"; return 1; }
+    else
+        local id rc upfail=0
+        for id in $(mcdr_dep_plugin_ids); do
+            mcdr_download_dep_plugin_manual "$id" "$tmp"
+            rc=$?
+            [[ $rc -eq 2 ]] && { log_error "GitHub 端点不可达，中止后续下载（见上方手动链接）"; return 1; }
+            [[ $rc -ne 0 ]] && upfail=1
+        done
+        ((upfail)) && { log_error "老方案下载失败（手动链接见上方输出）"; return 1; }
+    fi
     # pim 对部分失败静默 exit 0（如目录无效 / 网络断），退出码拦不住，须校验产物存在
     local -a downloaded=("$tmp"/*)
     if (( ${#downloaded[@]} == 0 )) || [[ ! -e "${downloaded[0]}" ]]; then
@@ -445,11 +464,15 @@ upgrade_dep_plugins() {
     done
 
     ((${#changed[@]})) || { log_info "依赖插件均为最新，无需变更"; return 0; }
-    mcdr_pim_pipi "${changed[@]}" || { log_error "pim pipi 失败"; return 1; }
+    if [[ -n "$pim_cmd" ]]; then
+        mcdr_pim_pipi "${changed[@]}" || { log_error "pim pipi 失败"; return 1; }
+    else
+        mcdr_manual_pip_hint "$plugins_dir"
+    fi
     # pim 对部分失败静默 exit 0：按 id 逐个复检兜底
     local missing_after; missing_after=$(mcdr_missing_dep_plugins "$plugins_dir")
     [[ -z "$missing_after" ]] || { log_error "升级后仍缺失依赖插件（pim 部分失败）: ${missing_after}。请手动补装或稍后重跑"; return 1; }
-    log_info "已升级: ${changed[*]}（游戏内执行 !!MCDR reload plugin 生效）"
+    log_info "已升级: ${changed[*]}（Python 依赖见上方指引；游戏内执行 !!MCDR reload plugin 生效）"
 }
 
 main() {

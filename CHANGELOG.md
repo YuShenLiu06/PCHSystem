@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- _暂无_
+- **部署脚本（运维）**：MCDR 容器化部署（宿主机无 `mcdreforged` CLI）时依赖插件补装必败（[#73](https://github.com/YuShenLiu06/PCHSystem/issues/73)）。现 pim 不可用时，补装与 `--upgrade-plugins` 的下载环节回退老方案：直连各插件 GitHub Releases（资产下载失败自动试 `PCH_GH_MIRRORS` 镜像链）原子落盘 `.mcdr` 到 `plugins/`（zip 内 id 校验）；Python 依赖不自动装，按部署形态给 `docker exec … sh -c 'mcdreforged pim pipi …'` / venv 手动指引；失败输出对应 Releases 链接。
 
 ### Security
 

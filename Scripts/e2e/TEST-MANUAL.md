@@ -70,6 +70,7 @@ bash Scripts/install.sh --no-sync --yes \
 ```
 
 > `--no-sync` 用当前工作树（=sandbox-test 快照）；`--yes` 无人值守；`--mcdr-root` 跳过 MCDR 交互；`--mcdr-api-url` 指向沙盒 backend `:8100`（默认拓扑推断返回 `:8000`=生产，必须覆盖）。
+> 宿主机无 `mcdreforged` CLI 时 I-1 会真实联网下载依赖插件 .mcdr 到 `/tmp/fake-mcdr/plugins/`（issue #73 回退路径）；循环重测前先 `rm -f /tmp/fake-mcdr/plugins/*.mcdr` 清 fixture。
 
 ## I-2. install 验证（RUNBOOK 可执行清单，14 项）
 

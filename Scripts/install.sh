@@ -284,10 +284,10 @@ install_mcdr_dep_plugins() {
     [[ -z "$missing" ]] && { log_info "MCDR 依赖插件已齐备"; return 0; }
 
     log_warn "缺失 MCDR 依赖插件: ${missing}"
-    if ! confirm "调用 MCDR pim 自动安装（官方插件目录 + Python 依赖）？ [Y/n]" "y"; then
-        log_warn "已跳过自动安装，请手动执行:"
-        log_info "  mcdreforged pim download ${missing} -o ${plugins_dir}"
-        log_info "  mcdreforged pim pipi ${plugins_dir}/<对应 .mcdr 文件>"
+    if ! confirm "调用 MCDR pim 自动安装（无 CLI 时自动回退 GitHub Releases 老方案）？ [Y/n]" "y"; then
+        log_warn "已跳过自动安装，请手动处理:"
+        log_info "  有 mcdreforged CLI: mcdreforged pim download ${missing} -o ${plugins_dir} && mcdreforged pim pipi ${plugins_dir}/<对应 .mcdr>"
+        log_info "  无 CLI（如 MCDR 容器化）: 从各仓库 Releases 下载 .mcdr 放入 ${plugins_dir}/，Python 依赖见 Scripts/README.md §7"
         return 0
     fi
     # 失败降级为 warn：此时后端已起、迁移已跑，不应中止安装流程（否则部署状态不落盘、
