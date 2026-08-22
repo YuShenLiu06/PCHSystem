@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { passwordLogin } from '../../api/identity'
 import { resolveDisplayName } from '../../utils/identity'
 import { useAuthStore } from '../../stores/auth'
@@ -50,6 +50,16 @@ async function onLogin(): Promise<void> {
     loading.value = false
   }
 }
+
+/** 新玩家注册引导：账号身份锚在游戏内玩家，注册页仅经 !!PCH login 回链进入（无直达入口）。 */
+async function onRegister(): Promise<void> {
+  await ElMessageBox.alert(
+    '注册入口在游戏内：先在服务器聊天执行 !!PCH login，点击回执中最新的链接（每次签发会作废旧链接），'
+      + '系统自动建立账号并进入注册页，在那里设置用户名和密码。',
+    '新玩家注册',
+    { confirmButtonText: '知道了', type: 'info' },
+  ).catch(() => undefined) // 关闭即取消，无需处理
+}
 </script>
 
 <template>
@@ -88,6 +98,7 @@ async function onLogin(): Promise<void> {
         <el-form-item>
           <div class="pch-auth__actions">
             <el-button type="primary" :loading="loading" @click="onLogin">登录</el-button>
+            <el-button @click="onRegister">注册</el-button>
             <el-button text @click="router.push('/auth')">
               首次使用？游戏内 !!PCH login
             </el-button>
