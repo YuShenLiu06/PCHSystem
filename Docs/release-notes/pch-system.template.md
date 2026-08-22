@@ -25,7 +25,7 @@ bash Scripts/update.sh
 ## 依赖
 
 - **MCDReforged ≥ 2.14.0**
-- 插件依赖：`uuid_api_remake`、`minecraft_data_api`（`install.sh` 会检测并提示安装）
+- 插件依赖：`chest_scanner_lib`（硬依赖）、`uuid_api_remake`、`minecraft_data_api`——`install.sh` / `update.sh` 自动检测补装，无需手动下载
 - **PCHSystem 后端（必需）** + 前端（可选）：见上「首次部署」
 
 ## 破坏性变更
