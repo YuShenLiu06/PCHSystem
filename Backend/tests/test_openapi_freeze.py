@@ -1,5 +1,31 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 from app.main import create_app
+
+_FROZEN_SPEC = Path(__file__).resolve().parent.parent / "openapi.json"
+
+
+def _top_level_diff(live: dict, frozen: dict) -> str:
+    """汇总顶层差异 keys（仅 live / 仅 frozen / 值不同），供断言失败信息。"""
+    only_live = sorted(set(live) - set(frozen))
+    only_frozen = sorted(set(frozen) - set(live))
+    changed = sorted(k for k in set(live) & set(frozen) if live[k] != frozen[k])
+    return (
+        f"仅 live 有 {only_live}；仅 frozen 有 {only_frozen}；"
+        f"值不同 {changed}——请用 create_app().openapi() 再生成 openapi.json"
+    )
+
+
+def test_openapi_matches_frozen_artifact():
+    # Arrange — 运行时 spec vs 仓库冻结工件（注意 info.version 取自已安装
+    # 包元数据，改 pyproject version 后需 pip install -e . 并再生成工件）
+    live = create_app().openapi()
+    frozen = json.loads(_FROZEN_SPEC.read_text(encoding="utf-8"))
+
+    # Assert — 全量相等（docstring/summary/版本任一漂移都会被抓住）
+    assert live == frozen, _top_level_diff(live, frozen)
 
 
 def test_security_schemes_present():
