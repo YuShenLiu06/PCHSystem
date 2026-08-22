@@ -63,7 +63,7 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 - JWT 经 `POST /auth/exchange`（一次性 token → JWT pair）获取，详见 auth API。
 - **service-token + `X-Player-UUID` 代玩家写**：后端校验 service token 后用该 UUID 加载 `Player` 注入，下游 `_can_edit` / `claimant_uuid == player.uuid` 等 RBAC 完全复用，**与 JWT 写等价**。MCDR 无需管 JWT。
 - 权限以**后端 RBAC 为准**（红线 R-9）：前端按钮显隐只是 UX，真实拒绝是后端 403/409。
-- **player-less 托管账号浏览（issue #74）**：`GET /sheets`（列表）、`GET /sheets/{id}`（详情，含 csv）、`GET /sheets/{id}/managers` 用 account 级 `get_current_viewer`（双通道语义不变）——无绑定玩家的管理账号（JWT 无 `active_uuid`）也能只读浏览（`owner=me` 返回空集、无「我参与的行」高亮、不记 `last_sheet`）；**写端点仍需玩家身份**（player-less 调用 → 401 `missing active_uuid`，前端 toast 不登出）。注：`ADMIN_*` 托管账号现已默认绑定同名管理玩家（`offline_player_uuid` 推导，见 [`scoring.md`](./scoring.md) §5），登录即带 `active_uuid`、写端点可用；player-less 形态仅剩「撞名不抢绑」回退等场景。
+- **player-less 托管账号浏览（issue #74）**：`GET /sheets`、`GET /sheets/{id}`（含 csv）、`GET /sheets/{id}/managers` 用 account 级 `get_current_viewer`（双通道语义不变）——托管账号（JWT 无 `active_uuid`）只读浏览（`owner=me` 返回空集、无「我参与的行」高亮、不记 `last_sheet`）；**写端点仍需玩家身份**（player-less 调用 → 401 `missing active_uuid`，前端 toast 不登出）。`ADMIN_*` 托管账号已默认绑定同名管理玩家（`offline_player_uuid` 推导，见 [`scoring.md`](./scoring.md) §5），登录即带 `active_uuid`、写端点可用；player-less 仅剩「撞名不抢绑」回退等场景（同名玩家已被其他账号绑定时，告警回退只读）。
 
 ---
 

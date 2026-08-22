@@ -121,7 +121,7 @@
 
 ## 5. admin adjust（`POST /v1/scoring/admin/adjust`）
 
-管理员（服主）积分调控端点：**仅特权 JWT**（`require_privileged_access`）——`Authorization: Bearer <JWT>` 且 role ∈ {admin, owner}（积分管理面板通道；普通玩家 JWT → 403）。**admin ≠ service-token**：本端点不认 `X-Service-Token`（含正确值）→ 401 `missing authorization`——系统组件代玩家记账一律走 credit/debit，管理操作与管理面板绑定。面板账号经环境变量同步：`.env` 配 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（两者均非空才启用），后端启动 lifespan 幂等同步为 role=owner 的 WebAccount **并绑定同名管理玩家**（UUID 按 MC 离线模式确定性推导，`offline_player_uuid`；登录 JWT 带 `active_uuid`，可执行建项目等全部玩家级写操作；`sync_admin_account`，env 为该账号密码权威源，修改需重启 backend；未配置静默跳过），复用 `POST /auth/login` 登录。
+管理员（服主）积分调控端点：**仅特权 JWT**（`require_privileged_access`）——`Authorization: Bearer <JWT>` 且 role ∈ {admin, owner}（积分管理面板通道；普通玩家 JWT → 403）。**admin ≠ service-token**：本端点不认 `X-Service-Token`（含正确值）→ 401 `missing authorization`——系统组件代玩家记账一律走 credit/debit，管理操作与管理面板绑定。面板账号经环境变量同步：`.env` 配 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（两者均非空才启用），后端启动 lifespan 经 `sync_admin_account` 幂等同步为 role=owner 的 WebAccount **并绑定同名管理玩家**——UUID 按 MC 离线模式确定性推导（`offline_player_uuid`），登录 JWT 带 `active_uuid`，可执行建项目等全部玩家级写操作。env 为该账号密码权威源（修改需重启 backend；未配置静默跳过），登录复用 `POST /auth/login`。
 
 **与 credit/debit 的差异**（其余请求/响应结构、批量语义、skip_reason 全集、通知行为完全一致，复用 §3/§4 契约）：
 
