@@ -314,7 +314,7 @@ def _do_claim(server, player, sheet_id, row_id):
 | **MinecraftDataAPI** | 提供按玩家取完整背包 NBT（含潜影盒嵌套物品枚举、`registry_id` 提取），供 `!!PCH sheet submit` 一键提交使用 | <https://github.com/Fallen-Breath/MinecraftDataAPI> |
 | **uuid_api_remake** | 离线模式 UUID 推导（RS-8） | <https://github.com/gubaiovo/MCDR_uuid_api_remake> |
 
-> 三者均在 MCDR 官方插件目录收录，可经 `mcdreforged pim download <ids> -o <plugins>` + `pim pipi <files.mcdr>` 安装（自动装包内声明的 Python 依赖）；安装脚本（install.sh）已内置该流程。
+> 三者均在 MCDR 官方插件目录收录，可经 `mcdreforged pim download <ids> -o <plugins>` + `pim pipi <files.mcdr>` 安装（自动装包内声明的 Python 依赖）；安装脚本（install.sh / update.sh）已内置该流程，宿主机无 pim CLI（MCDR 容器化，issue #73）时自动回退直连 GitHub Releases 下载 .mcdr（Python 依赖手动，见 `Scripts/README.md` §7）。
 > MinecraftDataAPI 缺失时 `submit` 命令回执友好提示并降级（其他 sheets 命令不受影响）；chest_scanner_lib 缺失则 MCDR 加载期 DependencyWalker 直接拦截（dependencies 已声明）。
 
 ## 5. 所属数据表

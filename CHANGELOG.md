@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- **部署脚本（运维）**：MCDR 容器化部署（宿主机无 `mcdreforged` CLI）时依赖插件补装必败（[#73](https://github.com/YuShenLiu06/PCHSystem/issues/73)）。现 pim 不可用时，补装与 `--upgrade-plugins` 的下载环节回退老方案：直连各插件 GitHub Releases（资产下载失败自动试 `PCH_GH_MIRRORS` 镜像链）原子落盘 `.mcdr` 到 `plugins/`（zip 内 id 校验）；Python 依赖不自动装，按部署形态给 `docker exec … sh -c 'mcdreforged pim pipi …'` / venv 手动指引；失败输出对应 Releases 链接。
 - **后端**：施工 mod 源新增端点的审批人补 M1 复验——`active_uuid` 不再只解码，须仍属当前 admin 账号才记为审批人（玩家迁移到其他账号后旧 token 不冒名，不属则记 null）。
 - **后端**：`Backend/openapi.json` 工件再生成（补齐 655db5f 起 `/auth/login`、`/v1/scoring/admin/adjust` docstring 与版本号漂移），freeze 测试升全量相等断言（工件与运行时 spec 任一漂移即失败）。
 - **后端/前端**：修复 player-less 托管管理账号（`ADMIN_*` env）登录后访问「个人信息」「施工管理」被 401 `missing active_uuid` 踢回登录页（#74）——admin 端点鉴权升 account 级 JWT（`require_role` 不再要求绑定玩家，admin ≠ service-token）；`GET /me` 对无玩家账号返回 `active_uuid=null`；`/auth/refresh` 放行无玩家账号续签（有玩家却无 claim 的旧格式 token 仍拒绝）；`GET /sheets` 列表/详情/协管员列表与 `GET /v1/construction/{id}/progress` 对无玩家账号开放只读浏览（写端点仍需玩家身份）。前端配套：401 `missing active_uuid` 不再清会话/跳登录（页面 toast）、Me.vue 玩家专属卡片仅在有绑定身份时加载渲染、续签接受 `player=null`。`Backend/openapi.json` 工件再生成（连带补齐 v0.7.0 以来的签名漂移）。

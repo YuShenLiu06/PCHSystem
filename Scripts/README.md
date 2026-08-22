@@ -146,10 +146,15 @@ git -c url.https://ghproxy.com/https://github.com.insteadOf=https://github.com \
 `pch_system` 依赖三个 MCDR 插件（均在 MCDR 官方插件目录收录）：
 - **`chest_scanner_lib`** —— [YuShenLiu06/mcdr-chest-scanner](https://github.com/YuShenLiu06/mcdr-chest-scanner)（箱子扫描：RCON 读箱 + 准星检测 + SNBT 解析 + 双联合并）
 - **`uuid_api_remake`** —— <https://github.com/gubaiovo/MCDR_uuid_api_remake>（离线 UUID 推导）
-- **`minecraft_data_api`** —— 官方插件目录的 `MinecraftDataAPI`（物品 / NBT 查询）
+- **`minecraft_data_api`** —— [Fallen-Breath/MinecraftDataAPI](https://github.com/Fallen-Breath/MinecraftDataAPI)（物品 / NBT 查询）
 
 `install.sh` 扫描 `plugins/`，检测到缺失时**经 MCDR 原生 pim CLI 自动安装**：`pim download` 从官方插件目录下载 .mcdr → `pim pipi` 安装各包内声明的 Python 依赖（交互确认，跳过则打印手动命令）。
 `update.sh --upgrade-plugins` 升级三个依赖插件到 latest：下载临时目录 → 文件名比对（内嵌版本号）→ 删旧换新（防同 id 双文件加载冲突）→ pipi。
+
+**无 pim CLI 时的老方案 fallback**（[#73](https://github.com/YuShenLiu06/PCHSystem/issues/73)，MCDR 容器化部署宿主机没有 `mcdreforged` 命令）：宿主机无 CLI 时，依赖插件**补装**（install.sh / update.sh 主流程）与 `--upgrade-plugins` 升级的**下载**环节自动回退——直连各插件 GitHub Releases（`releases/latest` API，资产下载失败时依次尝试 `PCH_GH_MIRRORS` 镜像）下载 .mcdr 原子落盘 `plugins/`（zip 内 `mcdreforged.plugin.json` 的 id 校验）。**Python 依赖不自动装**，按提示手动处理（注意：该提醒仅输出一次，装齐后自行 reload）：
+
+- MCDR 容器化（任意挂载形态）：`docker exec <MCDR容器> sh -c 'mcdreforged pim pipi <容器内>/plugins/*.mcdr'`（容器内 CLI 可用；`sh -c` 让 `*.mcdr` 在容器内展开）
+- 裸进程部署：激活 MCDR 所用 venv 后 `mcdreforged pim pipi <MCDR>/plugins/*.mcdr`，或解包各 .mcdr 的 requirements.txt 手动 `pip install -r`
 
 手动安装（等价命令）：
 
