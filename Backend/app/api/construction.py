@@ -169,7 +169,20 @@ async def create_mod_source(
     session: AsyncSession = Depends(get_session),
 ) -> ServerModSourceEntry:
     # 审批人 = 会话来源玩家 UUID；player-less 托管账号（admin 面板）→ None
-    # （列本就可空，审计另有 jwt-account 请求日志）
+    # （列本就可空，审计另有 jwt-account 请求日志）。M1 复验：
+    # get_active_uuid_optional 只解码不校验归属，须确认 active_uuid 仍属
+    # _admin 账号（防玩家迁到别的账号后旧 token 继续冒充审批人），不属则 None。
+    if approver_uuid is not None:
+        bound = (
+            await session.execute(
+                select(Player).where(
+                    Player.uuid == approver_uuid,
+                    Player.web_account_id == _admin.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if bound is None:
+            approver_uuid = None
     row = await construction_repo.create_server_mod_source(
         session, name=body.name, approved_by_uuid=approver_uuid, notes=body.notes
     )

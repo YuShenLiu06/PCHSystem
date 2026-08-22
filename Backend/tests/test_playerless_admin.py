@@ -284,6 +284,34 @@ async def test_viewer_rejects_stale_active_uuid_after_player_migration(client):
     assert r.json()["detail"] == "player not bound to account"
 
 
+async def test_mod_source_approver_nulled_after_player_migration(client):
+    """M1 复验（create_mod_source）：审批人归属校验——玩家迁移后旧 token 不得冒名。"""
+    # Arrange — admin 账号 A + 玩家 P（token active_uuid=P）
+    puuid, aid, bearer = await _seed_player_with_account("approver", role="owner")
+    # P 迁到账号 B（旧 token 的 active_uuid 从此不再属于 A）
+    async with async_session_factory() as s:
+        account_b = WebAccount(role="user")
+        s.add(account_b)
+        await s.flush()
+        await s.execute(
+            update(Player).where(Player.uuid == puuid).values(web_account_id=account_b.id)
+        )
+        await s.commit()
+
+    # Act — 旧 token 建 mod 源（get_active_uuid_optional 只解码不校验归属）
+    r = await client.post(
+        "/v1/construction/mod-sources",
+        json={"name": "stale-approver-mod"},
+        headers={"Authorization": bearer},
+    )
+
+    # Assert — 端点仍可用（201），审批人不冒名（归属不命中 → None）
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["name"] == "stale-approver-mod"
+    assert body["approved_by_uuid"] is None
+
+
 async def test_refresh_malformed_active_uuid_claim_rejected(client):
     """refresh token 的 active_uuid 非法格式 → 401（而非未捕获 ValueError → 500）。"""
     # Arrange — 手工伪造畸形 claim（签发端 bug / 伪造场景）
