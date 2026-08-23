@@ -52,8 +52,7 @@ backups/
 # obsidian
 .obsidian/
 
-# 禁用的 SKILL
+# 禁用的 SKILL（真身在 .claude/skills/，本地保留不入库）
 .claude/skills/beautify-github-readme/
-.agents/skills/beautify-github-readme/
 
 .claude/tmp/

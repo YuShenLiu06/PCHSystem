@@ -60,6 +60,7 @@ HTCMC PCHSystem 采用**分布式 CLAUDE.md**（见根 [`CLAUDE.md`](../../../CL
 5. **生成或增量更新** CLAUDE.md：
    - **新建**：复制 `templates/service-claude-md.template.md`，逐节填充，把 `{ROOT}` 占位符替换为 §3 表中的「回根相对路径」。
    - **已存在**：只改受影响章节，**保留人工补充内容**，更新末尾时间戳。
+6. **保障跨工具别名**：确认该 CLAUDE.md 同目录存在 `AGENTS.md → CLAUDE.md` 相对软链（根 CLAUDE.md §6 约定）；缺失则 `ln -s CLAUDE.md AGENTS.md` 创建并 `git add`。**永不单独编辑 AGENTS.md**——它只是软链，权威源是 CLAUDE.md。
 
 ---
 
