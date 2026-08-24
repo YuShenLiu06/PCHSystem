@@ -3,6 +3,8 @@
 > HTCMC PCHSystem · 三端 monorepo（McdrPlugin / Backend / Frontend）
 > 参考 MCDR 生态标准 + Conventional Commits + SemVer
 > 红线 R-1~R-12 见根 [`CLAUDE.md`](./CLAUDE.md) §3，**任何改动不得违反**
+>
+> 仓库含相对软链（各处 `AGENTS.md → CLAUDE.md`、根 `.agents → .claude`，见根 CLAUDE.md §6）。Windows 协作者需开启开发者模式并 `git config core.symlinks true`，否则软链退化为纯文本指针（仅影响 Codex/Cursor 等非 Claude 工具读取，Claude Code 侧不受影响）。
 
 ## 目录
 

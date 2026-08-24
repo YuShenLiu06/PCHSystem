@@ -80,7 +80,7 @@
 
 ```
 PCHSystem/
-├── CLAUDE.md                          # 根规范（本文件）
+├── CLAUDE.md                          # 根规范（本文件；AGENTS.md 为其跨工具软链别名）
 ├── README.md                          # 项目说明 / 快速开始 / 文档导航
 ├── CONTRIBUTING.md                    # 分支 / Commit / SemVer / MCDR 发布
 ├── CHANGELOG.md                       # 三端变更日志（Keep a Changelog）
@@ -95,6 +95,7 @@ PCHSystem/
 ├── Frontend/       (F1–F4 已实现)     # Vue3 后台            → 内含 CLAUDE.md
 ├── McdrPlugin/     (已实现)           # MCDReforged 插件     → 内含 CLAUDE.md
 ├── TestServer/                        # 集成测试用 Docker 测试服（mc-test）
+├── .agents → .claude                  # 跨工具索引软链（.agents/skills/* 即 .claude/skills/*）
 └── .claude/skills/service-claude-md/  # 子服务 CLAUDE.md 生成/维护 skill
 ```
 
@@ -152,6 +153,8 @@ PCHSystem/
 
 **新建 / 更新子服务 CLAUDE.md 时**：调用 `service-claude-md` skill（传入服务名，自动读取对应架构文档按统一模板生成或增量更新），**不要手写**。
 
+**跨工具别名（AGENTS.md / `.agents`）**：CLAUDE.md 永远是唯一权威源。根、`Backend/`、`Frontend/`、`McdrPlugin/` 四处各挂同目录 `AGENTS.md → CLAUDE.md` 相对软链（AGENTS.md 是跨 AI 工具标准，Codex / Cursor / Copilot coding agent / Gemini CLI 新版直读它而不读 CLAUDE.md）；仓库根另有 `.agents → .claude` 索引软链。**修改只落 CLAUDE.md 本体，禁止另建内容副本**；子服务配套软链由 `service-claude-md` skill 在生成/更新时自动保障。
+
 ---
 
 ## 7. 当前任务状态
@@ -171,4 +174,4 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-08-19（余额排名端点落地 + 余额下钻：§5 scoring API 行补 admin/balances、ledger account_id、下钻抽屉注记；积分管理面板双 tab 与下钻见 CHANGELOG [Unreleased]）*
+*最后更新：2026-08-23（跨工具别名落地：根/Backend/Frontend/McdrPlugin 四处 `AGENTS.md → CLAUDE.md` 软链 + `.agents → .claude` 索引软链，约定见 §6）*
