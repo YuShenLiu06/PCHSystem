@@ -1,96 +1,193 @@
-# PCH System
+<div align="center">
 
-PCHSystem 的**游戏内端**——把「项目制工程协作 + 荣誉激励」搬进 Minecraft：玩家在游戏里登录后台、协作完成工程项目、提交材料、（将来）赚取积分与兑换。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/logo.svg">
+  <img alt="PCHSystem" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/Assets/logo.svg" width="240">
+</picture>
 
-> ⚠️ **非即装即用 · 强依赖后端**
-> 本插件是 [PCHSystem](https://github.com/YuShenLiu06/PCHSystem) 后端（FastAPI + PostgreSQL）的游戏内客户端，**必须先自部署后端**才能工作。单独安装本插件不会有任何功能——所有命令都是对后端的 HTTP 调用，插件市场 / `!!MCDR plugin install` **不进行完整部署** 具体查看 [部署](#部署) 章节。
+# PCH System · MCDR 插件
+
+**PCHSystem 的游戏内端 · MCDReforged 客户端插件**
+
+玩家在游戏里登录 Web 后台、协作项目、认领 / 上交材料、（将来）赚取积分——大量命令可点击，免手打。
+
+<p>
+  <img alt="Plugin Version" src="https://shields.io/badge/plugin-v0.10.1-22C55E">
+  <img alt="MCDR" src="https://shields.io/badge/MCDR-%3E%3D%202.14.0-22C55E">
+  <a href="https://github.com/YuShenLiu06/PCHSystem/releases">
+    <img alt="Release" src="https://shields.io/github/v/release/YuShenLiu06/PCHSystem?display_name=tag&sort=semver&color=22C55E">
+  </a>
+  <a href="https://github.com/YuShenLiu06/PCHSystem">
+    <img alt="Stars" src="https://shields.io/github/stars/YuShenLiu06/PCHSystem?color=22C55E">
+  </a>
+  <a href="https://github.com/YuShenLiu06/PCHSystem/blob/main/LICENSE">
+    <img alt="License" src="https://shields.io/github/license/YuShenLiu06/PCHSystem?color=22C55E">
+  </a>
+  <a href="https://yushenliu06.github.io/PCHSystem-wiki/">
+    <img alt="Wiki" src="https://shields.io/badge/Wiki-文档-22C55E?logo=github&logoColor=white">
+  </a>
+</p>
+
+<table>
+  <tr>
+    <td align="center"><b>游戏内 · 材料清单</b></td>
+    <td align="center"><b>施工贡献统计</b></td>
+  </tr>
+  <tr>
+    <td><img alt="游戏内材料清单" src="docs/img/sheet-mc.png"></td>
+    <td><img alt="施工贡献图表" src="docs/img/construction.png"></td>
+  </tr>
+</table>
+
+</div>
+
+> ⚠️ **非即装即用 · 强依赖后端**：本插件是 [PCHSystem](https://github.com/YuShenLiu06/PCHSystem)（FastAPI + PostgreSQL）的游戏内客户端，**必须先部署后端**才能工作；插件市场 / `!!MCDR plugin install` **不等于完整部署**——见[部署](#部署)。
 >
-> ⚠️ **仍在开发中**：当前版本仅实现了规划功能的一部分（见下方「开发状态」），积分、称号等核心玩法尚未交付。
-
-完整文档：见[主仓库](https://github.com/YuShenLiu06/PCHSystem) `Docs/`。
+> ⚠️ **仍在开发中**：归档自动结算、称号等核心玩法尚未落地——见[开发状态](#开发状态)。
+>
+> 完整文档见 [PCHSystem Wiki](https://yushenliu06.github.io/PCHSystem-wiki/) 与主仓库 [`Docs/`](https://github.com/YuShenLiu06/PCHSystem/tree/main/Docs)。
 
 ---
 
 ## 功能特性
 
-### 特性
+### 核心特性
 
-- **后端分离**：游戏内端与后端完全分离，后端可独立部署，游戏内端仅作为客户端。同时由于后端的原理，理论上支持**跨服 / 跨平台**协作。
-- **独立前端**：提供独立的 Web 前端，玩家可在 Web 端查看项目进度、编辑材料清单、上传投影 / 蓝图等，不进游戏也能协作；游戏端或 MCDR 重启时，Web 端仍可独立访问
+- **后端分离** — 游戏内端与后端完全分离，后端独立部署，插件仅作客户端
+- **跨服协作** — 身份锚定 Web 账号，一个账号可绑多个游戏身份，跨服 / 改名后积分与贡献不丢
+- **独立前端** — 配套 Web 端不进游戏也能协作；游戏端或 MCDR 重启时，Web 端仍可独立访问
+- **兼容性强** — 基于 MCDR，几乎所有 Minecraft 版本均可运行
 
-### 功能（已实现）
+### 已实现功能
 
-- **游戏内登录后台**：`!!PCH login` 一键生成登录链接，点击直接进入 web 页面方便操作
-    ![游戏内登录链接](docs/img/login.gif)
-- **身份绑定**：`!!PCH bind` 把当前游戏身份绑到 Web 账号，一个账号可绑多个身份（跨服 / 改名后积分与贡献不丢）；支持网页端密码登录、临时账号转永久、项目协管员授权
-- **项目协作（在线表格）**：完整的项目材料清单协作——认领材料、多人累计上交、交付确认、打回返工、解除锁定，Web 端与游戏端**对等操作**
-    ![游戏内项目协作总览](docs/img/sheet-mc.png)
-  - 一键提交：支持一键扫描背包（支持潜影盒内物品）上报进度。
-        ![一键扫背包提交](docs/img/submit.gif)
-  - 投影 / 蓝图一键建表：上传 `.litematic` 投影或机械动力 `.nbt` 蓝图，自动解析方块、翻译成中文名、生成材料清单（支持原版与 Create 模组物品）（支持多份投影文件合并为同一个项目，支持单个投影文件设置倍数）（仅 web 端支持）
-        ![Web 端项目协作总览](docs/img/analysis.gif)
-  - 子物品：一键通过倍数（支持小数）来直接生成子一级的合成物品的清单
-        ![Web 端新增子物品](docs/img/sheet-web-subadd.png)
-  - 快捷命令：游戏内大量命令已经通过可点击的方式来达到便携化，尽可能的减少手打命令的状况
-        ![游戏内可点击快捷命令](docs/img/commad-mc.gif)
-  - 智能数量换算：自动将数量换算成可读性更高的 个/组/盒 （正在考虑加入箱盒）
-  - 游戏内快速读取手持 `registry-id` 直接更改所需的物品 id，新增物品，去除手打物品 id 的苦恼
-        ![手持物品读取 registry-id](docs/img/display-id-registyr.gif)
-  - Web 端行编辑：在线编辑材料行（名称 / 数量 / `registry-id`），与游戏端操作对等
-- **项目协作（施工阶段）**：完成在施工阶段对于不同参与项目人员的贡献统计
-  - 开放的统计层：提供面向客户端/服务端的两种鉴权方式的API，复用 `JWT` 与 `service-token` + 开发文档
-  - 默认的服务端追踪层（默认开启）：自动轮询在线玩家 `world/stats/*.json` 做 `diff`，统计并上报施工贡献；无需自动统计时，在 `config.json` 设 `"construction_enabled": false` 关闭（关闭后停止采集，仅 `!!PCH construction status` 可查启用状态）
-  - 多种图表：提供多种图表，直观，准确的显示项目进度，同时前端已预留接口，随时可以变更相关的表
-    ![项目协作-施工阶段](docs/img/construction.png)
-- **项目归档**：项目完结自动生成归档文档 + 贡献占比饼图，精确记录每位参与者的贡献
-    ![项目归档与贡献占比](docs/img/archived.png)
-- **通知投递**：认领 / 交付 / 打回 / 项目状况变化 / 上交等事件游戏内自动通知，离线期间的通知上线补推
-    ![通知投递示例 1](docs/img/notify-1.png)
-    ![通知投递示例 2](docs/img/notify-2.png)
-    ![通知投递示例 3](docs/img/notify-3.png)
+#### 登录与身份绑定
 
-### 规划中（尚未实现）
+- `!!PCH login` 一键生成登录链接，点击直达 Web 页面
+- `!!PCH bind` 把游戏身份绑到 Web 账号；支持网页端密码登录、临时账号转永久、项目协管员授权
 
-- **积分体系**：提供统一积分层，管理相关内容
-  - 提供统一积分入账层
-  - 提供统一积分出账层
-  - 提供积分排行榜
-  - 完善项目归档自动结算积分
-- **指数增长称号**：积分达标自动解锁，聊天前缀差异化，高阶全服公告
-- **项目协作（施工阶段）**：真正校验建造放置（当前已经完成主体部分）
-  - 提供实时的计分板进度显示
-- **Wiki 归档同步**：归档内容双向同步到 wiki.js
-  - 项目权限继承：将项目拥有者，admin，自动拥有该篇归档 wiki 的编辑权限
-- **管理员面板**：提供管理员面板，方便管理服务器相关内容
+#### 项目协作（在线表格）
 
-> 详见下方「开发状态」与 [`TODO.md`](../TODO.md)。
+完整的项目材料清单协作——认领材料、多人累计上交、交付确认、打回返工、解除锁定，Web 端与游戏端**对等操作**。
+
+- **一键提交**：扫描背包（含潜影盒内物品）上报进度，回执自动折叠无关行
+- **箱子提交**：`!!submitc` 准星 / 坐标扫箱提交
+- **快捷命令**：游戏内大量命令可点击交互，尽量免手打
+- **智能换算**：自动将数量换算为可读性更高的 个 / 组 / 盒
+- **手持读取**：读取手持物品 `registry-id`，直接更改 / 新增所需物品，免手打 ID
+- **协管员**：项目拥有者可授予 / 撤销协管员，分担行级管理
+- **投影 / 蓝图建表**：上传 `.litematic` / Create `.nbt` 自动生成材料清单（仅 Web 端，见[主仓库](https://github.com/YuShenLiu06/PCHSystem)）
+
+#### 项目协作（施工阶段）
+
+统计施工阶段各参与者的贡献。
+
+- **开放统计层**：面向客户端 / 服务端两种鉴权方式的 API，复用 `JWT` 与 `service-token`
+- **默认追踪器**：自动轮询在线玩家 `stats` 文件做 `diff`，统计并上报施工贡献；`config.json` 设 `"construction_enabled": false` 可关闭
+- **多种图表**：多种图表直观、准确地显示项目进度，前端预留接口随时切换
+
+#### 项目归档
+
+项目完结自动生成归档文档 + 贡献占比饼图，精确记录每位参与者的贡献。
+
+#### 积分管理
+
+- **积分记账**：批量入账 / 出账，流水不可篡改、每笔附记账后余额，可完整审计回溯
+- **管理员调分**：管理员 / 拥有者调增调减玩家积分，原因必填，记入审计日志
+- **管理面板（Web）**：「积分流水 / 玩家积分」双 tab，调分弹窗、余额排名、账号流水下钻抽屉
+- **积分通知**：记账 / 调分自动附站内通知，游戏内即时收到积分变动提醒
+
+#### 通知投递
+
+认领 / 交付 / 打回 / 项目状况变化 / 上交等事件游戏内自动通知，离线期间的通知上线补推。
+
+### 效果一览
+
+<table>
+  <tr>
+    <td align="center"><b>游戏内 · 登录链接</b></td>
+    <td align="center"><b>游戏内 · 一键扫背包提交</b></td>
+  </tr>
+  <tr>
+    <td><img alt="游戏内登录" src="docs/img/login.gif"></td>
+    <td><img alt="一键扫背包提交" src="docs/img/submit.gif"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>游戏内 · 可点击快捷命令</b></td>
+    <td align="center"><b>游戏内 · 手持读取 registry-id</b></td>
+  </tr>
+  <tr>
+    <td><img alt="可点击快捷命令" src="docs/img/commad-mc.gif"></td>
+    <td><img alt="手持读取 registry-id" src="docs/img/display-id-registyr.gif"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>游戏内 · 智能数量换算</b></td>
+    <td align="center"><b>通知投递</b></td>
+  </tr>
+  <tr>
+    <td><img alt="数量换算" src="docs/img/sheet-mc-amounts.png"></td>
+    <td><img alt="通知投递" src="docs/img/notify-1.png"></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>查看更多截图</b></summary>
+<table>
+  <tr>
+    <td align="center"><b>项目归档与贡献占比</b></td>
+    <td align="center"><b>通知投递</b></td>
+  </tr>
+  <tr>
+    <td><img alt="项目归档与贡献占比" src="docs/img/archived.png"></td>
+    <td><img alt="通知投递" src="docs/img/notify-2.png"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>通知投递</b></td>
+    <td align="center"><b>游戏内 · 提交回执</b></td>
+  </tr>
+  <tr>
+    <td><img alt="通知投递" src="docs/img/notify-3.png"></td>
+    <td><img alt="一键提交回执" src="docs/img/sheet-mc-submit.png"></td>
+  </tr>
+</table>
+</details>
+
+### 规划中
+
+- **积分闭环** — 项目归档自动结算（settle）+ 玩家消耗积分 + 公开榜单
+- **指数增长称号** — 积分达标自动解锁，聊天前缀差异化，高阶全服公告
+- **施工阶段** — 真正校验建造放置（主体已完成）+ 实时计分板进度
+- **Wiki 归档同步** — 归档内容双向同步到 wiki.js + 项目权限继承
+- **管理员面板** — 服务器管理面板
 
 ---
 
 ## 玩法一览
 
-PCHSystem 面向**白名单生电社区服**，围绕「**项目制协作 + 积分作为目标驱动**」组织玩法。游戏内端是这套体系的操作入口。
+PCHSystem 面向**白名单生电社区服**，围绕「**项目制协作 + 积分作为目标驱动**」组织玩法，游戏内端是这套体系的操作入口：
 
-- **项目制协作**：玩家发起或参与工程项目。负责人导入投影生成材料清单，参与者认领材料、上交 / 放置，系统跟踪进度，完结后归档沉淀。
-- **黄皮子积分**（*规划中*）：项目设固定积分池，按玩家交付 / 贡献占比分配——物品收集类按材料占比；建造放置类按放置 + 收集加权；负责人享额外奖励。
-- **荣誉激励**（*规划中*）：总榜 / 赛季榜 / 项目榜；积分达标解锁指数增长的称号，聊天前缀展示，高阶称号解锁社区权益。
+- **项目制协作**：玩家发起或参与工程项目——负责人导入投影生成材料清单，参与者认领、上交 / 放置，系统跟踪进度，完结后归档沉淀
+- **黄皮子积分**（*规划中*）：项目设固定积分池，按玩家交付 / 贡献占比分配；负责人享额外奖励
+- **荣誉激励**（*规划中*）：总榜 / 赛季榜 / 项目榜；积分达标解锁指数增长的称号，高阶称号解锁社区权益
 
-> 完整玩法设计见 [`Docs/guide.md`](../Docs/guide.md)。⚠️ **积分 / 称号 / 自治等玩法依赖的后端能力尚未交付，当前主要可用的是项目协作与归档。**
+完整玩法设计见 [`Docs/guide.md`](../Docs/guide.md)。
+
+---
 
 ## 依赖
 
 ### MCDR 插件依赖
 
 | 插件 | 版本 / 来源 | 用途 |
-|---|---|---|
+| --- | --- | --- |
 | [MCDReforged](https://github.com/Fallen-Breath/MCDReforged) | `>= 2.14.0` | 运行时 |
-| `chest_scanner_lib` | `>= 1.0.1` · [YuShenLiu06/mcdr-chest-scanner](https://github.com/YuShenLiu06/mcdr-chest-scanner) | 箱子扫描（`!!submitc` 依赖：RCON 读箱 + 准星检测 + SNBT 解析 + 双联合并） |
-| `uuid_api_remake` | [gubaiovo/MCDR_uuid_api_remake](https://github.com/gubaiovo/MCDR_uuid_api_remake) | 离线模式 UUID 推导 |
+| [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner) | `>= 1.0.1` | 箱子扫描（`!!submitc`：RCON 读箱 + 准星检测 + SNBT 解析） |
+| [`uuid_api_remake`](https://github.com/gubaiovo/MCDR_uuid_api_remake) | — | 离线模式 UUID 推导 |
 | `minecraft_data_api` | MCDR 插件市场搜索 `MinecraftDataAPI` | 物品 / NBT 查询（一键提交依赖） |
 
 前置插件经 MCDR 原生 pim CLI 安装（自动装包内声明的 Python 依赖）：
 
-```
+```text
 mcdreforged pim download chest_scanner_lib uuid_api_remake minecraft_data_api -o <MCDR>/plugins
 mcdreforged pim pipi <MCDR>/plugins/*.mcdr
 !!MCDR reload plugin
@@ -100,12 +197,12 @@ mcdreforged pim pipi <MCDR>/plugins/*.mcdr
 
 ### ⚠️ 后端服务（必需）
 
-本插件**强依赖 PCHSystem 后端**（FastAPI + PostgreSQL），后端需另行部署：
+本插件**强依赖 PCHSystem 后端**（FastAPI + PostgreSQL）：
 
-- 所有 `!!PCH / !!sheet / !!submit` 命令经 HTTP 调用后端；
-- 插件**不存储业务数据**——积分、项目、权限全在后端 PostgreSQL；
-- 后端**不是 MCDR 插件**，不在 MCDR 运行时模型内，插件市场装不出。
+- 所有 `!!PCH` / `!!sheet` / `!!submit` 命令经 HTTP 调用后端
+- 插件**不存储业务数据**——积分、项目、权限全在后端 PostgreSQL
 
+后端部署见下方[部署](#部署)。
 
 ---
 
@@ -118,65 +215,70 @@ mcdreforged pim pipi <MCDR>/plugins/*.mcdr
 ```bash
 git clone https://github.com/YuShenLiu06/PCHSystem.git
 
-#也可以使用 gitee 镜像站
-
+# 也可以使用 Gitee 镜像
 git clone https://gitee.com/yushenliu03/PCHSystem.git
 
 cd PCHSystem
 bash Scripts/install.sh
 ```
 
-自动完成：检测/安装 Docker、国内网络镜像自适应、生成配置（含强随机密钥）、起容器 + 跑数据库迁移、构建前端、把 `pch_system` 拷到你的 MCDR `plugins/` 并填好 `service_token`。完整选项与边界见 [`Scripts/README.md`](../Scripts/README.md)。
+自动完成：检测 / 安装 Docker、国内网络镜像自适应、生成配置（含强随机密钥）、起容器 + 跑数据库迁移、构建前端、把 `pch_system` 拷到你的 MCDR `plugins/` 并填好 `service_token`。完整选项与边界见 [`Scripts/README.md`](../Scripts/README.md)。
 
-**智能检测**：在 **游戏内** 使用 `!!PCH status` 检验是否正确部署
+**部署自检**：游戏内执行 `!!PCH status`，四探针（plugin / backend / token / frontend）全绿即部署正确。
 
 ### B. 手动部署
 
-按 [`Docs/runbook.md`](../Docs/runbook.md) §3：
+要点：Docker Compose 起后端（postgres + backend + web）→ 把插件目录拷进 MCDR `plugins/` → 参照 `config.json.example` 配好 `api_url` 与 `service_token` → `!!MCDR reload plugin`。完整步骤见 [`Docs/runbook.md`](../Docs/runbook.md)。
 
 ---
 
 ## 游戏内命令
 
 | 命令 | 说明 |
-|---|---|
+| --- | --- |
 | `!!PCH login` | 申请 Web 登录，回显可点击链接 |
 | `!!PCH bind` / `!!PCH bind <短码>` | 发起 / 确认绑定，把游戏身份挂到 Web 账号 |
+| `!!PCH status` | 前后端连接自检（四探针） |
+| `!!PCH sheet <子命令>` | 项目协作全套：`list`（旗标 `-m` / `-c` / `-t` / `-a` / `-l` 可组合）/ `view` / `add` / `claim` / `deliver` / `contribute` / `advance` / … |
 | `!!PCH sheet manager <编号> add / remove / list <玩家名>` | 项目协管员授予 / 撤销 / 查看 |
-| `!!PCH sheet list / view / add / claim / deliver / contribute / advance / ...` | 项目协作全套 |
 | `!!sheet` / `!!sheet <id>` | 快速重开上次 / 指定项目 |
-| `!!submit` / `!!submit <id>` | 一键扫背包提交匹配材料到上次打开的项目 / 指定项目 |
-| `!!PCH sheet list -m / -c / -t / -a / -l` | 列表筛选简写旗标（可组合，如 `-ma`） |
+| `!!submit` / `!!submit <id>` | 一键扫背包提交到上次打开 / 指定项目 |
+| `!!submitc [id] [x y z]` | 扫箱子提交（准星 / 坐标模式） |
 | `!!PCH construction status / join [编号] / leave / current` | 施工进度：状态 / 加入 / 退出 / 当前 |
 
-
-> 完整命令树（含积分、称号等**开发中**命令）见 [`McdrPlugin/CLAUDE.md`](./CLAUDE.md) §4。
+完整命令树（含开发中命令）见 [`Docs/architecture/services/mcdr-plugin.md`](../Docs/architecture/services/mcdr-plugin.md)。
 
 ---
 
-## ⚠️ 开发状态（未完成）
-
-**当前版本仅实现了规划中的部分功能，后续版本会持续更新。**
+## 开发状态
 
 | 状态 | 模块 |
-|---|---|
-| ✅ 已交付 | 登录鉴权（Web 账号绑多身份 + 密码登录）、项目协作（sheets + 协管员角色）、投影 / 蓝图解析、材料上交、项目归档、通知投递、一键部署 |
-| 🚧 规划中 | 积分结算、称号系统、Wiki 同步、风控告警、社区自治 |
+| :---: | --- |
+| 已交付 | 登录鉴权（Web 账号绑多身份 + 密码登录）、项目协作（在线表格 + 协管员角色）、投影 / 蓝图解析、材料上交、**施工进度追踪 / 上报**、项目归档、**积分记账 / 调分 / 管理面板**、通知投递、一键部署 |
+| 规划中 | 归档自动结算、指数称号、Wiki 同步、风控告警、社区自治 |
 
-因此游戏内部分命令（如积分 `!!PCH score`、称号 `!!PCH title`）对应的后端能力**尚未落地**，待后续版本补齐。完整待办见 [`TODO.md`](../TODO.md)，已交付变更见 [`CHANGELOG.md`](../CHANGELOG.md)。
+已交付变更见 [`CHANGELOG.md`](../CHANGELOG.md)，待办见 [`TODO.md`](../TODO.md)。
 
 ---
 
 ## 相关链接
 
 | 内容 | 路径 |
-|---|---|
+| --- | --- |
 | 主仓库 | <https://github.com/YuShenLiu06/PCHSystem> |
+| Wiki 文档 | <https://yushenliu06.github.io/PCHSystem-wiki/> |
 | 玩法设计 | [`Docs/guide.md`](../Docs/guide.md) |
 | 工程架构总览 | [`Docs/architecture.md`](../Docs/architecture.md) |
 | 本插件架构（权威） | [`Docs/architecture/services/mcdr-plugin.md`](../Docs/architecture/services/mcdr-plugin.md) |
-| 发布策略报告 | [`Docs/reports/mcdr-publishing-strategy.md`](../Docs/reports/mcdr-publishing-strategy.md) |
 | 部署脚本说明 | [`Scripts/README.md`](../Scripts/README.md) |
 | 运维手册 | [`Docs/runbook.md`](../Docs/runbook.md) |
 | 变更日志 | [`CHANGELOG.md`](../CHANGELOG.md) |
 | 待办清单 | [`TODO.md`](../TODO.md) |
+
+---
+
+<div align="center">
+
+<sub>Built for the HTCMC community</sub>
+
+</div>
