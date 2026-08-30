@@ -28,6 +28,7 @@ from .messages import (
     SHEET_FORBIDDEN,
     SHEET_NOT_FOUND,
     SHEET_CONFLICT,
+    SHEET_CONFLICT_DETAIL,
     SHEET_BAD_REQUEST,
     SHEET_UUID_FAIL,
     SHEET_HEAD,
@@ -119,7 +120,8 @@ def _resolve(server, player_name, outcome, *, on_success=None):
       403 → 权限不足或非认领人
       404 → 表或行不存在
       409 归档（detail 含「归档」/「archiv」）→ 项目已归档，只读
-      409 其他 → 状态非法
+      409 带 detail → 透传后端中文冲突原因（issue #80 G5，如「无法认领：行状态为 claimed」）
+      409 无 detail → 状态非法（通用文案兜底）
       422 → 参数有误（带 detail）
       其他 4xx/5xx → 服务暂不可用提示（重试无益，提示玩家稍后再试）
     """
@@ -137,9 +139,12 @@ def _resolve(server, player_name, outcome, *, on_success=None):
         if err.status == 404:
             server.tell(player_name, SHEET_NOT_FOUND)
         elif err.status == 409:
-            # 归档只读（detail 含「归档」或「archiv」）单独译；其余 409 为行/状态非法
+            # 归档只读（detail 含「归档」或「archiv」）单独译；其余 409 透传后端中文
+            # 冲突原因（issue #80 G5）；detail 缺失回退通用「状态非法」文案
             if "归档" in (err.detail or "") or "archiv" in (err.detail or "").lower():
                 server.tell(player_name, SHEET_ARCHIVED_READONLY)
+            elif err.detail:
+                server.tell(player_name, SHEET_CONFLICT_DETAIL.format(detail=err.detail))
             else:
                 server.tell(player_name, SHEET_CONFLICT)
         elif err.status == 422:

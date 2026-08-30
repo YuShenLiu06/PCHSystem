@@ -7,7 +7,7 @@
 
 覆盖：
 - claim 路径经 `_resolve` 识别归档 409（中文 / 英文 detail 两种文案变体）。
-- 非归档 409（row conflict）仍走通用 SHEET_CONFLICT，不误判。
+- 非归档 409（row conflict）透传 detail（issue #80 G5），不误判归档。
 - submit 归档短路：submit-batch 返 409 归档 → SHEET_ARCHIVED_READONLY，且不触发老单行端点。
 """
 import os
@@ -24,6 +24,7 @@ import pch_system.sheet_client as sheet_client  # noqa: E402
 from pch_system.messages import (  # noqa: E402
     SHEET_ARCHIVED_READONLY,
     SHEET_CONFLICT,
+    SHEET_CONFLICT_DETAIL,
 )
 
 
@@ -74,8 +75,13 @@ class ClaimArchivedResolveTest(unittest.TestCase):
         self.assertEqual(told[0][1], SHEET_ARCHIVED_READONLY)
 
     def test_claim_non_archived_conflict_still_conflict(self):
-        # 非归档 409（行状态非法，如对已备齐行 claim）→ 通用 SHEET_CONFLICT，不误判归档
+        # 非归档 409（行状态非法，如对已备齐行 claim）→ 透传 detail（issue #80 G5），
+        # 不误判归档；detail 缺失才回退通用 SHEET_CONFLICT
         told = self._run_claim(sheet_client.HttpError(409, "row conflict"))
+        self.assertEqual(
+            told[0][1], SHEET_CONFLICT_DETAIL.format(detail="row conflict")
+        )
+        told = self._run_claim(sheet_client.HttpError(409, None))
         self.assertEqual(told[0][1], SHEET_CONFLICT)
 
 

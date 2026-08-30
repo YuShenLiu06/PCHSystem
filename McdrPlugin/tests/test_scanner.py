@@ -219,9 +219,13 @@ class TestSkipIsNoise:
     """
 
     def test_lock_非本人认领_折叠(self):
-        # 他人认领 / 需先认领 → is_claimant=False
+        # 他人认领 → is_claimant=False → 折叠
         assert skip_is_noise(mode=0, is_claimant=False, reason="已被他人认领") is True
-        assert skip_is_noise(mode=0, is_claimant=False, reason="需先认领") is True
+
+    def test_lock_需先认领_不折叠(self):
+        """issue #80：open 行 skip「需先认领」是行动指引（去认领该行），不得折叠为
+        「与您无关」——玩家看不到子行可提交的观感来源。逐行展示。"""
+        assert skip_is_noise(mode=0, is_claimant=False, reason="需先认领") is False
 
     def test_lock_本人认领_不折叠(self):
         # 本人认领但数量不足 → 逐行展示（提示玩家补货）

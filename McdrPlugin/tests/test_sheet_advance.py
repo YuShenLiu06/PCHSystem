@@ -4,7 +4,7 @@
 - advance_sheet client：query 参数（to 缺省/显式）、POST 路径、成功 dict。
 - _sheet_advance_impl 错误码→中文文案分支：
   400 → SHEET_BAD_TARGET / 403 → SHEET_FORBIDDEN / 404 → SHEET_NOT_FOUND /
-  409 已 archived → SHEET_ARCHIVED_READONLY / 409 其他 → SHEET_CONFLICT /
+  409 已 archived → SHEET_ARCHIVED_READONLY / 409 其他 → 透传 detail（issue #80 G5）/
   503 → SHEET_ARCHIVE_UNCONFIGURED / 429 → RATE_LIMITED / None → SERVICE_DOWN。
 - 成功回执：archived（含 archived_path） / constructing。
 - format_phase_label：三状态颜色映射 + 未知兜底。
@@ -38,6 +38,7 @@ from pch_system.messages import (  # noqa: E402
     SHEET_FORBIDDEN,
     SHEET_NOT_FOUND,
     SHEET_CONFLICT,
+    SHEET_CONFLICT_DETAIL,
     SHEET_RATE_LIMITED,
     SHEET_SERVICE_DOWN,
 )
@@ -187,10 +188,10 @@ class SheetAdvanceCallbackTest(unittest.TestCase):
         told = self._run(sheet_client.HttpError(409, "Sheet is archived"))
         self.assertEqual(told[0][1], SHEET_ARCHIVED_READONLY)
 
-    def test_409_other_falls_to_generic_conflict(self):
-        # detail 不含 archived（如非法转移）→ 通用 SHEET_CONFLICT
+    def test_409_other_passes_detail_through(self):
+        # detail 不含 archived（如非法转移）→ 透传 detail（issue #80 G5，不再吞为「状态非法」）
         told = self._run(sheet_client.HttpError(409, "illegal transition"))
-        self.assertEqual(told[0][1], SHEET_CONFLICT)
+        self.assertEqual(told[0][1], SHEET_CONFLICT_DETAIL.format(detail="illegal transition"))
 
     def test_503_archive_unconfigured(self):
         told = self._run(sheet_client.HttpError(503, "archive root not configured"))
