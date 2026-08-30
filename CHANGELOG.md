@@ -23,7 +23,10 @@
 
 ### Fixed
 
-- _暂无_
+- **后端（sheets）**：子物品行无法认领/更改状态/交付（[#80](https://github.com/YuShenLiu06/PCHSystem/issues/80)）。废除「父 lock 下子行禁止单独认领/解除」守卫（存量死行子行随之自愈，无数据迁移）；父行 lock 且已认领时**新建子行落库即继承父行认领者**（`claimed` + 同认领者 + `delivered=0`，显式 progress 子行不继承）；解除顶层 lock 父行的级联收窄为**只解除同认领者的 lock 子行**（他人认领的保留）；父行 mode 变化不再级联改子行 mode（原 D7「只紧不松」废除，只级联重算子行 `need_qty`），mode 缺省继承父行、显式指定即生效；修复级联重算 float 直乘导致的进位偏差（`0.07×100` 级联后多算 1，改 Decimal 精确取整）；六个协作端点 409 `detail` 由笼统 `row conflict` 改为透传 `SheetRowConflict` 中文原因（「行已被认领」「该行不是锁定模式」等）。子行全 done 不自动置父行 done（无 done 传导）。
+- **游戏端（MCDR）**：`!!PCH sheet submit` 对 open 子行的 `需先认领` skip 不再折叠为「与您无关」（玩家能看到指引并直接认领）；协作命令 409 回执透传后端中文原因（兜底「状态非法」）；`!!PCH sheet view` lock 行（含子行）显示交付进度 `delivered/need`。
+- **前端（sheets）**：子物品行放开认领/解除按钮与模式切换（原因父行 mode 被禁用），lock 子行显示交付进度列。
+- **后端（测试）**：修复 13 个测试文件 `_svc_token` fixture 裸赋值 `deps._settings = get_settings()` 导致的 **service-token 顺序泄漏**（teardown 不还原指针，先跑文件把运行时 token 永久换成 `"svc"`，construction 系测试全量批跑顺序性 401；main 预存问题，来自 identity 特性）——统一改 `monkeypatch.setattr` 属性登记式。全量批跑 752 passed 恢复全绿。
 
 ---
 
