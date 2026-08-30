@@ -30,8 +30,9 @@ from tests.conftest import seed_player_with_account
 @pytest.fixture(autouse=True)
 def _svc_token(monkeypatch):
     """注入 service-token=svc 到 deps._settings（镜像 test_sheets_api.py 范式）。"""
-    deps._settings = get_settings()
-    deps._settings.mcdr_service_token = "svc"
+    # monkeypatch 登记：改原对象属性而非替换 deps._settings 指针（裸赋值 teardown 无法还原，
+    # 污染后续测试文件的 service-token 校验——全量批跑顺序性 401 根因）
+    monkeypatch.setattr(deps._settings, "mcdr_service_token", "svc")
 
 
 _BEARER_CACHE: dict[uuid.UUID, str] = {}

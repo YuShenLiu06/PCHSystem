@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 import pytest
 
 import app.api.deps as deps
-from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.jwt import create_access_token
 from app.models.user import Player, WebAccount
@@ -16,8 +15,9 @@ from app.models.user import Player, WebAccount
 
 @pytest.fixture(autouse=True)
 def _svc_token(monkeypatch):
-    deps._settings = get_settings()
-    deps._settings.mcdr_service_token = "svc"
+    # monkeypatch 登记：改原对象属性而非替换 deps._settings 指针（裸赋值 teardown 无法还原，
+    # 污染后续测试文件的 service-token 校验——全量批跑顺序性 401 根因）
+    monkeypatch.setattr(deps._settings, "mcdr_service_token", "svc")
 
 
 async def _make_player(name: str) -> tuple[uuid.UUID, str]:
