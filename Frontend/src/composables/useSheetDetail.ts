@@ -26,14 +26,11 @@ import { useSheetStore } from '../stores/sheet'
 import { usePolling } from './usePolling'
 import {
   MODE_LOCK,
-  MODE_PROGRESS,
   type NewSubRowDraft,
   type RowDraft,
   type TreeNode,
   buildTreeRows,
   draftFromRow,
-  findParentMode,
-  isSubRow,
   newSubRowDraft,
   rowEqual,
 } from '../views/sheets/sheetHelpers'
@@ -71,7 +68,6 @@ export interface UseSheetDetailHandle {
   treeRows: ComputedRef<TreeNode[]>
   // 行/身份判定（依赖 sheet/auth）
   isClaimant: (row: RowDetail) => boolean
-  parentMode: (row: RowDetail) => number | undefined
   canClaimRow: (row: RowDetail) => boolean
   canReleaseRow: (row: RowDetail) => boolean
   // sheet 局部错误助手（shell 的 onDeleteSheet 复用，仍在 sheet feature 内——非跨 feature 泄漏）
@@ -188,23 +184,14 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     return !!row.claimant_uuid && uuids.includes(row.claimant_uuid)
   }
 
-  // 获取父行模式（子行专用）
-  function parentMode(row: RowDetail): number | undefined {
-    return findParentMode(row, sheet.value?.rows ?? [])
-  }
-
-  // 子行认领条件：仅当父行=progress 时可单独认领
+  // 认领条件：lock + open + 已登录（issue #80：子行同规则，可单独认领，父行模式不再拦截）
   function canClaimRow(row: RowDetail): boolean {
-    if (row.mode !== MODE_LOCK || row.status !== 'open' || !auth.player) return false
-    if (isSubRow(row)) return parentMode(row) === MODE_PROGRESS
-    return true
+    return row.mode === MODE_LOCK && row.status === 'open' && !!auth.player
   }
 
-  // 子行解除条件：仅当父行=progress 时可单独解除
+  // 解除条件：lock 行（认领者/管理者细分由按钮侧 isClaimant/canEdit 把关；issue #80 子行同规则）
   function canReleaseRow(row: RowDetail): boolean {
-    if (row.mode !== MODE_LOCK) return false
-    if (isSubRow(row)) return parentMode(row) === MODE_PROGRESS
-    return true
+    return row.mode === MODE_LOCK
   }
 
   function is409(e: unknown): boolean {
@@ -704,7 +691,6 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     isReadOnly,
     treeRows,
     isClaimant,
-    parentMode,
     canClaimRow,
     canReleaseRow,
     sheetErrorMessage,

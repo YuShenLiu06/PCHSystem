@@ -53,7 +53,6 @@ const {
   isReadOnly,
   treeRows,
   isClaimant,
-  parentMode,
   canClaimRow,
   canReleaseRow,
   sheetErrorMessage,
@@ -443,11 +442,11 @@ watch(sheetId, () => {
           </template>
         </el-table-column>
 
-        <!-- 模式列：顶层行可切换；子行仅父=progress时可切换 -->
+        <!-- 模式列：可编辑行均可切换（issue #80：子行独立选模式，父行切换不再级联子行） -->
         <el-table-column label="模式" :width="columnWidths['模式'] ?? 80">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && !isReadOnly && editingRowId === row.id && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -490,21 +489,18 @@ watch(sheetId, () => {
           </template>
         </el-table-column>
 
-        <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 168">
+        <!-- 交付进度列：lock/progress 均显 delivered/need（issue #80：lock 子行可见「完毕」进度） -->
+        <el-table-column label="交付进度" :width="columnWidths['交付进度'] ?? 168">
           <template #default="{ row }">
-            <template v-if="row.mode === MODE_PROGRESS">
-              <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
-              <div class="pch-delivery">
-                <span class="pch-delivery__nums">
-                  <QtyValue :value="row.delivered_qty" />
-                  <span class="pch-delivery__sep">/</span>
-                  <QtyValue :value="row.need_qty" muted />
-                </span>
-                <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
-              </div>
-            </template>
-            <span v-else class="pch-dash">—</span>
+            <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
+            <div class="pch-delivery">
+              <span class="pch-delivery__nums">
+                <QtyValue :value="row.delivered_qty" />
+                <span class="pch-delivery__sep">/</span>
+                <QtyValue :value="row.need_qty" muted />
+              </span>
+              <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
+            </div>
           </template>
         </el-table-column>
 
@@ -581,7 +577,7 @@ watch(sheetId, () => {
                     </div>
                     <el-select v-model="newSubRow[row.id].mode" size="small" :teleported="false">
                       <el-option :value="0" label="锁定" />
-                      <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
+                      <el-option :value="1" label="进度" />
                     </el-select>
                     <div style="display: flex; gap: 8px; align-items: center;">
                       <span class="pch-note">排序：</span>
@@ -744,11 +740,11 @@ watch(sheetId, () => {
           </template>
         </el-table-column>
 
-        <!-- 模式列：顶层行可切换；子行仅父=progress时可切换 -->
+        <!-- 模式列：可编辑行均可切换（issue #80：子行独立选模式，父行切换不再级联子行） -->
         <el-table-column label="模式" :width="columnWidths['模式'] ?? 80">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && !isReadOnly && editingRowId === row.id && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -791,21 +787,18 @@ watch(sheetId, () => {
           </template>
         </el-table-column>
 
-        <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 168">
+        <!-- 交付进度列：lock/progress 均显 delivered/need（issue #80：lock 子行可见「完毕」进度） -->
+        <el-table-column label="交付进度" :width="columnWidths['交付进度'] ?? 168">
           <template #default="{ row }">
-            <template v-if="row.mode === MODE_PROGRESS">
-              <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
-              <div class="pch-delivery">
-                <span class="pch-delivery__nums">
-                  <QtyValue :value="row.delivered_qty" />
-                  <span class="pch-delivery__sep">/</span>
-                  <QtyValue :value="row.need_qty" muted />
-                </span>
-                <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
-              </div>
-            </template>
-            <span v-else class="pch-dash">—</span>
+            <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
+            <div class="pch-delivery">
+              <span class="pch-delivery__nums">
+                <QtyValue :value="row.delivered_qty" />
+                <span class="pch-delivery__sep">/</span>
+                <QtyValue :value="row.need_qty" muted />
+              </span>
+              <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
+            </div>
           </template>
         </el-table-column>
 
@@ -882,7 +875,7 @@ watch(sheetId, () => {
                     </div>
                     <el-select v-model="newSubRow[row.id].mode" size="small" :teleported="false">
                       <el-option :value="0" label="锁定" />
-                      <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
+                      <el-option :value="1" label="进度" />
                     </el-select>
                     <div style="display: flex; gap: 8px; align-items: center;">
                       <span class="pch-note">排序：</span>
