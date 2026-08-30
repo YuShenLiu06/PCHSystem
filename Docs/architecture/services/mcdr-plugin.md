@@ -43,7 +43,7 @@
 | 向后端 HTTP 上报 | |
 | **双向绑定出码/消费（`!!PCH bind`，game_init/web_init）** | |
 | **协管员管理（`!!PCH sheet manager`，account 级授权）** | |
-| **前后端连接自检（`!!PCH status` + on_load）** | |
+| **前后端连接自检（`!!PCH status` + on_load）** | RCON 可用性探针（issue #79） |
 | **清箱功能** | **已废弃（v0.8.0 起，根 R-3/R-4）：插件不再提供清箱功能；`!!PCH sheet submit` 为纯申报，扫描背包后不清除** |
 
 **定位**：纯游戏内客户端 + HTTP 客户端。所有业务结果来自后端 API，本地只存配置与少量缓存。
@@ -54,7 +54,7 @@
 |---|---|---|
 | `!!PCH bind` | user | 申请 Web 绑定短码（game_init，无参；后端 POST `/bind/token`） |
 | `!!PCH bind <code>` | user | 消费 Web 绑定短码（web_init，带 code 参数；后端 POST `/bind/consume`，双头代玩家） |
-| `!!PCH status` | 控制台/玩家 | 前后端连接自检（嗅探后端/令牌/前端，分档回显可点击文档与 release 链接） |
+| `!!PCH status` | 控制台/玩家 | 前后端 + RCON 连接自检（嗅探后端/令牌/前端/RCON，分档回显可点击文档与 release 链接） |
 | `!!PCH sheet manager <id> [list\|add\|remove] <玩家名>` | tier A 授权/ tier B 自撤销 | 协管员管理（list 全员可见/add 仅 tier A/remove 可 tier B 自撤销；后端 GET/POST/DELETE `/sheets/{id}/managers`，account 级） |
 | `!!submit <项目> <x> <y> <z>` | user | 扫描指定坐标箱子并提交到项目 |
 | `!!submit hand <项目>` | user | 手持物品直接提交 |
@@ -240,14 +240,15 @@ def _do_claim(server, player, sheet_id, row_id):
 
 ### 3.11 健康自检（`!!PCH status` + on_load）
 
-前后端可达性嗅探 + 自检报告，在插件加载时控制台输出一次（best-effort，不阻塞 on_load），玩家可随时游戏内执行 `!!PCH status` 复检。
+前后端 / RCON 可达性嗅探 + 自检报告，在插件加载时控制台输出一次（best-effort，不阻塞 on_load），玩家可随时游戏内执行 `!!PCH status` 复检。
 
-**四探针**（纯函数，便于单测）：
+**五探针**（纯函数，便于单测）：
 
 - **plugin**：从 MCDR `get_plugin_metadata("pch_system")` 取自身版本号（S-1 联网核实），失败回落 "unknown" + 作者名。
 - **backend**：`GET /info`（404 回退 `/healthz`），拿 `version`/`web_base_url`/`web_online`/`web_version`，1 次尝试不重试，best-effort 吞异常。
 - **token**：`GET /notifications/pending?player_uuid=<nil>&limit=1` 带 `X-Service-Token`，**真 401 = token 不一致**（区别于 `/info` 公开端点只能证可达性）；非 401 = token 被接受；网络失败 = 无法判定（不噪声误报）。不再靠 `service_token` 占位启发式判定。
 - **frontend**：优先信后端 `/info` 的 `web_online`（同 compose 网络探服务名最可靠，避 localhost 在插件容器内命中容器自身）；后端未上报（`web_online=None`）→ 回退自探 `web_base_url`（回环地址→None 未知，非回环→GET 任意响应=在线/异常=离线）。
+- **rcon**（issue #79）：`is_rcon_running()` 为 False → 短路判「未运行」不发查询；为 True 再 `rcon_query("list")` 一次——None 回包 = 「已连接但查询失败」（疑密码不一致）。口径对齐 chest_scanner_lib 的 no_rcon 判定（False **或** None 均算 no_rcon），`!!submitc` 报「无法读取方块数据」时可直接 status 定位。finding 恒排最后、独立于后端可达性；`classify` 的 `rcon` 参数缺省 None 不产出 finding（向后兼容旧调用方）。
 
 **状态矩阵**（severity → rank → 渲染）：
 
@@ -259,7 +260,7 @@ def _do_claim(server, player, sheet_id, row_id):
 
 **on_load 自检**：`on_load` 启动 `@new_thread('pch_health_check')` 后台线程跑控制台版，全 ok → `server.logger.info`，有 warn/error → `server.logger.warning`；外层 try/except 吞所有异常——探针失败绝不影响插件加载（reload 不炸）。
 
-**游戏内 `!!PCH status`**：跑游戏内版，回执 RText 状态表 + 可点击链接段（复用 `messages.rtext_link`，green + bold + `RAction.open_url`），含插件版本/后端版本/令牌一致性/前端可达性 + 文档与 release 链接 + 作者页脚。
+**游戏内 `!!PCH status`**：跑游戏内版，回执 RText 状态表 + 可点击链接段（复用 `messages.rtext_link`，green + bold + `RAction.open_url`），含插件版本/后端版本/令牌一致性/前端可达性/RCON 可用性 + 文档与 release 链接 + 作者页脚。
 
 证据：[`PluginServerInterface.get_plugin_metadata`](https://docs.mcdreforged.com/en/latest/code_references/ServerInterface.html)、[`@new_thread`](https://docs.mcdreforged.com/en/latest/code_references/ServerInterface.html)（S-1 联网核实）。
 

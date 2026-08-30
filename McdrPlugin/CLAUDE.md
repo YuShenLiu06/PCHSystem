@@ -64,7 +64,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 |---|---|---|
 | `!!PCH login` | user | 申请 Web 登录 token，回显可点击链接（`RAction.open_url`），含 TTL 与上一链接失效提示 |
 | `!!PCH bind` / `!!PCH bind <code>` | user | **双向绑定**（v0.8.0）：无参 = game_init 出短码（`bind_client.request_bind_token` → POST `/bind/token`，service-token 单头）；`<code>` = 消费 web_init 短码（`bind_client.consume_bind_code` → POST `/bind/consume`，service-token + `X-Player-UUID` 双头，RS-13）。短码回执整行 `§7` 灰（敏感信息禁 `§` 高亮，§6 规则 4） |
-| `!!PCH status` | user / 控制台 | **前后端连接自检**（v0.8.0，`health.py`）：四探针 plugin/backend/token/frontend；token 一致性靠后端真 401 裁决（不再靠 `service_token` 占位启发式）；`on_load` 启动时也跑一次控制台版（best-effort，不阻塞加载） |
+| `!!PCH status` | user / 控制台 | **前后端 + RCON 连接自检**（v0.8.0，`health.py`）：五探针 plugin/backend/token/frontend/rcon；token 一致性靠后端真 401 裁决（不再靠 `service_token` 占位启发式）；RCON 探针（issue #79）`is_rcon_running()` + `rcon_query("list")` 一次，口径对齐 chest_scanner_lib 的 no_rcon 判定——`!!submitc` 报「无法读取方块数据」时可 status 定位（error 档附 server.properties/MCDR config.yml 修法）；`classify` 的 `rcon` 参数缺省 None 不产出 finding（向后兼容）；`on_load` 启动时也跑一次控制台版（best-effort，不阻塞加载） |
 | `!!PCH submit <项目> <x> <y> <z>` | user | 扫描坐标箱子并提交 |
 | `!!PCH submit hand <项目>` | user | 手持物品直接提交 |
 | `!!PCH project list` / `!!PCH project info <项目>` | user | 项目列表 / 进度查询 |
@@ -106,7 +106,7 @@ MCDR 插件是 PCHSystem 的**纯游戏内客户端**：负责游戏内命令交
 - 消息/色彩常量：`pch_system/messages.py`（含 `format_notification` / `format_row_line`）
 - 元数据：`McdrPlugin/pch_system/mcdreforged.plugin.json`
 - HTTP 客户端：`pch_system/client.py`（`LoginResult` dataclass，login）、`pch_system/bind_client.py`（bind 双向：`request_bind_token` 单头 / `consume_bind_code` 双头）、`pch_system/sheet_client.py`（sheets + notifications + managers HTTP，哨兵 `__RATE_LIMITED__`/`__REMOVED__`/`HttpError`/`None`）
-- 健康自检：`pch_system/health.py`（4 探针 + `on_load` 控制台版 + `!!PCH status` 游戏内版）
+- 健康自检：`pch_system/health.py`（5 探针 plugin/backend/token/frontend/rcon + `on_load` 控制台版 + `!!PCH status` 游戏内版）
 - 扫描器：`pch_system/scanner.py`（背包/手持扫描 + 一键提交行匹配，纯函数无 mcdreforged 依赖）
 - 箱子扫描：外部插件 `chest_scanner_lib`（v0.10.0 删除内嵌 `chest_scanner.py`；本端仅 `sheet_commands._submitchest_impl` 接线 + 错误码翻译，`scanner.expand_items` 保留供背包路径）
 - 渲染工具：`pch_system/text_layout.py`（tellraw 像素对齐）、`pch_system/view_args.py`（view 分页 + 参数解析）、`pch_system/qty.py`（数量换算 STACK=64/SHULKER=1728，三端字节级对齐）
@@ -225,7 +225,9 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 
 ---
 
-*最后更新：2026-08-15（v0.10.0 箱子扫描剥离为 chest_scanner_lib 外部插件依赖）*
+*最后更新：2026-08-30（issue #79：`!!PCH status` 新增 RCON 探针）*
+
+*增量（2026-08-30，issue #79 RCON 探针，版本语义 0.10.2）：`health.py` 新增第 5 探针——`RconStatus` dataclass + `probe_rcon(server)`（`is_rcon_running()` False 短路判「未运行」不发查询；True 再 `rcon_query("list")` 一次，None 回包 = 已连接但查询失败疑密码不一致；口径对齐 chest_scanner_lib 的 no_rcon 判定，S-1 已核实 `ServerInterface.is_rcon_running`/`rcon_query`）；`classify` 加尾参 `rcon`（缺省 None 不产出 finding，向后兼容），rcon finding 恒排最后、独立于后端可达性；`run_console_check` 与 `commands._status` 均接线（两者已在 `@new_thread`，RS-6）。新常量 `RCON_DOC_URL` + `_COMP_LABEL` 加 `rcon`。测试：`ProbeRconTest`（5）+ `ClassifyTest` RCON 增补（5），全量 470 passed。架构文档 §3.11 同步五探针。*
 
 *增量（2026-08-15，v0.10.0 箱子扫描剥离）：删除 `pch_system/chest_scanner.py`（425 行）与 `tests/test_chest_scanner.py`（489 行），实现归 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner)（`>=1.0.1`，官方插件目录收录；含准星射线 + 双联合并 + SNBT 解析，错误码与 `_CHEST_ERR_MSG` 逐一对应）。`_submitchest_impl` 改 `server.get_plugin_instance("chest_scanner_lib")` 取库调用（dependencies 已声明、加载期 DependencyWalker 校验，None 仅防御回执）。`mcdreforged.plugin.json` 加依赖 `chest_scanner_lib >=1.0.1`、version 0.10.0；`requirements.txt` 删 `hjson`（只剩 requests）。安装链路 pim 化：install.sh 检测缺失自动 `pim download`+`pipi`；update.sh 新增 `--upgrade-plugins`；TestServer 构建期 pim 安装三依赖插件并移除 git 内 .mcdr 二进制。新增 `SubmitchestWiringTest`（4 用例：准星/坐标接线、库缺失防御、错误码映射）。*
 

@@ -70,8 +70,8 @@ def _pch_root(src, ctx):
             "status 看追踪器状态 / join <编号> 加入施工 / leave 退出 / current 查当前项目",
         ),
         _line(
-            "!!PCH status", "前后端连接自检", "!!PCH status",
-            "嗅探后端 / 前端可达性，分档回显可点击文档与 release 链接",
+            "!!PCH status", "前后端 + RCON 自检", "!!PCH status",
+            "嗅探后端 / 前端 / RCON 可达性，分档回显可点击文档与 release 链接",
         ),
         RText("开发中：submit / project / score / rank / title / info\n", color=RColor.gray),
         RText("输入 !!help 查看所有命令；sheet 子命令详见 !!PCH sheet", color=RColor.gray),
@@ -131,19 +131,21 @@ def _login(src, ctx):
 
 
 def _status(src, ctx):
-    """``!!PCH status``：前后端连接自检（运维/玩家均可，控制台亦可执行）。
+    """``!!PCH status``：前后端 + RCON 连接自检（运维/玩家均可，控制台亦可执行）。
 
-    HTTP 探针放 ``@new_thread``（RS-6，镜像 ``_login``）；``src.reply`` 线程安全
+    HTTP / RCON 探针放 ``@new_thread``（RS-6，镜像 ``_login``；``rcon_query`` 阻塞
+    直至超时，同样不可上主线程）；``src.reply`` 线程安全
     （ConsoleSource / PlayerSource 通用，同 ``_login`` 的 ``server.tell`` 机制；
     S-1 MCDR CommandSource.reply）。复用 ``health.classify`` + ``format_game_report``
-    （插件版本 + 后端/令牌/前端状态 + 可点击链接 + 作者页脚）。
+    （插件版本 + 后端/令牌/前端/RCON 状态 + 可点击链接 + 作者页脚）。
     """
     @new_thread('pch_system status')
     def _do():
         try:
             server = src.get_server()
             meta = health.resolve_plugin_meta(server)
-            findings = health.classify(CONFIG, meta)
+            rcon = health.probe_rcon(server)
+            findings = health.classify(CONFIG, meta, rcon)
             src.reply(health.format_game_report(findings, meta))
         except Exception as e:
             src.reply(RText(f"§c状态检查失败: {e}§r"))

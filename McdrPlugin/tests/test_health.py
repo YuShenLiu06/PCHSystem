@@ -1,4 +1,4 @@
-"""health 嗅探 + 渲染单测（纯函数，mock requests.get）。
+"""health 嗅探 + 渲染单测（纯函数，mock requests.get / RCON server 替身）。
 
 镜像 test_sheet_client.py 的 AAA + mock.patch.object 套路；覆盖状态矩阵全分支。
 """
@@ -49,6 +49,29 @@ def _dispatch(table):
                 return val
         return _Resp(404)
     return _impl
+
+
+class _RconServer:
+    """probe_rcon 的 server 替身：is_rcon_running / rcon_query 行为可注入，queried 记录发出的命令。"""
+
+    def __init__(self, *, running=True, list_result="There are 0 players online",
+                 running_exc=None, query_exc=None):
+        self._running = running
+        self._list_result = list_result
+        self._running_exc = running_exc
+        self._query_exc = query_exc
+        self.queried = []
+
+    def is_rcon_running(self):
+        if self._running_exc is not None:
+            raise self._running_exc
+        return self._running
+
+    def rcon_query(self, command):
+        self.queried.append(command)
+        if self._query_exc is not None:
+            raise self._query_exc
+        return self._list_result
 
 
 class VersionTupleTest(unittest.TestCase):
@@ -181,6 +204,9 @@ class ClassifyTest(unittest.TestCase):
     def _token(self, findings):
         return next(f for f in findings if f.component == "token")
 
+    def _rcon(self, findings):
+        return next(f for f in findings if f.component == "rcon")
+
     def test_not_configured_and_offline(self):
         with self._patch({"/info": requests.ConnectionError("x")}):
             findings = health.classify(_cfg(token="change_me_service_token"))
@@ -293,6 +319,58 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(f.severity, "ok")
         self.assertIn("v0.6.1", f.message)   # 前端版本号进 status
 
+    # --- RCON（第 5 探针，issue #79）---
+
+    def test_rcon_none_omits_finding(self):
+        # 不传 rcon（旧调用方/纯函数单测）→ 不产出 finding，向后兼容
+        with self._patch({"/info": _Resp(404), "/healthz": _Resp(200)}):
+            findings = health.classify(_cfg(token="real"))
+        self.assertEqual([f for f in findings if f.component == "rcon"], [])
+
+    def test_rcon_not_running_error_even_backend_offline(self):
+        # RCON 是 MC 服务端侧，与后端可达性无关：后端离线也照常产出 rcon finding
+        with self._patch({"/info": requests.ConnectionError("x")}):
+            findings = health.classify(
+                _cfg(token="real"), rcon=health.RconStatus(running=False))
+        f = self._rcon(findings)
+        self.assertEqual(f.severity, "error")
+        self.assertIn("!!submitc", f.message)
+        self.assertIn("enable-rcon", f.message)
+        self.assertIn(health.RCON_DOC_URL, {u for _, u in f.links})
+
+    def test_rcon_query_ok(self):
+        with self._patch({
+            "/info": _Resp(200, {"version": "0.6.0", "web_base_url": "http://web:5173"}),
+            "http://web:5173": _Resp(200),
+        }):
+            findings = health.classify(
+                _cfg(token="real"),
+                rcon=health.RconStatus(running=True, query_ok=True),
+            )
+        f = self._rcon(findings)
+        self.assertEqual(f.severity, "ok")
+        self.assertIn("!!submitc", f.message)
+        # rcon finding 排最后（plugin→backend→token→frontend→rcon）
+        self.assertEqual(findings[-1].component, "rcon")
+
+    def test_rcon_query_fail_warn(self):
+        # running=True 但 rcon_query 返 None → 疑密码不一致 → warn
+        with self._patch({"/info": _Resp(404), "/healthz": _Resp(200)}):
+            findings = health.classify(
+                _cfg(token="real"),
+                rcon=health.RconStatus(running=True, query_ok=False),
+            )
+        f = self._rcon(findings)
+        self.assertEqual(f.severity, "warn")
+        self.assertIn("密码", f.message)
+
+    def test_rcon_unknown_warn(self):
+        # 探针异常（running=None）→ 未知不误报 → warn
+        with self._patch({"/info": _Resp(404), "/healthz": _Resp(200)}):
+            findings = health.classify(
+                _cfg(token="real"), rcon=health.RconStatus(running=None))
+        self.assertEqual(self._rcon(findings).severity, "warn")
+
 
 class ProbeTokenTest(unittest.TestCase):
     def test_401_rejected(self):
@@ -325,6 +403,44 @@ class ProbeTokenTest(unittest.TestCase):
             health.probe_token(_cfg(token="some-token"))
         self.assertEqual(captured["headers"].get("X-Service-Token"), "some-token")
         self.assertEqual(captured["params"].get("player_uuid"), health._PROBE_PLAYER_UUID)
+
+
+class ProbeRconTest(unittest.TestCase):
+    def test_not_running_skips_query(self):
+        # Arrange
+        server = _RconServer(running=False)
+        # Act
+        st = health.probe_rcon(server)
+        # Assert：未运行短路，不发 rcon_query（对齐 chest_scanner_lib no_rcon 口径）
+        self.assertFalse(st.running)
+        self.assertIsNone(st.query_ok)
+        self.assertEqual(server.queried, [])
+
+    def test_running_with_reply_ok(self):
+        server = _RconServer(running=True, list_result="There are 0 players online")
+        st = health.probe_rcon(server)
+        self.assertTrue(st.running)
+        self.assertTrue(st.query_ok)
+        self.assertEqual(server.queried, ["list"])   # 无害只读命令（notifier 先例）
+
+    def test_running_with_none_reply_fails(self):
+        # rcon_query 返回 None = 查询失败（S-1：MCDR 契约「未运行或查询失败」均返 None）
+        server = _RconServer(running=True, list_result=None)
+        st = health.probe_rcon(server)
+        self.assertTrue(st.running)
+        self.assertFalse(st.query_ok)
+
+    def test_is_rcon_running_raises_unknown(self):
+        server = _RconServer(running_exc=RuntimeError("boom"))
+        st = health.probe_rcon(server)
+        self.assertIsNone(st.running)
+        self.assertIsNone(st.query_ok)
+
+    def test_rcon_query_raises_unknown_query(self):
+        server = _RconServer(query_exc=RuntimeError("boom"))
+        st = health.probe_rcon(server)
+        self.assertTrue(st.running)
+        self.assertIsNone(st.query_ok)
 
 
 class ResolvePluginMetaTest(unittest.TestCase):
