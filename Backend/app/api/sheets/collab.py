@@ -70,7 +70,8 @@ async def claim_row(
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        # issue #80 G5：透传 repo 中文冲突原因（如「无法认领：行状态为 claimed」），直达客户端
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     return await _row_response(session, sheet_id, row)
@@ -126,7 +127,8 @@ async def set_row_delivery(
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        # issue #80 G5：透传 repo 中文冲突原因（如「无法认领：行状态为 claimed」），直达客户端
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return await _row_response(session, sheet_id, row)
 
 
@@ -213,7 +215,8 @@ async def release_row(
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        # issue #80 G5：透传 repo 中文冲突原因（如「无法认领：行状态为 claimed」），直达客户端
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return await _row_response(session, sheet_id, row)
 
 
@@ -259,7 +262,8 @@ async def reject_row(
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        # issue #80 G5：透传 repo 中文冲突原因（如「无法认领：行状态为 claimed」），直达客户端
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     return await _row_response(session, sheet_id, row)
@@ -312,7 +316,8 @@ async def contribute_to_row(
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        # issue #80 G5：透传 repo 中文冲突原因（如「无法认领：行状态为 claimed」），直达客户端
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     return await _row_response(session, sheet_id, row, with_contributors=True)
@@ -337,7 +342,8 @@ async def set_row_progress(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     old_row = current[0]
     if old_row.mode != sheet_repo.MODE_PROGRESS:
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict")
+        # 与 repo set_row_progress 冲突文案一致（G5 中文 detail）
+        raise HTTPException(status.HTTP_409_CONFLICT, "锁定行不能调进度，请标备齐交付")
     old_delivered = old_row.delivered_qty
     prev_item = old_row.item_name
     contrib_snapshot: list[tuple[int | None, str, list[uuid.UUID], int]] = (
@@ -395,7 +401,8 @@ async def set_row_progress(
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
     except SheetRowConflict as exc:
         await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "row conflict") from exc
+        # issue #80 G5：透传 repo 中文冲突原因（如「无法认领：行状态为 claimed」），直达客户端
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "row not found")
     return await _row_response(session, sheet_id, row, with_contributors=True)

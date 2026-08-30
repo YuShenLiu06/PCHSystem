@@ -530,13 +530,18 @@ async def create_row(
 
     子物品嵌套行（0012，0013 倍数放宽为小数）：
     - 父行锁校验单层（parent.parent_row_id IS NULL）。
-    - 模式继承：父 lock 强制子 lock；缺省继承父 mode。
+    - 模式缺省继承：未显式传 mode 时用父行 mode；显式值不再被覆盖（issue #80 G3）。
+    - 认领者继承（issue #80 G4）：父 lock 行已认领（claimed/done 均有 claimant）时，
+      新建 lock 子行直接落库 claimed + 同 claimant + delivered=0——与认领级联互补
+      消除死行（认领前建的子行走级联认领，认领后建的子行走创建继承）。显式
+      progress 子行不继承（progress 无认领语义）。
     - need_qty = ceil(qty_per_unit × parent.need_qty)（子行派生，向上取整成整数）。
     - item_name 自动加父名前缀 ``{父.item_name}-{item_name}``（仅创建路径；flat 视图消歧）。
     - 子行必传 registry_id + qty_per_unit > 0。
     """
     await _assert_writable(session, sheet_id)
 
+    inherit_claim = False  # 仅子行路径可能置 True（认领者继承）
     # 子物品逻辑
     if parent_row_id is not None:
         # 父行校验复用共享 helper（同表/单层/自引用）。create 无 self id，不传 self_row_id。
@@ -545,11 +550,15 @@ async def create_row(
             raise ValueError("子行必传 registry_id")
         if qty_per_unit is None or qty_per_unit <= 0:
             raise ValueError("子行 qty_per_unit 必须 > 0")
-        # 模式继承：父 lock 强制子 lock
-        if parent.mode == MODE_LOCK:
-            mode = MODE_LOCK
-        else:
-            mode = mode if mode is not None else parent.mode
+        # 模式缺省继承：显式值优先，不再被父行覆盖（issue #80 G3）
+        mode = mode if mode is not None else parent.mode
+        # 认领者继承（issue #80 G4）：父 lock 已认领 → lock 子行落库即 claimed。
+        # 父行 claimed/done 都带 claimant，都继承；子行显式 progress 不继承。
+        inherit_claim = (
+            parent.mode == MODE_LOCK
+            and mode == MODE_LOCK
+            and parent.claimant_uuid is not None
+        )
         # D2：Decimal 精确计算（Python float 直接相乘会让 ceil(0.07*100)=8，
         # 应为 7）。parent.need_qty 是 int，Decimal×int 精确。
         need_qty = math.ceil(Decimal(str(qty_per_unit)) * parent.need_qty)
@@ -566,6 +575,9 @@ async def create_row(
         registry_id=registry_id,
         parent_row_id=parent_row_id,
         qty_per_unit=qty_per_unit,
+        status=STATUS_CLAIMED if inherit_claim else STATUS_OPEN,
+        claimant_uuid=parent.claimant_uuid if inherit_claim else None,
+        delivered_qty=0,
     )
     session.add(row)
     await session.flush()
@@ -722,8 +734,9 @@ async def update_row(
 
     await session.flush()
 
-    # 顶层行 need/mode 变 → 级联子行重算
-    if is_top_level and (need_changed or mode_changed):
+    # 顶层行 need 变 → 级联子行重算（issue #80：mode 变化不再级联——子行 mode
+    # 独立于父行，owner 手动逐子行调整；级联只重算派生 need_qty）
+    if is_top_level and need_changed:
         child_stmt = (
             select(SheetRow)
             .where(SheetRow.parent_row_id == row_id)
@@ -732,17 +745,13 @@ async def update_row(
         child_rows = (await session.execute(child_stmt)).scalars().all()
         for child in child_rows:
             child_need_changed = False
-            if need_changed and child.qty_per_unit is not None:
-                child.need_qty = math.ceil(child.qty_per_unit * row.need_qty)
-                child_need_changed = True
-            # D7（by-design）：级联只紧不松——父切 LOCK 强制子 LOCK；父切 PROGRESS
-            # 不反向放松子行（允许 progress 父 + lock 子混合，放松留待 owner 手动改子行 mode）。
-            if mode_changed and row.mode == MODE_LOCK:
-                child.mode = MODE_LOCK
-                await _recompute_after_edit(
-                    session, child, mode_changed=True, new_need_qty=child.need_qty
+            if child.qty_per_unit is not None:
+                # Decimal 精确计算（对齐 create_row，float 直乘会让 ceil(0.07*100)=8）
+                child.need_qty = math.ceil(
+                    Decimal(str(child.qty_per_unit)) * row.need_qty
                 )
-            elif child_need_changed:
+                child_need_changed = True
+            if child_need_changed:
                 await _recompute_after_edit(
                     session, child, mode_changed=False, new_need_qty=child.need_qty
                 )
@@ -767,25 +776,19 @@ async def claim_row(
 ) -> SheetRow | None:
     """lock 行 open → claimed：置 claimant、delivered=0。progress 行 / 非 open 行视为非法转移。
 
-    子物品级联（0012）：
-    - 子行不得单独认领/解除当其父行=lock（随父行）。
+    子物品级联（0012，issue #80 语义更新）：
+    - 子行可单独认领（守卫已删——父行认领瞬间之后新建的子行靠 create_row
+      认领者继承，存量 open 子行靠本入口自愈，不再有死行）。
     - 认领顶层 lock 父行 = 同事务认领其所有 open lock 子行（同 claimant）。
-    - 父行=progress 时，被改成 lock 的子行可单独认领/解除（progress 父行本身不可认领，无法级联）。
     """
     await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
     if row.mode == MODE_PROGRESS:
-        raise SheetRowConflict("progress rows use contribute, not claim")
+        raise SheetRowConflict("进度行无需认领，请直接上交")
     if row.status != STATUS_OPEN:
-        raise SheetRowConflict(f"cannot claim row in status {row.status}")
-
-    # 子行守卫：子行随父 lock 行，不得单独认领
-    if row.parent_row_id is not None:
-        parent = await _lock_row(session, sheet_id, row.parent_row_id)
-        if parent is not None and parent.mode == MODE_LOCK:
-            raise SheetRowConflict("子物品随父行认领，不得单独认领")
+        raise SheetRowConflict(f"无法认领：行状态为 {row.status}")
 
     # 认领本行
     row.status = STATUS_CLAIMED
@@ -840,9 +843,9 @@ async def set_row_delivery(
     if row is None:
         return None
     if row.mode == MODE_PROGRESS:
-        raise SheetRowConflict("progress rows use contribute, not delivery")
+        raise SheetRowConflict("进度行不能标备齐，请用贡献上交")
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
-        raise SheetRowConflict(f"cannot set delivery on row in status {row.status}")
+        raise SheetRowConflict(f"无法标备齐：行状态为 {row.status}")
     await _apply_delivery(row, delivered_qty)
     await session.flush()
     return row
@@ -862,7 +865,7 @@ async def set_row_progress(
     if row is None:
         return None
     if row.mode != MODE_PROGRESS:
-        raise SheetRowConflict("lock rows use set_row_delivery, not progress")
+        raise SheetRowConflict("锁定行不能调进度，请标备齐交付")
     row.delivered_qty = delivered_qty
     if delivered_qty == 0:
         row.status = STATUS_OPEN
@@ -879,23 +882,21 @@ async def release_row(
 ) -> SheetRow | None:
     """claimed/done → open：清 claimant、delivered=0、清贡献者（progress 行）。
 
-    子物品级联（0012）：
-    - 子行不得单独认领/解除当其父行=lock（随父行）。
-    - 解除顶层 lock 父行 = 同事务解除其所有 claimed/done lock 子行（清 claimant、delivered、贡献者）。
-    - 父行=progress 时，被改成 lock 的子行可单独认领/解除。
+    子物品级联（0012，issue #80 语义更新）：
+    - 子行可单独解除（守卫已删）。
+    - 解除顶层 lock 父行 = 同事务解除其**同认领者**的 claimed/done lock 子行
+      （清 claimant、delivered、贡献者）；他人认领的子行不动（可跨人协作）。
+      父行=progress（claimant 恒 null）release 时天然零级联。
     """
     await _assert_writable(session, sheet_id)
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
-        raise SheetRowConflict(f"cannot release row in status {row.status}")
+        raise SheetRowConflict(f"无法解除：行状态为 {row.status}")
 
-    # 子行守卫：子行随父 lock 行，不得单独解除
-    if row.parent_row_id is not None:
-        parent = await _lock_row(session, sheet_id, row.parent_row_id)
-        if parent is not None and parent.mode == MODE_LOCK:
-            raise SheetRowConflict("子物品随父行解除，请解除父行")
+    # 清空本行前取认领者（级联收窄用：只解除同认领者的子行）
+    parent_claimant = row.claimant_uuid
 
     # 解除本行
     row.status = STATUS_OPEN
@@ -903,7 +904,7 @@ async def release_row(
     row.delivered_qty = 0
     await clear_contributors(session, row.id)
 
-    # 顶层级联：解除所有 claimed/done 子行
+    # 顶层级联：只解除同认领者的 lock 子行（issue #80 收窄——他人认领的保留）
     if row.parent_row_id is None:
         child_stmt = (
             select(SheetRow)
@@ -912,6 +913,7 @@ async def release_row(
                 SheetRow.parent_row_id == row_id,
                 SheetRow.mode == MODE_LOCK,
                 SheetRow.status.in_((STATUS_CLAIMED, STATUS_DONE)),
+                SheetRow.claimant_uuid == parent_claimant,
             )
             .order_by(SheetRow.id)
         )
@@ -935,9 +937,9 @@ async def reject_row(
     if row is None:
         return None
     if row.mode == MODE_PROGRESS:
-        raise SheetRowConflict("progress rows have no reject; use release")
+        raise SheetRowConflict("进度行无打回，请用解除重置进度")
     if row.status != STATUS_DONE:
-        raise SheetRowConflict(f"cannot reject row in status {row.status}")
+        raise SheetRowConflict(f"无法打回：行状态为 {row.status}")
     row.status = STATUS_CLAIMED
     row.delivered_qty = 0
     await session.flush()
@@ -995,10 +997,10 @@ async def contribute_row(
     if row is None:
         return None
     if row.mode != MODE_PROGRESS:
-        raise SheetRowConflict(f"cannot contribute on row in mode {row.mode}")
+        raise SheetRowConflict("锁定行不能贡献，请先认领后交付")
     # need=0 = 无目标（无限收集），永不 done，可一直上交；仅 need>0 的 done 行拒绝重复上交
     if row.status == STATUS_DONE and row.need_qty > 0:
-        raise SheetRowConflict("cannot contribute on done row")
+        raise SheetRowConflict("行已备齐，无法继续贡献")
     await _apply_contribution(session, row, player_uuid, qty)
     await session.flush()
     return row
