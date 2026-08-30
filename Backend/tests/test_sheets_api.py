@@ -1904,29 +1904,30 @@ async def test_upsert_row_sub_item_qty_per_unit_must_be_positive(client):
 
 @pytest.mark.asyncio
 async def test_sub_item_can_be_claimed_lock_mode(client):
-    """子物品：lock 子行在父=progress 时可单独认领（父=lock 时随父行级联，不得单独认领）。"""
+    """issue #80：父=lock 下 lock 子行可单独认领（守卫已移除；
+    父=progress 场景由 test_sub_item_can_be_contributed_progress_mode 等覆盖）。"""
     owner, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
-    # 建父行（progress）—— lock 子行仅当父=progress 时可单独认领
+    # 建父行（lock）—— 原守卫在此父模式下拒绝子行单独认领，现应成功
     resp = await client.put(
         f"/sheets/{sid}/rows",
-        json={"item_name": "父", "need_qty": 10, "mode": 1, "sort_order": 0},
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
         headers=_auth(bearer),
     )
     parent_rid = resp.json()["id"]
-    # 建子行（显式 lock；父=progress 下允许 lock 子行）
+    # 建子行（mode 缺省继承父 lock）
     resp = await client.put(
         f"/sheets/{sid}/rows",
         json={
             "parent_row_id": parent_rid,
             "registry_id": "minecraft:stone",
             "qty_per_unit": 2,
-            "mode": 0,
         },
         headers=_auth(bearer),
     )
     child_rid = resp.json()["id"]
-    # 其他玩家认领子行
+    assert resp.json()["mode"] == 0
+    # 其他玩家单独认领子行
     other, other_bearer = await _make_player()
     resp = await client.post(
         f"/sheets/{sid}/rows/{child_rid}/claim",
@@ -1936,6 +1937,111 @@ async def test_sub_item_can_be_claimed_lock_mode(client):
     data = resp.json()
     assert data["status"] == "claimed"
     assert data["claimant_uuid"] == str(other)
+    # 父行不受影响（仍 open）
+    resp = await client.get(f"/sheets/{sid}", headers=_auth(bearer))
+    rows = {r["id"]: r for r in resp.json()["rows"]}
+    assert rows[parent_rid]["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_sub_item_can_be_released_under_lock_parent(client):
+    """issue #80：父=lock 下子行可单独解除认领（守卫已移除）。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    child_rid = resp.json()["id"]
+    other, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{child_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    # 单独解除子行
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{child_rid}/release",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "open"
+    assert data["claimant_uuid"] is None
+
+
+@pytest.mark.asyncio
+async def test_sub_item_created_after_parent_claim_inherits_claimant(client):
+    """issue #80：父行认领后新建子行 → 子行落库 claimed + 继承父行认领者。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 其他玩家认领父行
+    other, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{parent_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    # 认领后新建子行 → 继承认领者（不再产生 open 死行）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "claimed"
+    assert data["claimant_uuid"] == str(other)
+    assert data["delivered_qty"] == 0
+
+
+@pytest.mark.asyncio
+async def test_claim_already_claimed_row_409_detail_passthrough(client):
+    """G5：SheetRowConflict 的具体原因透传到 HTTP 409 detail（不再统一吞为 "row conflict"）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    _, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{parent_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    # 第二位玩家认领同一行 → 409 且 detail 含具体冲突原因（状态冲突）
+    _, third_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{parent_rid}/claim",
+        headers=_auth(third_bearer),
+    )
+    assert resp.status_code == 409
+    # repo 行级冲突消息中文化（G5：detail 直达 MCDR 玩家回执）
+    assert resp.json()["detail"] == "无法认领：行状态为 claimed"
 
 
 @pytest.mark.asyncio
