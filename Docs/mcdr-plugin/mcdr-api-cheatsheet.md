@@ -957,6 +957,38 @@ from mcdreforged.api.rcon import RconConnection
 
 ---
 
+## 附录：RCON 配置速查（`!!PCH status` 排障）
+
+> `!!PCH status` 的 RCON 探针（issue #79）与 `!!submitc` 箱子扫描（`chest_scanner_lib`）都依赖 RCON。
+> 排障入口：游戏内 `!!PCH status`，按 `RCON` 行档位对号入座。
+
+### 档位 → 原因 → 修法
+
+| 档位 | 探针判定 | 原因 | 修法 |
+|---|---|---|---|
+| ✓ 正常 | `is_rcon_running()` = True 且 `rcon_query("list")` 有回包 | — | — |
+| ✗ 未运行 | `is_rcon_running()` = False | 服务端 RCON 没开 | 开下表 `server.properties` 三键，与 MCDR `config.yml` rcon 段对齐后重启 |
+| ⚠ 已连接但查询失败 | True 但 `rcon_query()` 返 None | 疑两侧 `password` 不同值 | 核对 `server.properties` 的 `rcon.password` 与 MCDR `config.yml` rcon 段同值后重启 |
+| ⚠ 状态未知 | 探针异常（API 抛异常，罕见） | — | 稍后复检 |
+
+### 两侧配置对照（必须一致）
+
+| 服务端 `server.properties` | MCDR `config.yml`（rcon 段） | 说明 |
+|---|---|---|
+| `enable-rcon=true` | `enable: true` | 总开关 |
+| `rcon.port=25575` | `address: 127.0.0.1` + `port: 25575` | 端口一致；`address` 为服务端地址（同机部署 `127.0.0.1`） |
+| `rcon.password=<密码>` | `password: <同值>` | 最常见故障点：不同值 → 「已连接但查询失败」档 |
+
+### 重启顺序与就绪延迟
+
+1. 改完配置**先重启服务端、再重启 MCDR**——MCDR 只在启动时连接 RCON。
+2. 服务端刚启动时 RCON 稍晚就绪，`!!PCH status` 若报未运行，等几秒复检再下结论。
+3. 本仓测试服预置配置：`TestServer/entrypoint.sh`（server.properties）与 `TestServer/config/mcdr_config.yml`（MCDR rcon 段）。
+
+> 判定 API 依据：[`ServerInterface.is_rcon_running` / `rcon_query`](https://docs.mcdreforged.com/en/latest/code_references/ServerInterface.html)（`rcon_query` 在未运行或查询失败时均返 `None`）。
+
+---
+
 ## 附录：官方文档导航
 
 | 主题 | URL |
