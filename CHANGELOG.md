@@ -15,7 +15,7 @@
 
 ### Added
 
-- _暂无_
+- **游戏端（插件）**：`!!PCH status` 与 on_load 启动自检新增第 5 探针 **RCON**（`health.probe_rcon`：`is_rcon_running()` + `rcon_query("list")`，口径对齐 chest_scanner_lib 的 no_rcon 判定）——RCON 未运行时 `!!submitc` 报「无法读取方块数据」但 status 此前查不出；现 error 档附 server.properties/MCDR config.yml 修法与文档链接（[#79](https://github.com/YuShenLiu06/PCHSystem/issues/79)）
 
 ### Changed
 

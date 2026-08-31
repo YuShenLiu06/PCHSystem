@@ -1,4 +1,4 @@
-"""前后端可达性嗅探 + 自检报告（on_load 控制台自检 + ``!!PCH status``）。
+"""前后端 / RCON 可达性嗅探 + 自检报告（on_load 控制台自检 + ``!!PCH status``）。
 
 纯函数为主，便于单测（mock ``requests.get``）。所有探针设计为 **1 次尝试、短超时、
 best-effort 吞异常**，由调用方放进 ``@new_thread`` 后台线程跑（RS-6），绝不阻塞/炸 ``on_load``。
@@ -36,6 +36,9 @@ BACKEND_DOC_URL = "https://github.com/YuShenLiu06/PCHSystem/blob/main/Docs/runbo
 FRONTEND_DOC_URL = (
     "https://github.com/YuShenLiu06/PCHSystem/blob/main/Docs/architecture/frontend.md"
 )
+RCON_DOC_URL = (
+    "https://github.com/YuShenLiu06/PCHSystem/blob/main/Docs/mcdr-plugin/mcdr-api-cheatsheet.md"
+)
 
 # 本插件 id（mcdreforged.plugin.json:id），用于 get_plugin_metadata 取自身元数据
 PLUGIN_ID = "pch_system"
@@ -56,7 +59,7 @@ _RANK = {"ok": 0, "warn": 1, "error": 2}
 _CONSOLE_PREFIX = {"ok": "[OK]", "warn": "[WARN]", "error": "[ERROR]"}
 _GAME_COLOR = {"ok": RColor.green, "warn": RColor.yellow, "error": RColor.red}
 _GAME_SYM = {"ok": "✓", "warn": "⚠", "error": "✗"}
-_COMP_LABEL = {"plugin": "插件", "backend": "后端", "token": "令牌", "frontend": "前端"}
+_COMP_LABEL = {"plugin": "插件", "backend": "后端", "token": "令牌", "frontend": "前端", "rcon": "RCON"}
 
 
 # === 数据类（不可变）===
@@ -83,7 +86,7 @@ class Finding:
     """一条自检结论：严重度 + 组件 + 完整文案 + 可点链接。renderer 只做展示。"""
 
     severity: str   # "ok" | "warn" | "error"
-    component: str  # "plugin" | "backend" | "token" | "frontend"
+    component: str  # "plugin" | "backend" | "token" | "frontend" | "rcon"
     message: str
     links: tuple[tuple[str, str], ...] = ()   # ((label, url), ...)
 
@@ -93,6 +96,19 @@ class TokenStatus:
     """token 探针结果：``accepted`` 三态区分「确认对 / 确认错 / 无法判定」。"""
 
     accepted: Optional[bool]   # True=后端接受 / False=401 拒绝 / None=探针异常无法判定
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class RconStatus:
+    """RCON 探针结果（issue #79）：口径对齐 chest_scanner_lib 的 no_rcon 判定。
+
+    ``is_rcon_running()`` 为 False **或** ``rcon_query()`` 返 None 都算 no_rcon
+    （S-1 已核实：MCDR ``rcon_query`` 未运行/查询失败均返 None），故两步分开记录。
+    """
+
+    running: Optional[bool] = None    # True/False=is_rcon_running 结果；None=探针异常
+    query_ok: Optional[bool] = None   # True='list' 有回包 / False=回 None / None=未探或异常
     detail: str = ""
 
 
@@ -286,17 +302,49 @@ def probe_token(cfg: PchSystemConfig) -> TokenStatus:
     return TokenStatus(accepted=True, detail=f"HTTP {resp.status_code}")
 
 
+def probe_rcon(server) -> RconStatus:
+    """RCON 可用性探测：``is_rcon_running()`` + 一次 ``rcon_query("list")``。
+
+    ``!!submitc``（chest_scanner_lib）的 no_rcon 判定 = ``is_rcon_running()`` False
+    **或** ``rcon_query()`` 返 None——本探针同口径分两步记录，failure 才能区分
+    「服务端没开 RCON」与「开了但查询失败（疑密码不一致）」。探测命令用 ``list``
+    （无害只读，notifier.init_online_from_rcon 先例）。best-effort 吞异常，
+    由调用方放 ``@new_thread`` 后台线程（``rcon_query`` 阻塞直至超时）。
+
+    S-1：``ServerInterface.is_rcon_running() → bool``、
+    ``rcon_query(command) → str | None``（None=未运行或查询失败）——
+    https://docs.mcdreforged.com/en/latest/code_references/ServerInterface.html
+    """
+    try:
+        running = bool(server.is_rcon_running())
+    except Exception as e:
+        return RconStatus(running=None, detail=repr(e))
+    if not running:
+        # 未运行短路：不发 rcon_query（MCDR 对未运行的 rcon 调用返 None，多探无信息量）
+        return RconStatus(running=False, detail="is_rcon_running() = False")
+    try:
+        reply = server.rcon_query("list")
+    except Exception as e:
+        return RconStatus(running=True, query_ok=None, detail=repr(e))
+    ok = reply is not None
+    return RconStatus(running=True, query_ok=ok, detail=reply if ok else "rcon_query() = None")
+
+
 # === 分类（facts → findings，文案在此烘焙完整）===
 
 
 def classify(
     cfg: PchSystemConfig,
     plugin_meta: Optional[PluginMeta] = None,
+    rcon: Optional[RconStatus] = None,
 ) -> list[Finding]:
-    """组合 插件 / 后端 / 令牌 / 前端 探针，按状态矩阵产出 findings（含应展示链接）。
+    """组合 插件 / 后端 / 令牌 / 前端 / RCON 探针，按状态矩阵产出 findings（含应展示链接）。
 
     ``plugin_meta`` 缺省时回落 ``PluginMeta("unknown", fallback)``——便于纯函数单测
     （无需 MCDR server）。生产由调用方先 ``resolve_plugin_meta(server)`` 再传入。
+    ``rcon`` 同理：调用方先 ``probe_rcon(server)`` 再传入；缺省 None = 不产出
+    rcon finding（向后兼容旧调用方）。RCON 属 MC 服务端侧，与后端可达性无关，
+    finding 恒追加在最后（issue #79）。
     """
     if plugin_meta is None:
         plugin_meta = PluginMeta(version="unknown", author=PLUGIN_AUTHOR_FALLBACK)
@@ -410,6 +458,44 @@ def classify(
                 message=f"前端在线 v{ver}" if ver else "前端在线",
             ))
 
+    # --- RCON（独立于后端：MC 服务端侧；仅当调用方传入了探针结果才产出）---
+    if rcon is not None:
+        if rcon.running is False:
+            findings.append(Finding(
+                severity="error",
+                component="rcon",
+                message=(
+                    "RCON 未运行：!!submitc 箱子扫描将失败（「无法读取方块数据」）。"
+                    "请开启服务端 server.properties 的 enable-rcon 并配好 rcon.port / "
+                    "rcon.password，与 MCDR config.yml 的 rcon 段对齐后重启服务端与 "
+                    "MCDR（服务端刚启动时 RCON 稍晚就绪，可稍后复检）"
+                ),
+                links=(("RCON 配置速查", RCON_DOC_URL),),
+            ))
+        elif rcon.running is True and rcon.query_ok is True:
+            findings.append(Finding(
+                severity="ok",
+                component="rcon",
+                message="RCON 正常（!!submitc 箱子扫描可用）",
+            ))
+        elif rcon.running is True and rcon.query_ok is False:
+            findings.append(Finding(
+                severity="warn",
+                component="rcon",
+                message=(
+                    "RCON 已连接但查询失败（疑似密码不一致）：请核对 server.properties "
+                    "的 rcon.password 与 MCDR config.yml 的 rcon 段是否同值后重启"
+                ),
+                links=(("RCON 配置速查", RCON_DOC_URL),),
+            ))
+        else:
+            # running=None / query_ok=None：探针异常，未知不误报
+            findings.append(Finding(
+                severity="warn",
+                component="rcon",
+                message=f"RCON 状态未知（探针异常{('：' + rcon.detail) if rcon.detail else ''}），可稍后复检",
+            ))
+
     return findings
 
 
@@ -470,7 +556,8 @@ def run_console_check(server, cfg: PchSystemConfig) -> None:
     """
     try:
         meta = resolve_plugin_meta(server)
-        findings = classify(cfg, meta)
+        rcon = probe_rcon(server)
+        findings = classify(cfg, meta, rcon)
         msg = format_console_report(findings, meta)
         if _worst(findings) == "ok":
             server.logger.info(msg)
