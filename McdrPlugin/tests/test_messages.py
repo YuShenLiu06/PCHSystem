@@ -131,7 +131,7 @@ class FormatRowLineTest(unittest.TestCase):
         row = {"id": 3, "item_name": "铁锭", "mode": 0, "status": "open", "need_qty": 64, "delivered_qty": 0, "claimant_name": None}
         s = format_row_line(row)
         self.assertIn("铁锭", s)
-        self.assertIn("1组", s)        # lock 行数量=需求单值（need=64→1组），不再有 [lock] 标签
+        self.assertIn("0个/1组", s)    # issue #80：lock 行也显 当前/需求（delivered=0→0个, need=64→1组）
         self.assertIn("未认领", s)
         self.assertEqual(_status_color("open"), "§7")
 
@@ -172,7 +172,7 @@ class FormatRowLineTest(unittest.TestCase):
                "parent_row_id": 3999, "qty_per_unit": 0.5}
         s = format_row_line(row)
         self.assertIn("└", s)               # 子行缩进前缀
-        self.assertIn("4.18盒", s)          # need=7217→4.18盒（lock 单值）
+        self.assertIn("0个/4.18盒", s)      # issue #80：子行 lock 也显 当前/需求（delivered=0→0个）
         self.assertNotIn("7217", s)         # 回归点：裸 int 不得代入
         self.assertNotIn("每件×", s)        # 子行不再渲染倍数
         self.assertNotIn("需", s)           # 子行不再有「(需)」段
@@ -199,14 +199,15 @@ class FormatRowLineTest(unittest.TestCase):
         self.assertIn("A", s)              # progress 认领者列显贡献者
         self.assertNotIn("每件×", s)       # 子行不再渲染倍数
 
-    def test_lock_row_hides_delivered_qty(self):
-        # lock 行只显需求单值，不显当前数量（即便 delivered_qty>0）；数量段无「/」
+    def test_lock_row_shows_delivered_over_need(self):
+        """issue #80：lock 行数量段与 progress 统一为 当前/需求。
+
+        旧版只显需求单值——认领人交付部分后 view 无进度反馈，子物品行「缺少完毕
+        相关内容」的观感来源。新语义 delivered=5000→2.89盒 / need=7217→4.18盒。"""
         row = {"id": 4001, "item_name": "磨制深板岩", "mode": 0, "status": "claimed",
                "need_qty": 7217, "delivered_qty": 5000, "claimant_name": "刘宇辰"}
         s = format_row_line(row)
-        self.assertIn("4.18盒", s)         # need=7217→4.18盒（单值）
-        self.assertNotIn("2.89盒", s)      # delivered=5000→2.89盒 不得显示
-        self.assertNotIn("/", s)           # lock 数量段无「/」（进度模式才有）
+        self.assertIn("2.89盒/4.18盒", s)  # delivered/need 双值
         self.assertIn("刘宇辰", s)
 
 

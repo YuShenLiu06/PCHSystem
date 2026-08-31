@@ -69,6 +69,9 @@ SHEET_RATE_LIMITED = "§e操作太频繁，请稍后再试"
 SHEET_FORBIDDEN = "§c权限不足或非认领人（真实权限以后端为准）"
 SHEET_NOT_FOUND = "§c表或行不存在"
 SHEET_CONFLICT = "§c状态非法（如对已备齐行认领、对未认领行打回），请先 !!PCH sheet view 查看"
+# issue #80 G5：后端 collab 六端点把 SheetRowConflict 具体原因写入 409 detail（如
+# 「无法认领：行状态为 claimed」），此模板透传该原因直达玩家；detail 缺失回退 SHEET_CONFLICT
+SHEET_CONFLICT_DETAIL = "§c{detail}，请先 !!PCH sheet view 查看行状态"
 SHEET_BAD_REQUEST = "§c参数有误: {detail}"
 SHEET_UUID_FAIL = "§c获取 UUID 失败: {err}"
 SHEET_HEAD = "§6§l[PCH 表格]§r"
@@ -91,7 +94,8 @@ SHEET_VIEW_ARG_UNKNOWN = "§c未知参数: {token}§r\n§7用法: !!PCH sheet vi
 # status open/claimed/done（mode 0=lock 1=progress 不再显示标签，由数量格式区分）
 _STATUS_COLOR = {"open": "§7", "claimed": "§e", "done": "§a"}
 # 统一行格式（顶层 + 子行共用，仅 {prefix} 不同）：
-#   progress → §b{当前}/{需求}（有「/」）；lock → §b{需求}（单值）。移除 [mode] 标签，以数量格式区分模式。
+#   lock / progress 均 → §b{当前}/{需求}（issue #80：lock 行也显示交付进度，
+#   认领人交付部分后 view 有进度反馈，子物品行不再「缺少完毕相关内容」）。移除 [mode] 标签。
 SHEET_ROW_LINE = "{prefix}{status_c}#{row_id} §f{item} §b{qty} §7{claimant}"
 SHEET_OK_CREATED = "§a已建表 #{id} {title}"
 SHEET_OK_RENAMED = "§a已改标题 #{id} → {title}"
@@ -188,8 +192,9 @@ def format_row_line(row: dict) -> str:
     """格式化单行（RowDetail）为游戏内一行文本。
 
     模式区分（移除 [lock]/[progress] 标签，改用数量格式）：
-      progress → §b{当前}/{需求}（有「/」，当前=贡献者累计上交）
-      lock     → §b{需求}（单值，不显示当前——认领/完成状态由认领者名 + 状态色 + 按钮体现）
+      progress → §b{当前}/{需求}（当前=贡献者累计上交）
+      lock     → §b{当前}/{需求}（issue #80：与 progress 统一双值——认领人交付部分后
+                 view 有进度反馈，子物品 lock 行不再「缺少完毕相关内容」）
     子行（parent_row_id 非空）：等同顶层格式，仅在行首加「  §8└ 」缩进前缀。
     need / delivered 均走 format_qty_safe 个/组/盒 换算（不得直接代入裸 int）。
     """
@@ -198,11 +203,10 @@ def format_row_line(row: dict) -> str:
     if int(row.get("mode", 0)) == 1:
         # progress：认领者列显贡献者（按贡献量降序，至多 2 位 + 省略号）；数量 = 当前/需求
         claimant = _format_contributors(row.get("contributors"))
-        qty = f"{format_qty_safe(row.get('delivered_qty', 0))}/{format_qty_safe(row.get('need_qty', 0))}"
     else:
-        # lock：认领者列显 claimant_name；数量 = 需求（单值，不显示当前）
+        # lock：认领者列显 claimant_name；数量 = 当前/需求（双值，issue #80）
         claimant = row.get("claimant_name") or "未认领"
-        qty = format_qty_safe(row.get("need_qty", 0))
+    qty = f"{format_qty_safe(row.get('delivered_qty', 0))}/{format_qty_safe(row.get('need_qty', 0))}"
     prefix = "  §8└ " if parent_row_id is not None else ""
     return SHEET_ROW_LINE.format(
         prefix=prefix,

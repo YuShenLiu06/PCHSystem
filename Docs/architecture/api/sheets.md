@@ -99,7 +99,7 @@ sheets 是 MVP 轻量在线表（与 `projects.material_lists` 投影体系不�
 
 **不变量（lock 模式）**：`open ⇒ claimant IS NULL ∧ delivered=0`；`claimed ⇒ claimant NOT NULL`；`done ⇒ claimant NOT NULL ∧ delivered≥need`。
 
-**不变量（子物品，迁移 0012）**：单层（子只能挂顶层，repo 层校验 `parent.parent_row_id IS NULL`）、模式继承（父 lock→子只能 lock；父 progress→子可 lock/progress）、单位用量级联（父 need 变→子 need 重算 = ceil(qty_per_unit × 新父 need)）、子行必须有 registry_id 且 qty_per_unit>0、子行 item_name 自动加父名前缀「父名-本名」。详见 [`data-model.md`](../data-model.md) §10.2。
+**不变量（子物品，迁移 0012；协作语义 issue #80 修订）**：单层（子只能挂顶层，repo 层校验 `parent.parent_row_id IS NULL`）、**模式缺省继承**（`mode` 未显式指定时缺省继承父行；显式指定即生效——父 lock 下子行可选 progress；父行 mode 变化**不级联**改子行 mode，只级联重算 need_qty）、单位用量级联（父 need 变→子 need 重算 = ceil(qty_per_unit × 新父 need)，Decimal 精确取整）、子行必须有 registry_id 且 qty_per_unit>0、子行 item_name 自动加父名前缀「父名-本名」。认领/解除级联与新建继承认领者语义见 §5.3。详见 [`data-model.md`](../data-model.md) §10.2。
 
 **不变量（progress 模式，多人贡献者）**：`claimant_uuid` 恒为 `null`（progress 行不绑定单认领人）；`status` 由 `delivered_qty` 推导 —— `delivered=0 ⇒ open`，`0<delivered<need ⇒ claimed`，`delivered≥need ⇒ done`；贡献者列表由 `sheet_row_contributors` 聚合，单行可含多名贡献者。
 
@@ -223,14 +223,21 @@ stateDiagram-v2
 |---|---|---|---|---|---|
 | PUT | `/sheets/{sheet_id}/rows` | JWT·**owner** 或 service-token+UUID·owner | `RowUpsertRequest` | 200 `RowDetail` | **单端点按 `row_id` 分流**（issue #20）：**带 `row_id`** → 按主键更新（`item_name` 可改名，其余字段部分更新，未传=不改；修改以 `id` 为定位主轴）；**不带 `row_id`** → **严格新建**（同名已存在→409 不再覆盖；新建=open）。MCDR `add` 不带 row_id 走新建；`set`/`setreg` 带 row_id 走更新。 |
 | DELETE | `/sheets/{sheet_id}/rows/{row_id}` | JWT·**owner** 或 service-token+UUID·owner | — | 204 | 删行。MCDR 同上 |
-| POST | `/sheets/{sheet_id}/rows/{row_id}/claim` | JWT 或 service-token+UUID | — | 200 `RowDetail` | **lock 专用**：任意玩家认领（open→claimed）。progress 行→409 |
-| PATCH | `/sheets/{sheet_id}/rows/{row_id}/delivery` | JWT·**认领人** 或 service-token+UUID·认领人 | `RowDeliveryRequest{delivered_qty}` | 200 `RowDetail` | **lock 专用**：上报交付量。progress 行→409（progress 用 `/contribute`） |
+| POST | `/sheets/{sheet_id}/rows/{row_id}/claim` | JWT 或 service-token+UUID | — | 200 `RowDetail` | **lock 专用**：任意玩家认领（open→claimed）。progress 行→409。**顶层行级联**：认领顶层 lock 父行 = 同事务认领其所有 open lock 子行（同 claimant）；子行（含父=lock）也可**单独**认领（issue #80 起无子行守卫） |
+| PATCH | `/sheets/{sheet_id}/rows/{row_id}/delivery` | JWT·**认领人** 或 service-token+UUID·认领人 | `RowDeliveryRequest{delivered_qty}` | 200 `RowDetail` | **lock 专用**：上报交付量（含子行——子行同 claimant 即可交付）。progress 行→409（progress 用 `/contribute`） |
 | POST | `/sheets/{sheet_id}/rows/{row_id}/contribute` | JWT 或 service-token+UUID | `RowContributeRequest{qty}` | 200 `RowDetail` | **progress 专用**：任意登录玩家上报贡献，`delivered += qty`（不封顶），幂等加贡献者，`≥need` 自动 done。lock 行→409 |
-| POST | `/sheets/{sheet_id}/rows/{row_id}/release` | JWT·**认领人\|owner** 或 service-token+UUID | — | 200 `RowDetail` | lock：解除锁定（→open）。progress（仅 owner）：清 delivered + 贡献者列表 + status=open |
+| POST | `/sheets/{sheet_id}/rows/{row_id}/release` | JWT·**认领人\|owner** 或 service-token+UUID | — | 200 `RowDetail` | lock：解除锁定（→open）。progress（仅 owner）：清 delivered + 贡献者列表 + status=open。**顶层行级联收窄**（issue #80 起）：解除顶层 lock 父行只级联解除 `claimant=父行认领者` 的 lock 子行，他人认领的子行保留；子行可单独解除 |
 | POST | `/sheets/{sheet_id}/rows/{row_id}/reject` | JWT·**认领人\|owner** 或 service-token+UUID | — | 200 `RowDetail` | **lock 专用**：打回（done→claimed；认领人自取消备齐 / 拥有者打回）。progress 行→409 |
 | PATCH | `/sheets/{sheet_id}/rows/{row_id}/progress` | JWT·**owner** 或 service-token+UUID·owner | `RowProgressRequest{delivered_qty}` | 200 `RowDetail` | **progress 专用**：拥有者/admin 直接覆写 `delivered_qty`（绝对值，可增可减）+ 按新值重算 status，**不动 contributors**（保留上交历史）。lock 行→409（请用 `/delivery`）。Web only（MCDR 未暴露） |
 
-> **子物品（迁移 0012）复用上述端点**：`PUT /rows` 携带 `parent_row_id` 即新建子行（须同时给 `registry_id` + `qty_per_unit`>0，`need_qty` 由后端 `ceil(qty_per_unit × 父行 need_qty)` 派生、请求值被忽略；`mode` 缺省继承父行）；claim / delivery / contribute / release / reject / progress 对子行**同样生效**——传子行 `row_id` 即可，子行按自身 `mode`/`status` 参与协作（其 `mode` 由父行继承、`need_qty` 派生）。不变量（单层 / 模式继承 / 级联重算 / 删父 CASCADE）见 §3。
+> **子物品（迁移 0012）复用上述端点——协作语义（issue #80 修订）**：`PUT /rows` 携带 `parent_row_id` 即新建子行（须同时给 `registry_id` + `qty_per_unit`>0，`need_qty` 由后端 `ceil(qty_per_unit × 父行 need_qty)` 派生、请求值被忽略；`mode` 缺省继承父行、**显式指定即生效**——父 lock 下子行可选 progress）。claim / delivery / contribute / release / reject / progress 对子行**同样生效**——传子行 `row_id` 即可，子行按自身 `mode`/`status` **独立**参与协作（`need_qty` 派生、mode/认领独立）。级联与继承规则：
+> - **认领级联**：认领顶层 lock 父行 → 同事务认领其所有 open lock 子行（同 claimant）。
+> - **新建继承认领者**：父行 lock 且已认领（claimed/done）时新建 lock 子行 → 落库即 `claimed + 同认领者 + delivered=0`（子行显式 progress 不继承）——认领后加的子行不再是无人能认领的「死行」。
+> - **解除级联收窄**：解除顶层 lock 父行只解除 `claimant=父行认领者` 的 lock 子行；他人认领的子行保留。
+> - **mode 不级联**：父行 mode 变化只级联重算子行 `need_qty`，不改子行 mode。
+> - **无 done 传导**：子行全部 done 不自动置父行 done。
+> - **父行终态冻结**：父行 `done`（备齐）后子行全部协作写被拒（claim/delivery/contribute/release/reject/progress/改行/reparent 均 409「父行已备齐，子行已锁定」；`PUT /rows` 往 done 父行下建子行 → 409「父行已备齐，不能添加子行」；`submit-batch` 对其子行整行 skip，reason 同 409 文案）。**动态判定**：不写子行状态——父行被打回（reject）或 need 上调（done→claimed 既有转换）即自动解冻，存量「父 done + 子行 open」免迁移自愈。**级联重算例外**：父行保持 done 时（delivered 超额、need 上调后仍 ≥need），owner 调父行 need 触发的级联重算仍会更新子行 `need_qty` 并重算状态（可能 done→claimed）——派生一致性（need=ceil(qty×父need)）优先于快照纯度，玩家写入口仍全拦，owner 打回父行即恢复。`DELETE /rows/{row_id}`（delsub）对冻结子行**同样 409**（快照定格，想删先打回父行）；删 done 顶层父行本身不拦（owner 显式清理整条目，CASCADE 连带删子行是整体移除）。
+> - **409 原因透传**：行状态冲突的 409 `detail` 为后端中文原因（如「无法认领：行状态为 claimed」「进度行无需认领，请直接上交」），直达玩家回执。不变量（单层 / 模式缺省继承 / 级联重算 / 删父 CASCADE）见 §3。
 
 ### 5.4 全量 CSV 导出
 
@@ -285,7 +292,9 @@ class RowUpsertRequest(BaseModel):
     # 更新路径（带 row_id）字段全可选，可只改 need/mode/sort（甚至只改名）。
     # 新建路径 item_name 缺失时，后端据 registry_id 用 LangJsonTranslator（复用投影解析翻译表，
     # translators/lang/*.zh_cn.json）查中文显示名，未命中回退 registry_id 本身。
-    # 子物品路径（parent_row_id 非空）：要求 registry_id 非空且 qty_per_unit>0，否则 422；need_qty 派生忽略（由 ceil(父行 need × qty_per_unit) 计算）；子行 item_name 自动加父名前缀「父名-本名」。
+    # 子物品路径（parent_row_id 非空）：要求 registry_id 非空且 qty_per_unit>0，否则 422；need_qty 派生忽略（由 ceil(父行 need × qty_per_unit) 计算）；
+    # mode 缺省继承父行、显式指定即生效（issue #80）；父行 lock 且已认领时新建 lock 子行落库即 claimed + 继承父行认领者（delivered=0）；
+    # 子行 item_name 自动加父名前缀「父名-本名」。
 
 class RowDeliveryRequest(BaseModel):
     delivered_qty: int       # ≥0
@@ -465,7 +474,7 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 | `0009_sheets_lifecycle` | `sheets.sheets` 加三列：`status`（text NOT NULL DEFAULT `'collecting'`，server_default 自动回填现有行）+ `archived_path`（text null）+ `archived_at`（timestamptz null）。两道 CHECK：`ck_sheets_status_values`（status ∈ collecting/constructing/archived）+ `ck_sheets_status_archive_consistency`（archived ⇒ path/at 非空；非 archived ⇒ path/at 为 null）。索引 `ix_sheets_status`。**可逆**（downgrade drop index/constraints/columns）。对应项目三阶段生命周期 |
 | `0010_sheet_rows_registry_id` | 给 `sheets.sheet_rows` 加列 `registry_id TEXT NULL`（隐式可空，无唯一约束；down_revision=`0009_sheets_lifecycle`）。语义：MC 物品注册名 `namespace:path`，**一键提交 `!!PCH sheet submit` 按此精确匹配表行**。兼容旧行（null）；block id ≠ item id 时存原值不归一化。**可逆** |
 | `0011_players_last_sheet_id` | **users schema**（sheets 快速重开配套）：给 `users.players` 加列 `last_sheet_id INTEGER NULL`（无 FK、无索引；down_revision=`0010_sheet_rows_registry_id`）。语义：玩家最后查看的 sheet id，由 `GET /sheets/{id}` JSON 详情路径 best-effort 写入（csv/404 不记），供 `GET /me/last_sheet` 读取。故意无 FK——表被删后自然失效（下次查看覆盖），对齐 `registry_id` 先例。**可逆**（downgrade 仅 DROP COLUMN） |
-| `0012_sheet_rows_hierarchy` | **子物品嵌套行**（issue #19，迁移 0012，down_revision=`0011_players_last_sheet_id`）：`sheet_rows` 加 `parent_row_id BIGINT NULL`（FK 自引用 ON DELETE CASCADE）+ `qty_per_unit`（初版误写 INTEGER）。删原 `UNIQUE(sheet_id, item_name)`，改两个部分唯一索引（顶层 `uq_sheet_rows_top_name`、子行 `uq_sheet_rows_sub_registry`）+ CHECK `ck_sheet_rows_sub_invariants`（子行必须有 registry_id 且 qty_per_unit≥1）+ 索引 `ix_sheet_rows_parent`。**不变量**：单层（子只能挂顶层）、模式继承（父 lock→子只能 lock）、单位用量级联（子 need = qty_per_unit × 父 need）。**可逆** |
+| `0012_sheet_rows_hierarchy` | **子物品嵌套行**（issue #19，迁移 0012，down_revision=`0011_players_last_sheet_id`）：`sheet_rows` 加 `parent_row_id BIGINT NULL`（FK 自引用 ON DELETE CASCADE）+ `qty_per_unit`（初版误写 INTEGER）。删原 `UNIQUE(sheet_id, item_name)`，改两个部分唯一索引（顶层 `uq_sheet_rows_top_name`、子行 `uq_sheet_rows_sub_registry`）+ CHECK `ck_sheet_rows_sub_invariants`（子行必须有 registry_id 且 qty_per_unit≥1）+ 索引 `ix_sheet_rows_parent`。**不变量**：单层（子只能挂顶层）、模式继承（父 lock→子只能 lock；**repo 层强制已废除，issue #80 起 mode 缺省继承+可独立设置**）、单位用量级联（子 need = qty_per_unit × 父 need）。**可逆** |
 | `0013_qty_per_unit_numeric` | **倍数放宽为小数**（down_revision=`0012_sheet_rows_hierarchy`）：纠正 0012 把 `qty_per_unit` 错写 INTEGER → 改 `NUMERIC(10,2)`（与模型一致，支持 0.5 等小数倍数）；CHECK `ck_sheet_rows_sub_invariants` 由 `qty_per_unit >= 1` 放宽为 `> 0`，匹配 schema `Field(gt=0)` 与玩法「倍数 ∈ (0,+∞)」。子行 need_qty 派生用 `ceil(qty_per_unit × 父 need)` 仍为整数。**downgrade 有损**（NUMERIC→INTEGER 截断小数） |
 
 ---
@@ -573,6 +582,8 @@ sheet_id,item_name,registry_id,need_qty,mode,status,claimant_uuid,delivered_qty,
 
 *增量（2026-07-19，merge origin/main 协管员 + manager 升 account 级）*：**协管员（manager）落地 account 级（R-5 一致）**——SheetManager 锚 `web_account_id`（重做 main 原 per-UUID `0014_sheet_managers`：列 `player_uuid` → `web_account_id BIGINT FK→web_accounts.id`；PK `(sheet_id, web_account_id)` 幂等；索引 `ix_sheet_managers_account`；`granted_by_uuid` 保留作审计）。**迁移链重编号**（两侧都占 0014）：`0013_qty_per_unit_float → 0014_web_accounts_bind → 0015_web_account_display_name → 0016_sheet_managers`（单 head 0016；main 原 `0014_sheet_managers` 重编号为 `0016`；HEAD 的 0014/0015 保持原号）。**权限 helper 重构**（`_shared.py`）：5 个 helper（删 `_can_edit` deprecated 别名 B4）——`_is_owner`（account_uuids）/`_is_superuser`（切 `_resolve_role` 与全局 RBAC 一致，B1）/`_can_manage`（tier A = owner ‖ superuser）/`_is_account_manager`（直接读 `sheet.managers`，删 `getattr` 兜底 B5；NULL 返 False）/`_can_operate`（tier B = A ‖ account_manager）。**行为变化（PR 必写）**：`advance ?to=constructing` 由 HEAD 的 tier A 改采 main 的 tier B（manager 也能推进施工，M07 必测）。**端点**（`app/api/sheets/managers.py`）：`POST /sheets/{id}/managers {player_uuid}` 后端解析 account（未绑 422，B7；与 owner 同账号 409 `SheetOwnerCannotBeManager`，B7；重复授予幂等不重发通知）；`DELETE /sheets/{id}/managers {web_account_id}` self-revoke 放行当 `web_account_id is not None and == player.web_account_id`（B6 NULL 守卫，M23 必测）。**SheetManagerEntry**：`{web_account_id, display_name, member_uuids, granted_at}`（与 RowContributor 结构对齐）；`SheetDetail.managers` 同形。**SheetDetail** 同时挂 `viewer_uuids`（HEAD）+ `managers`（main-account）。**权限契约表 M01–M26 + E1–E5** 同步落 `Backend/tests/` 与本文档 §7.1（三端权限对账权威）。**客户端 is_manager 判定**：前端用 auth store 绑定 UUIDs + `managers[].member_uuids` 求交（`isManager` 单一 computed，N2 DRY）；MCDR 用 sheet detail 的 `viewer_uuids` + `managers[].member_uuids` 求交（`_is_manager` 单一 helper，N2）。**HEAD 预存 3 个红测随合流修复**（`test_messages.py` contributors fixture 改 account-level shape）。dev DB 因迁移重命名 + 0014 改列需重置（`down -v` 重放）。
 
-*最后更新：2026-07-19（merge origin/main 协管员 + manager 升 account 级：§5.6 协管员章节重写为 account 锚定；§7 顶部补 tier A/B account 级判定说明；新增 §7.1 权限契约表 M01–M26 作三端权限对账权威；§14 加 merge 增量段）*
+*增量（2026-08-30，issue #80 子物品可独立协作）*：**废除子行认领/解除守卫**——父 lock 下子行可**单独** claim/release（原 409 删除）；**新建子行继承认领者**——父行 lock 且 claimed/done 时新建 lock 子行落库即 `claimed` + 同认领者（account 级）+ `delivered=0`（消除「父认领后新建子行永久 open」死行；显式 progress 子行不继承）；**release 级联收窄**——解除顶层 lock 父行只级联解除 claimant=父行认领者的 lock 子行，他人认领的保留；**mode 去级联**——父行 mode 变化不再级联改子行 mode（原 D7「只紧不松」废除），只级联重算子行 `need_qty`（并修复级联重算 float 直乘 → Decimal，`0.07×100` 不再多算 1）；**409 detail 透传**——六协作端点把 `SheetRowConflict` 中文原因（如「行已被认领」「该行不是锁定模式」）原样放进 `detail`，MCDR `_resolve` 直达玩家回执（兜底「状态非法」）；MCDR「需先认领」skip 不再折叠为「与您无关」（`skip_is_noise` 放行该 reason）、view lock 行（含子行）显示 `delivered/need`；前端放开子行认领/解除/模式/进度展示。**存量死行子行自愈**（可单独认领），无数据迁移。子行全 done **不**自动置父行 done。语义汇总见 §5.3 尾注级联规则。
+
+*最后更新：2026-08-30（issue #80 子物品生命周期：§3 不变量、§5.3 端点级联 + 尾注级联规则重写、§6 RowUpsertRequest 子物品注释、§12 迁移表 0012 不变量注记、§14 增量段）*
 
 *2026-07-09（子物品嵌套行 + sheets.py 包化重构：迁移 0012 + `parent_row_id`/`qty_per_unit` + 单层/模式继承/级联重算；sheets/ 包结构 + translation.py 公共翻译 + 通知 helper；MCDR addsub/delsub/setsub + 缩进渲染 + 单字按钮；前端树状渲染 + 子物品内联编辑）*

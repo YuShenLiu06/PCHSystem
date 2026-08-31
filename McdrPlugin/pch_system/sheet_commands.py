@@ -28,6 +28,7 @@ from .messages import (
     SHEET_FORBIDDEN,
     SHEET_NOT_FOUND,
     SHEET_CONFLICT,
+    SHEET_CONFLICT_DETAIL,
     SHEET_BAD_REQUEST,
     SHEET_UUID_FAIL,
     SHEET_HEAD,
@@ -119,7 +120,8 @@ def _resolve(server, player_name, outcome, *, on_success=None):
       403 → 权限不足或非认领人
       404 → 表或行不存在
       409 归档（detail 含「归档」/「archiv」）→ 项目已归档，只读
-      409 其他 → 状态非法
+      409 带 detail → 透传后端中文冲突原因（issue #80 G5，如「无法认领：行状态为 claimed」）
+      409 无 detail → 状态非法（通用文案兜底）
       422 → 参数有误（带 detail）
       其他 4xx/5xx → 服务暂不可用提示（重试无益，提示玩家稍后再试）
     """
@@ -137,9 +139,12 @@ def _resolve(server, player_name, outcome, *, on_success=None):
         if err.status == 404:
             server.tell(player_name, SHEET_NOT_FOUND)
         elif err.status == 409:
-            # 归档只读（detail 含「归档」或「archiv」）单独译；其余 409 为行/状态非法
+            # 归档只读（detail 含「归档」或「archiv」）单独译；其余 409 透传后端中文
+            # 冲突原因（issue #80 G5）；detail 缺失回退通用「状态非法」文案
             if "归档" in (err.detail or "") or "archiv" in (err.detail or "").lower():
                 server.tell(player_name, SHEET_ARCHIVED_READONLY)
+            elif err.detail:
+                server.tell(player_name, SHEET_CONFLICT_DETAIL.format(detail=err.detail))
             else:
                 server.tell(player_name, SHEET_CONFLICT)
         elif err.status == 422:
@@ -947,8 +952,9 @@ def _sheet_addsub(src, ctx, *, mode=None):
 
     参数：sheet_id, parent_row_id, qty_per_unit(>0), [mode], [sort]。
     registry_id 取自手持物品（依赖 minecraft_data_api）。
-    父 lock → 子强制 lock；父 progress → 子可 lock/progress（默认继承）。
-    need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty）。
+    mode 缺省继承父行、显式指定即生效（issue #80 起 mode 不再级联约束）；
+    父行已备齐（done）时后端拒绝新建子行（终态冻结）。
+    need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty，Decimal 精确取整）。
 
     mode 由命令树分支闭包烘入（MCDR Literal 不入 ctx，见 _sheet_advance_* 注释；
     S-1：https://docs.mcdreforged.com/en/latest/code_references/command.html §Literal）：
