@@ -952,8 +952,9 @@ def _sheet_addsub(src, ctx, *, mode=None):
 
     参数：sheet_id, parent_row_id, qty_per_unit(>0), [mode], [sort]。
     registry_id 取自手持物品（依赖 minecraft_data_api）。
-    父 lock → 子强制 lock；父 progress → 子可 lock/progress（默认继承）。
-    need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty）。
+    mode 缺省继承父行、显式指定即生效（issue #80 起 mode 不再级联约束）；
+    父行已备齐（done）时后端拒绝新建子行（终态冻结）。
+    need_qty 被忽略（后端派生 = qty_per_unit × 父行.need_qty，Decimal 精确取整）。
 
     mode 由命令树分支闭包烘入（MCDR Literal 不入 ctx，见 _sheet_advance_* 注释；
     S-1：https://docs.mcdreforged.com/en/latest/code_references/command.html §Literal）：

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RowDetail } from '../../../api/sheets'
 import {
   draftFromRow,
-  findParentMode,
+  isFrozenByParent,
   isSubRow,
   MODE_LOCK,
   MODE_PROGRESS,
@@ -248,9 +248,9 @@ describe('sheetHelpers', () => {
   })
 
   // ============================================================================
-  // findParentMode
+  // isFrozenByParent（issue #80 父行终态冻结）
   // ============================================================================
-  describe('findParentMode', () => {
+  describe('isFrozenByParent', () => {
     const rows: RowDetail[] = [
       {
         id: 1,
@@ -286,17 +286,23 @@ describe('sheetHelpers', () => {
       },
     ]
 
-    it('找到父行 → 返回父行的 mode', () => {
+    it('父行非 done（open/claimed）→ 子行不冻结', () => {
+      const child = rows[1] // 父行 status=open
+      expect(isFrozenByParent(child, rows)).toBe(false)
+    })
+
+    it('父行 done → 子行冻结', () => {
+      const doneParent: RowDetail = { ...rows[0], status: 'done' as const }
       const child = rows[1]
-      expect(findParentMode(child, rows)).toBe(MODE_PROGRESS)
+      expect(isFrozenByParent(child, [doneParent, child])).toBe(true)
     })
 
-    it('顶层行（parent_row_id: null）→ undefined', () => {
+    it('顶层行（parent_row_id: null）→ 恒不冻结', () => {
       const parent = rows[0]
-      expect(findParentMode(parent, rows)).toBeUndefined()
+      expect(isFrozenByParent(parent, rows)).toBe(false)
     })
 
-    it('父 id 不在 rows 中 → undefined', () => {
+    it('父 id 不在 rows 中 → 不冻结（保守放行，后端守卫兜底）', () => {
       const orphan: RowDetail = {
         id: 99,
         item_name: '孤儿',
@@ -313,7 +319,7 @@ describe('sheetHelpers', () => {
         qty_per_unit: null,
         updated_at: '2026-07-11T00:00:00Z',
       }
-      expect(findParentMode(orphan, rows)).toBeUndefined()
+      expect(isFrozenByParent(orphan, rows)).toBe(false)
     })
   })
 

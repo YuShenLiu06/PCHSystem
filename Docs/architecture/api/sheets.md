@@ -236,6 +236,7 @@ stateDiagram-v2
 > - **解除级联收窄**：解除顶层 lock 父行只解除 `claimant=父行认领者` 的 lock 子行；他人认领的子行保留。
 > - **mode 不级联**：父行 mode 变化只级联重算子行 `need_qty`，不改子行 mode。
 > - **无 done 传导**：子行全部 done 不自动置父行 done。
+> - **父行终态冻结**：父行 `done`（备齐）后子行全部协作写被拒（claim/delivery/contribute/release/reject/progress/改行/reparent 均 409「父行已备齐，子行已锁定」；`PUT /rows` 往 done 父行下建子行 → 409「父行已备齐，不能添加子行」；`submit-batch` 对其子行整行 skip，reason 同 409 文案）。**动态判定**：不写子行状态——父行被打回（reject）或 need 上调（done→claimed 既有转换）即自动解冻，存量「父 done + 子行 open」免迁移自愈。owner `delsub`（删子行）不受限（想改先打回父行）。
 > - **409 原因透传**：行状态冲突的 409 `detail` 为后端中文原因（如「行已被认领」「该行不是锁定模式」），直达玩家回执。不变量（单层 / 模式缺省继承 / 级联重算 / 删父 CASCADE）见 §3。
 
 ### 5.4 全量 CSV 导出

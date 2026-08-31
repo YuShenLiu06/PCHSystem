@@ -2473,3 +2473,195 @@ async def test_collect_participant_uuids_includes_sub_row_claimants():
         result = await sheet_repo.collect_participant_uuids(s, sid)
     # Assert：父子两 claimant 都在（子行不被遗漏），owner 也在
     assert result == {owner, claimant_a, claimant_b}
+
+
+# ---------- 父行终态冻结（issue #80 语义闭环）----------
+
+async def _seed_sheet_with_done_parent():
+    """构造「lock 父行已备齐 + lock/progress 两个子行」的最小场景。
+
+    父行 need=10，claimant 认领并交齐 → done；lock 子行随认领级联 claimed，
+    progress 子行保持 open（progress 无认领语义）。
+    返回 (sid, parent_rid, lock_child_rid, prog_child_rid, owner, claimant)。
+    """
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        lock_child = await sheet_repo.create_row(
+            s, sid, "子L", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        prog_child = await sheet_repo.create_row(
+            s, sid, "子P", need_qty=0, mode=sheet_repo.MODE_PROGRESS, sort_order=1,
+            registry_id="minecraft:dirt", parent_row_id=parent.id, qty_per_unit=2
+        )
+        await s.commit()
+        ids = (sid, parent.id, lock_child.id, prog_child.id)
+    # 认领父行并交齐 → done（lock 子行级联 claimed）
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, ids[0], ids[1], claimant)
+        await sheet_repo.set_row_delivery(s, ids[0], ids[1], 10)
+        await s.commit()
+    sid, parent_rid, lock_rid, prog_rid = ids
+    return sid, parent_rid, lock_rid, prog_rid, owner, claimant
+
+
+@pytest.mark.asyncio
+async def test_parent_done_freezes_child_collab_writes():
+    """父行备齐后：子行 claim/release/delivery/reject/progress/contribute/setsub
+    全部 409「父行已备齐，子行已锁定」（守卫先于行自身状态检查）。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act + Assert：七个写入口逐一撞冻结守卫
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.claim_row(s, sid, lock_rid, claimant)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.release_row(s, sid, lock_rid)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.set_row_delivery(s, sid, lock_rid, 5)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.reject_row(s, sid, lock_rid)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.set_row_progress(s, sid, prog_rid, 3)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.contribute_row(s, sid, prog_rid, claimant, 1)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.update_row(s, sid, lock_rid, item_name="改名")
+
+
+@pytest.mark.asyncio
+async def test_parent_done_reject_unfreezes_children():
+    """父行 done 被打回（reject → claimed）→ 子行自动解冻，无需任何解冻事务。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act：打回父行（done → claimed）
+    async with async_session_factory() as s:
+        await sheet_repo.reject_row(s, sid, parent_rid)
+        await s.commit()
+    # Assert：子行恢复可操作（lock 子行随级联认领是 claimed → 可解除）
+    async with async_session_factory() as s:
+        row = await sheet_repo.release_row(s, sid, lock_rid)
+        await s.commit()
+        assert row.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_parent_done_need_increase_unfreezes_children():
+    """父行 done 后 owner 调大 need → 既有 done→claimed 转换 → 子行解冻可写。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act：need 10 → 20（delivered=10 < 20 → done→claimed）
+    async with async_session_factory() as s:
+        parent = await sheet_repo.update_row(s, sid, parent_rid, need_qty=20)
+        await s.commit()
+    # Assert：父行离开终态，子行可写（setsub 此前被冻结）
+    assert parent.status == "claimed"
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, lock_rid, item_name="改名")
+        await s.commit()
+        assert row.item_name == "改名"
+
+
+@pytest.mark.asyncio
+async def test_parent_claimed_does_not_freeze_children():
+    """父行仅 claimed（进行中）→ 子行照常可操作（冻结只挂终态，#80 回归保护）。"""
+    # Arrange：父行认领未交齐（claimed），lock 子行级联 claimed，另建 open 子行
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        await s.commit()
+        parent_rid, child_rid = parent.id, child.id
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)  # 父+子均 claimed
+        await s.commit()
+    # Act + Assert：claimed 父行下子行解除成功（守卫只拦 done）
+    async with async_session_factory() as s:
+        row = await sheet_repo.release_row(s, sid, child_rid)
+        await s.commit()
+        assert row.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_create_row_under_done_parent_rejected():
+    """addsub 到 done 父行 → 409「父行已备齐，不能添加子行」（不产只读死行）。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act + Assert
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐，不能添加子行"):
+            await sheet_repo.create_row(
+                s, sid, "新子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=2,
+                registry_id="minecraft:sand", parent_row_id=parent_rid, qty_per_unit=1
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_row_reparent_frozen_by_done_parent():
+    """reparent 两端守卫：挂入 done 父行 409；从 done 父行移走子行（破坏快照）409。"""
+    # Arrange：父1（done）带子行；父2（open 顶层、无子）备好作 reparent 目标
+    sid, parent1_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    async with async_session_factory() as s:
+        parent2 = await sheet_repo.create_row(
+            s, sid, "父2", need_qty=5, mode=sheet_repo.MODE_LOCK, sort_order=9
+        )
+        await s.commit()
+        parent2_rid = parent2.id
+    # Act + Assert：顶层行挂入 done 父1 → 拒
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="目标父行已备齐"):
+            await sheet_repo.update_row(
+                s, sid, parent2_rid,
+                parent_row_id=parent1_rid, registry_id="minecraft:iron",
+                qty_per_unit=1,
+            )
+    # done 父1 的子行移走（挂到父2）→ 拒
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.update_row(s, sid, lock_rid, parent_row_id=parent2_rid)
+
+
+@pytest.mark.asyncio
+async def test_batch_submit_skips_children_of_done_parent():
+    """batch_submit：父行 done 的子行整行 skip（reason 透传游戏端回执），不报错不中断。"""
+    # Arrange：父 done + 子（级联 claimed，认领者=提交者，背包足量——满足一切
+    # 交付条件，仅因父行终态被 skip）
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.batch_submit(
+            s, sid,
+            items_map={"minecraft:stone": 999},
+            player_uuid=claimant,
+            account_uuids={claimant},
+        )
+    # Assert：子行 skipped + 冻结 reason；父行自身走既有「已备齐」skip
+    child_outcomes = [o for o in result.outcomes if o.row_id == lock_rid]
+    assert len(child_outcomes) == 1
+    assert child_outcomes[0].action == "skipped"
+    assert child_outcomes[0].reason == "父行已备齐，子行已锁定"
+    assert result.totals.skipped >= 1

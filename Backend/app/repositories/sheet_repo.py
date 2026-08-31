@@ -514,6 +514,30 @@ async def _validate_parent_for_sub(
     return parent
 
 
+def _derived_need_qty(qty_per_unit: float, parent_need_qty: int) -> int:
+    """子行派生需求 = ceil(qty_per_unit × parent.need_qty)，Decimal 精确取整。
+
+    单点收口（create_row / update_row 子行重算 / 父行级联重算共用）——重复内联
+    副本曾漂移出 float 直乘 bug（ceil(0.07×100)=8，issue #80 G10），勿再内联。
+    """
+    return math.ceil(Decimal(str(qty_per_unit)) * Decimal(parent_need_qty))
+
+
+async def _assert_parent_not_done(session: AsyncSession, row: SheetRow) -> None:
+    """父行终态冻结守卫（issue #80 语义闭环）。
+
+    父行备齐（done）后子行协作写全部拒绝（409「父行已备齐，子行已锁定」）——
+    动态判定而非状态传导：父行被打回（reject）或 need 下调（_recompute_after_edit
+    既有 done→claimed 转换）即自动解冻，存量「父 done + 子行 open」免迁移自愈。
+    顶层行（parent 为 null）直接放行；owner 管理操作（delsub）不经此守卫。
+    """
+    if row.parent_row_id is None:
+        return
+    parent = await session.get(SheetRow, row.parent_row_id)
+    if parent is not None and parent.status == STATUS_DONE:
+        raise SheetRowConflict("父行已备齐，子行已锁定")
+
+
 async def create_row(
     session: AsyncSession,
     sheet_id: int,
@@ -550,6 +574,9 @@ async def create_row(
             raise ValueError("子行必传 registry_id")
         if qty_per_unit is None or qty_per_unit <= 0:
             raise ValueError("子行 qty_per_unit 必须 > 0")
+        # 父行终态：已备齐的配方不再接收新子行（否则建出来即只读死行）。
+        if parent.status == STATUS_DONE:
+            raise SheetRowConflict("父行已备齐，不能添加子行")
         # 模式缺省继承：显式值优先，不再被父行覆盖（issue #80 G3）
         mode = mode if mode is not None else parent.mode
         # 认领者继承（issue #80 G4）：父 lock 已认领 → lock 子行落库即 claimed。
@@ -559,9 +586,8 @@ async def create_row(
             and mode == MODE_LOCK
             and parent.claimant_uuid is not None
         )
-        # D2：Decimal 精确计算（Python float 直接相乘会让 ceil(0.07*100)=8，
-        # 应为 7）。parent.need_qty 是 int，Decimal×int 精确。
-        need_qty = math.ceil(Decimal(str(qty_per_unit)) * parent.need_qty)
+        # D2：子行派生 need（_derived_need_qty 单点收口，Decimal 精确取整）。
+        need_qty = _derived_need_qty(qty_per_unit, parent.need_qty)
         # 子行 item_name 自动加父名前缀，避免 flat 视图（CSV/MCDR 列表）重名歧义。
         # 仅创建路径加前缀；更新路径（update_row）尊重调用方传入值，不重拼。
         item_name = f"{parent.item_name}-{item_name}"
@@ -688,11 +714,18 @@ async def update_row(
             if effective_qty is None or effective_qty <= 0:
                 raise ValueError("顶层行转子行必须有 qty_per_unit > 0")
 
+    # 父行终态冻结（issue #80 语义闭环）：子行写先查现父（把备齐配方的材料行
+    # 移走同样破坏快照）；reparent 再查新父（挂入备齐配方）。顶层行自身不受限
+    # ——owner 调 need 触发 done→claimed 转换即自动解冻子行，级联重算走时机②。
+    await _assert_parent_not_done(session, row)
+    if reparent and new_parent is not None and new_parent.status == STATUS_DONE:
+        raise SheetRowConflict("目标父行已备齐，不能挂为子行")
+
     # D2/D3：子行 need_qty 重算。触发：
     #   - qty_per_unit 变（非 reparent）→ 用当前 parent
     #   - reparent（parent_row_id 变）→ 用新 parent（顶层→子行 / 子→子换父）
     #   - 两者同时 → 用新 parent + 新 qty_per_unit
-    # Decimal 精确计算（float 直接相乘会让 ceil(0.07*100)=8）。
+    # _derived_need_qty 单点收口（Decimal 精确取整）。
     need_recompute = (
         qty_per_unit is not None and row.parent_row_id is not None
     ) or reparent
@@ -704,7 +737,7 @@ async def update_row(
         if calc_parent is not None:
             calc_qty = qty_per_unit if qty_per_unit is not None else row.qty_per_unit
             if calc_qty is not None:
-                row.need_qty = math.ceil(Decimal(str(calc_qty)) * calc_parent.need_qty)
+                row.need_qty = _derived_need_qty(calc_qty, calc_parent.need_qty)
 
     if item_name is not None:
         row.item_name = item_name
@@ -746,10 +779,8 @@ async def update_row(
         for child in child_rows:
             child_need_changed = False
             if child.qty_per_unit is not None:
-                # Decimal 精确计算（对齐 create_row，float 直乘会让 ceil(0.07*100)=8）
-                child.need_qty = math.ceil(
-                    Decimal(str(child.qty_per_unit)) * row.need_qty
-                )
+                # _derived_need_qty 单点收口（对齐 create_row，Decimal 精确取整）
+                child.need_qty = _derived_need_qty(child.qty_per_unit, row.need_qty)
                 child_need_changed = True
             if child_need_changed:
                 await _recompute_after_edit(
@@ -785,6 +816,7 @@ async def claim_row(
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    await _assert_parent_not_done(session, row)
     if row.mode == MODE_PROGRESS:
         raise SheetRowConflict("进度行无需认领，请直接上交")
     if row.status != STATUS_OPEN:
@@ -842,6 +874,7 @@ async def set_row_delivery(
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    await _assert_parent_not_done(session, row)
     if row.mode == MODE_PROGRESS:
         raise SheetRowConflict("进度行不能标备齐，请用贡献上交")
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
@@ -864,6 +897,7 @@ async def set_row_progress(
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    await _assert_parent_not_done(session, row)
     if row.mode != MODE_PROGRESS:
         raise SheetRowConflict("锁定行不能调进度，请标备齐交付")
     row.delivered_qty = delivered_qty
@@ -892,6 +926,7 @@ async def release_row(
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    await _assert_parent_not_done(session, row)
     if row.status not in (STATUS_CLAIMED, STATUS_DONE):
         raise SheetRowConflict(f"无法解除：行状态为 {row.status}")
 
@@ -922,7 +957,8 @@ async def release_row(
             child.status = STATUS_OPEN
             child.claimant_uuid = None
             child.delivered_qty = 0
-            await clear_contributors(session, child.id)
+            # 级联子行必为 lock（mode 过滤）——lock 行贡献者按不变量恒空
+            # （mode 切换时 _recompute_after_edit 已清），无需再逐个清。
 
     await session.flush()
     return row
@@ -936,6 +972,7 @@ async def reject_row(
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    await _assert_parent_not_done(session, row)
     if row.mode == MODE_PROGRESS:
         raise SheetRowConflict("进度行无打回，请用解除重置进度")
     if row.status != STATUS_DONE:
@@ -996,6 +1033,7 @@ async def contribute_row(
     row = await _lock_row(session, sheet_id, row_id)
     if row is None:
         return None
+    await _assert_parent_not_done(session, row)
     if row.mode != MODE_PROGRESS:
         raise SheetRowConflict("锁定行不能贡献，请先认领后交付")
     # need=0 = 无目标（无限收集），永不 done，可一直上交；仅 need>0 的 done 行拒绝重复上交
@@ -1054,10 +1092,33 @@ async def batch_submit(
 
     outcomes: list[BatchRowOutcome] = []
     totals = BatchSubmitTotals()
+    # 父行终态冻结（issue #80 语义闭环）：父行备齐后子行整批 skip（reason 透传
+    # 游戏端回执）。list_rows 稳定序父先于子，用 map 记顶层行状态供子行判定。
+    parent_status: dict[int, str] = {}
 
     for row, _claimant_name in rows_with_names:
+        # 记录顶层行状态供子行冻结判定——必须在 registry_id 过滤之前（父行
+        # 可能无 registry_id 而被 continue 跳过，状态记录与它是否参与无关）。
+        if row.parent_row_id is None:
+            parent_status[row.id] = row.status
         # 步骤 3：无 registry_id 不参与（不产 outcome）
         if not row.registry_id:
+            continue
+
+        if parent_status.get(row.parent_row_id) == STATUS_DONE:
+            outcomes.append(
+                BatchRowOutcome(
+                    row_id=row.id,
+                    registry_id=row.registry_id,  # type: ignore[arg-type]
+                    item_name=row.item_name,
+                    mode=row.mode,
+                    action="skipped",
+                    reason="父行已备齐，子行已锁定",
+                    delivered_qty=row.delivered_qty,
+                    need_qty=row.need_qty,
+                )
+            )
+            totals.skipped += 1
             continue
 
         # 移植 scanner.py:171 —— inventory.get(rid, 0)：物品清单未含此行视为 have=0

@@ -55,6 +55,7 @@ const {
   isClaimant,
   canClaimRow,
   canReleaseRow,
+  isRowFrozen,
   sheetErrorMessage,
   onAdvance,
   onSaveTitle,
@@ -530,7 +531,7 @@ watch(sheetId, () => {
                   <el-button size="small" @click="onCancelEdit(row)">取消</el-button>
                 </template>
                 <template v-else>
-                  <el-button size="small" @click="onStartEdit(row)">编辑</el-button>
+                  <el-button v-if="!isRowFrozen(row)" size="small" @click="onStartEdit(row)">编辑</el-button>
                   <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
                 </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
@@ -596,12 +597,12 @@ watch(sheetId, () => {
 
               <!-- 玩家协作按钮 -->
               <el-button v-if="canClaimRow(row)" size="small" type="primary" @click="onClaim(row)">认领</el-button>
-              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
+              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player && !isRowFrozen(row)" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !isRowFrozen(row)" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
               <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit && canReleaseRow(row)" size="small" @click="onRelease(row)">放弃</el-button>
               <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
-              <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_PROGRESS && !isRowFrozen(row)" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done' && !isRowFrozen(row)" size="small" type="warning" @click="onReject(row)">打回</el-button>
             </template>
             <span v-else class="pch-dash">—</span>
           </template>
@@ -828,7 +829,7 @@ watch(sheetId, () => {
                   <el-button size="small" @click="onCancelEdit(row)">取消</el-button>
                 </template>
                 <template v-else>
-                  <el-button size="small" @click="onStartEdit(row)">编辑</el-button>
+                  <el-button v-if="!isRowFrozen(row)" size="small" @click="onStartEdit(row)">编辑</el-button>
                   <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
                 </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
@@ -894,12 +895,12 @@ watch(sheetId, () => {
 
               <!-- 玩家协作按钮 -->
               <el-button v-if="canClaimRow(row)" size="small" type="primary" @click="onClaim(row)">认领</el-button>
-              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
+              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player && !isRowFrozen(row)" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !isRowFrozen(row)" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
               <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit && canReleaseRow(row)" size="small" @click="onRelease(row)">放弃</el-button>
               <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
-              <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_PROGRESS && !isRowFrozen(row)" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done' && !isRowFrozen(row)" size="small" type="warning" @click="onReject(row)">打回</el-button>
             </template>
             <span v-else class="pch-dash">—</span>
           </template>
