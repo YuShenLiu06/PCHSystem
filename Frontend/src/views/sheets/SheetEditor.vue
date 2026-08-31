@@ -487,6 +487,13 @@ watch(sheetId, () => {
             <el-tag :type="statusTagType(row.status as 'open' | 'claimed' | 'done')" size="small">
               {{ statusLabel(row.status as 'open' | 'claimed' | 'done') }}
             </el-tag>
+            <el-tooltip
+              v-if="isRowFrozen(row)"
+              content="父行已备齐，子行已锁定（打回父行即可解冻）"
+              placement="top"
+            >
+              <el-tag type="info" size="small" effect="plain" class="frozen-tag">🔒 父行已备齐</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
 
@@ -603,6 +610,7 @@ watch(sheetId, () => {
               <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
               <el-button v-if="canEdit && row.mode === MODE_PROGRESS && !isRowFrozen(row)" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
               <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done' && !isRowFrozen(row)" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <span v-if="isRowFrozen(row)" class="frozen-hint">🔒 已锁定</span>
             </template>
             <span v-else class="pch-dash">—</span>
           </template>
@@ -785,6 +793,13 @@ watch(sheetId, () => {
             <el-tag :type="statusTagType(row.status as 'open' | 'claimed' | 'done')" size="small">
               {{ statusLabel(row.status as 'open' | 'claimed' | 'done') }}
             </el-tag>
+            <el-tooltip
+              v-if="isRowFrozen(row)"
+              content="父行已备齐，子行已锁定（打回父行即可解冻）"
+              placement="top"
+            >
+              <el-tag type="info" size="small" effect="plain" class="frozen-tag">🔒 父行已备齐</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
 
@@ -901,6 +916,7 @@ watch(sheetId, () => {
               <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
               <el-button v-if="canEdit && row.mode === MODE_PROGRESS && !isRowFrozen(row)" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
               <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done' && !isRowFrozen(row)" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <span v-if="isRowFrozen(row)" class="frozen-hint">🔒 已锁定</span>
             </template>
             <span v-else class="pch-dash">—</span>
           </template>
@@ -955,6 +971,14 @@ watch(sheetId, () => {
 
 .pch-delivery__sep {
   color: var(--pch-text-muted);
+  opacity: 0.6;
+}
+.frozen-tag {
+  margin-left: 4px;
+}
+
+.frozen-hint {
+  font-size: 12px;
   opacity: 0.6;
 }
 </style>
