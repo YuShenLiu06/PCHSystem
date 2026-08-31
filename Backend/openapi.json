@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "HTCMC PCHSystem",
-    "version": "0.10.1"
+    "version": "0.10.2"
   },
   "paths": {
     "/healthz": {
