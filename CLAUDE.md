@@ -165,7 +165,7 @@ PCHSystem/
 
 - [ ] **玩家客户端 mod 相关命令** `!!PCH construction switch`（切上报源）/ `!!PCH mod-token`（JWT 出码流，复用 bind 双向短码范式）。**MCDR 默认方块追踪器已落地**（v0.9.0-rc.1：追踪器 + 按玩家路由 + `!!PCH construction join/leave/current` 命令，[`api/construction.md`](./Docs/architecture/api/construction.md) §5 C-1~C-10 已兑现）；后端 `get_construction_reporter` 双通道 + 加入施工 + 上报事件流水 + 按材料封顶均已就绪。
 - [ ] **施工 switch-self local 的 mod_id 归属校验**（CR M-1，2026-07-27）：`POST /v1/construction/source/switch-self` mode=local 当前接受玩家声明的 `source_id`（mod_id）不校验归属（docstring + [`api/construction.md`](./Docs/architecture/api/construction.md) §6 已标注妥协）。**mod-token PR 必须兑现**：签发带 `mod_id` 的 JWT 时绑定 account，switch-self local 校验 `mod_id ∈ 该 account 已签发集`，防玩家冒充他人 mod。
-- [ ] **测试 flakiness 根治**（CR M-2，2026-07-27）：`Backend/tests/conftest.py::_truncate_db` 同步 TRUNCATE 与 async session 偶发死锁，致重 DB 写入测试全量批跑偶发失败（`pytest --lf` 重试全绿，CI 同策略缓解，**非本特性引入**）。根治方案：改异步 fixture 或 `SET lock_timeout`。
+- [x] ~~测试 flakiness 根治（CR M-2，2026-07-27）~~ **已修（2026-08-30，随 issue #80）**：实际根因是 `_svc_token` fixture 裸赋值 `deps._settings = get_settings()` 的 **service-token 顺序泄漏**（裸赋值换指针不经 monkeypatch 登记，teardown 不还原 → 先跑文件把运行时 token 永久换成 `"svc"`，construction 系顺序性 401），**非** TRUNCATE 死锁；13 个测试文件已改 `monkeypatch.setattr` 属性登记式（范式沉淀 `Backend/CLAUDE.md` RS-14），全量批跑 752 passed 恢复全绿。TRUNCATE 死锁疑点未再复现，若复现再按异步 fixture / `SET lock_timeout` 处理。
 - [ ] **前端 `Identities.vue`**：账号下多 UUID 列表 + `active_uuid` 切换 UI 尚未实现（身份主锚升 account 级后规划，2026-07-19）。
 - [ ] **后端拆分为 `user_service/` 等子目录**后，用 `service-claude-md` skill 生成各子服务 CLAUDE.md（当前 Backend 仍为单 CLAUDE.md 导航待拆分）。
 - [ ] **wiki.js 纳入部署 + wiki 内容 git 仓 host 选型**（GitHub / Gitea / GitLab，未决；当前 compose 仅 postgres + backend，wiki.js 独立部署、不入本仓 compose）。
@@ -174,4 +174,4 @@ PCHSystem/
 
 ---
 
-*最后更新：2026-08-23（跨工具别名落地：根/Backend/Frontend/McdrPlugin 四处 `AGENTS.md → CLAUDE.md` 软链 + `.agents → .claude` 索引软链，约定见 §6）*
+*最后更新：2026-08-30（issue #80 子物品生命周期修复：§7 CR M-2 测试 flakiness 待办闭环——实际根因为 service-token fixture 泄漏，非 TRUNCATE 死锁）*

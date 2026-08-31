@@ -697,6 +697,41 @@ class SubmitBatchReceiptTest(unittest.TestCase):
         self.assertIn("另有 2 行与您无关已折叠", msg)
 
 
+class ResolveConflictDetailTest(unittest.TestCase):
+    """issue #80 G5：_resolve 409 分支透传后端 detail（中文冲突原因）。
+
+    后端 collab 六端点已把 SheetRowConflict 具体原因写入 409 detail（如
+    「无法认领：行状态为 claimed」）；MCDR 端不再统一吞为「状态非法」。
+    归档特判优先于透传；detail 缺失回退通用文案。"""
+
+    def _resolve_told(self, outcome):
+        src, told = _make_src_server()
+        sheet_commands._resolve(src.get_server.return_value, "玩家A", outcome)
+        return " ".join(str(m) for m in told)
+
+    def test_409_detail_passed_through(self):
+        # 行级冲突原因直达玩家（含行状态原文），不再只有笼统「状态非法」
+        err = sheet_commands.sheet_client.HttpError(
+            status=409, detail="无法认领：行状态为 claimed")
+        msg = self._resolve_told(err)
+        self.assertIn("无法认领：行状态为 claimed", msg)
+        self.assertIn("!!PCH sheet view", msg)  # 保留查看行状态引导
+
+    def test_409_without_detail_keeps_generic_conflict(self):
+        # detail 缺失（后端旧版/未知来源）→ 回退通用「状态非法」文案
+        err = sheet_commands.sheet_client.HttpError(status=409, detail=None)
+        msg = self._resolve_told(err)
+        self.assertIn("状态非法", msg)
+
+    def test_409_archived_still_translated_before_detail(self):
+        # 归档 409（detail 含 archiv）优先译「已归档，只读」，不走透传分支
+        err = sheet_commands.sheet_client.HttpError(
+            status=409, detail="sheet 7 is archived (terminal)")
+        msg = self._resolve_told(err)
+        self.assertIn("已归档，只读", msg)
+        self.assertNotIn("状态非法", msg)
+
+
 class SubmitchestWiringTest(unittest.TestCase):
     """!!submitc 剥离为外部库后的接线验证（v0.10.0）。
 

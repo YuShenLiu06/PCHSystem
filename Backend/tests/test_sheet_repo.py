@@ -1502,17 +1502,29 @@ async def test_create_row_sub_item_qty_per_unit_must_be_positive():
 
 
 @pytest.mark.asyncio
-async def test_create_row_sub_item_inherits_mode_from_lock_parent():
-    """子物品：父 lock（mode=0）→ 强制子 lock。"""
+async def test_create_row_sub_item_explicit_mode_respected_under_lock_parent():
+    """issue #80：父 lock 下子行显式 mode=progress 不再被静默覆盖（缺省才继承）。"""
     sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=0)  # lock
     async with async_session_factory() as s:
-        # 尝试验 mode=1（progress），但被强制为 lock
         child = await sheet_repo.create_row(
-            s, sid, "child", need_qty=0, mode=1, sort_order=0,  # 传 mode=1，预期被覆盖
+            s, sid, "child", need_qty=0, mode=1, sort_order=0,  # 显式 progress
             registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
         )
         await s.commit()
-        assert child.mode == 0  # 被强制为 lock
+        assert child.mode == 1  # 显式值被尊重
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_mode_default_inherits_from_lock_parent():
+    """缺省 mode=None → 继承父 lock（既有缺省继承行为保留）。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=0)  # lock
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=None, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        assert child.mode == 0  # 缺省继承 lock
 
 
 @pytest.mark.asyncio
@@ -1556,8 +1568,8 @@ async def test_update_row_parent_need_change_cascades_to_children():
 
 
 @pytest.mark.asyncio
-async def test_update_row_parent_mode_to_lock_forces_children_lock():
-    """级联：父行 mode 切 lock → 非 lock 子行强制 lock + 重置协作（贡献者清空）。"""
+async def test_update_row_parent_mode_change_does_not_cascade_to_children():
+    """issue #80：父行 mode 切换不再级联改子行 mode（子行 progress 保持 + 进度保留）。"""
     sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=1)  # progress
     contributor = await _seed_player("bob")
     child_rid = None
@@ -1576,18 +1588,43 @@ async def test_update_row_parent_mode_to_lock_forces_children_lock():
         updated_parent = await sheet_repo.update_row(s, sid, parent_rid, mode=0)
         await s.commit()
         assert updated_parent.mode == 0
-    # 验证子行被强制 lock + 重置
+    # 验证子行 mode/进度均不受父行切换影响
     async with async_session_factory() as s:
         child_result = await sheet_repo.get_row(s, sid, child_rid)
         assert child_result is not None
         child_row, _ = child_result
-        assert child_row.mode == 0  # 强制 lock
-        assert child_row.delivered_qty == 0  # 交付被清
-    # 验证贡献者被清空
+        assert child_row.mode == 1  # 不再强制 lock
+        assert child_row.delivered_qty == 5  # 进度保留
+    # 验证贡献者保留
     async with async_session_factory() as s:
         contrib_map = await sheet_repo.list_contributors(s, [child_rid])
-        # 没有贡献者时，字典中不包含该键
-        assert child_rid not in contrib_map or contrib_map.get(child_rid) == []
+        assert contrib_map.get(child_rid)  # 贡献者仍在
+
+
+@pytest.mark.asyncio
+async def test_update_row_parent_need_cascade_decimal_exact():
+    """G10 回归：父行 need 级联重算用 Decimal 而非 float 直乘——
+    0.07 × 100 float 直乘 = 7.000000000000001 → ceil=8（多算 1）；
+    Decimal 精确 = 7。创建路径（create_row）已是 Decimal，级联路径须一致。"""
+    sid, parent_rid = await _make_sheet_with_row(need_qty=10, mode=0)
+    child_rid = None
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "child", need_qty=0, mode=0, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=0.07
+        )
+        child_rid = child.id
+        await s.commit()
+        assert child.need_qty == 1  # ceil(0.07 × 10) = 1
+    # 父行 need 改 100 → 级联重算（float bug 在此路径得 8）
+    async with async_session_factory() as s:
+        await sheet_repo.update_row(s, sid, parent_rid, need_qty=100)
+        await s.commit()
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        child_row = next((r for r, _ in rows if r.id == child_rid), None)
+        assert child_row is not None
+        assert child_row.need_qty == 7  # ceil(Decimal("0.07") × 100) = 7
 
 
 @pytest.mark.asyncio
@@ -1771,8 +1808,8 @@ async def test_claim_top_lock_parent_cascades_to_children():
 
 
 @pytest.mark.asyncio
-async def test_claim_lock_child_raises_conflict():
-    """认领「lock 父行」的子行 → 抛 SheetRowConflict（不得单独认领）。"""
+async def test_claim_lock_child_under_lock_parent_succeeds():
+    """issue #80：lock 子行在父=lock（open，未认领）时也可单独认领（守卫已删）。"""
     owner = await _seed_player()
     claimant = await _seed_player("bob")
     async with async_session_factory() as s:
@@ -1786,10 +1823,18 @@ async def test_claim_lock_child_raises_conflict():
         )
         await s.commit()
         child_rid = child.id
-    # 尝试认领子行 → 抛冲突
+    # 单独认领子行（父行保持 open）→ 成功
     async with async_session_factory() as s:
-        with pytest.raises(SheetRowConflict, match="子物品随父行认领"):
-            await sheet_repo.claim_row(s, sid, child_rid, claimant)
+        row = await sheet_repo.claim_row(s, sid, child_rid, claimant)
+        await s.commit()
+        assert row.status == "claimed"
+        assert row.claimant_uuid == claimant
+    # 父行仍 open（认领子行不级联父行）
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        assert rows_by_id[child_rid].status == "claimed"
+        assert rows_by_id[child_rid].claimant_uuid == claimant
 
 
 @pytest.mark.asyncio
@@ -1862,8 +1907,8 @@ async def test_release_top_lock_parent_cascades_to_children():
 
 
 @pytest.mark.asyncio
-async def test_release_lock_child_raises_conflict():
-    """解除「lock 父行」的子行 → 抛 SheetRowConflict（不得单独解除）。"""
+async def test_release_lock_child_succeeds():
+    """issue #80：子行可单独解除（守卫已删）；父行 claimed 不受影响。"""
     owner = await _seed_player()
     claimant = await _seed_player("bob")
     async with async_session_factory() as s:
@@ -1881,10 +1926,195 @@ async def test_release_lock_child_raises_conflict():
     async with async_session_factory() as s:
         await sheet_repo.claim_row(s, sid, parent.id, claimant)
         await s.commit()
-    # 尝试解除子行 → 抛冲突
+    # 单独解除子行 → 成功
     async with async_session_factory() as s:
-        with pytest.raises(SheetRowConflict, match="子物品随父行解除"):
-            await sheet_repo.release_row(s, sid, child_rid)
+        row = await sheet_repo.release_row(s, sid, child_rid)
+        await s.commit()
+        assert row.status == "open"
+        assert row.claimant_uuid is None
+    # 父行仍 claimed
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        assert rows_by_id[child_rid].status == "open"
+        assert rows_by_id[parent.id].status == "claimed"
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_inherits_claimant_from_claimed_parent():
+    """issue #80 核心：父行已认领后新建子行 → 默认继承父行认领者（claimed + 同 claimant + delivered=0），
+    不再产生永久 open 死行。之后子行可单独 release / 被他人认领（允许更改）。"""
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        await s.commit()
+        parent_rid = parent.id
+    # 先认领父行
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)
+        await s.commit()
+    # 认领后新建子行 → 继承认领者
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=None, sort_order=0,  # 缺省继承父 lock
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        child_rid = child.id
+    # 验证继承：claimed + 同 claimant + delivered=0
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        child_row = rows_by_id[child_rid]
+        assert child_row.status == "claimed"
+        assert child_row.claimant_uuid == claimant
+        assert child_row.delivered_qty == 0
+        assert child_row.need_qty == 20  # 2 × 10
+
+
+@pytest.mark.asyncio
+async def test_create_row_sub_item_under_open_parent_stays_open():
+    """父行未认领（open）时新建子行 → 子行 open、无认领者（无可继承）。"""
+    owner = await _seed_player()
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=None, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=2
+        )
+        await s.commit()
+        child_rid = child.id
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        child_row = rows_by_id[child_rid]
+        assert child_row.status == "open"
+        assert child_row.claimant_uuid is None
+
+
+@pytest.mark.asyncio
+async def test_create_row_progress_child_under_claimed_parent_stays_open():
+    """子行显式 progress 时不继承认领者（progress 行无认领语义）。"""
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        await s.commit()
+        parent_rid = parent.id
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)
+        await s.commit()
+    # 显式 progress 子行 → open、无认领者
+    async with async_session_factory() as s:
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=sheet_repo.MODE_PROGRESS, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        child_rid = child.id
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        child_row = rows_by_id[child_rid]
+        assert child_row.mode == sheet_repo.MODE_PROGRESS
+        assert child_row.status == "open"
+        assert child_row.claimant_uuid is None
+
+
+@pytest.mark.asyncio
+async def test_release_top_lock_parent_cascades_same_claimant_only():
+    """issue #80：解除顶层 lock 父行 → 只级联解除「同认领者」的子行；
+    他人认领的子行保留 claimed（级联收窄，防误清他人工作）。"""
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    other = await _seed_player("carol")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        await s.commit()
+        parent_rid = parent.id
+    # 认领父行 → 子A 级联 claimed（同认领者）
+    async with async_session_factory() as s:
+        child_a = await sheet_repo.create_row(
+            s, sid, "子A", need_qty=0, mode=None, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent_rid, qty_per_unit=1
+        )
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)
+        await s.commit()
+        child_a_rid = child_a.id
+    # 认领后新建子B → 继承认领者 → 单独解除 → 他人 carol 认领
+    async with async_session_factory() as s:
+        child_b = await sheet_repo.create_row(
+            s, sid, "子B", need_qty=0, mode=None, sort_order=1,
+            registry_id="minecraft:dirt", parent_row_id=parent_rid, qty_per_unit=2
+        )
+        await s.commit()
+        child_b_rid = child_b.id
+    async with async_session_factory() as s:
+        await sheet_repo.release_row(s, sid, child_b_rid)
+        await s.commit()
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, child_b_rid, other)
+        await s.commit()
+    # 解除父行 → 子A（同认领者）被级联解除；子B（他人）保留
+    async with async_session_factory() as s:
+        await sheet_repo.release_row(s, sid, parent_rid)
+        await s.commit()
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        assert rows_by_id[parent_rid].status == "open"
+        assert rows_by_id[child_a_rid].status == "open"
+        assert rows_by_id[child_a_rid].claimant_uuid is None
+        assert rows_by_id[child_b_rid].status == "claimed"
+        assert rows_by_id[child_b_rid].claimant_uuid == other
+
+
+@pytest.mark.asyncio
+async def test_release_top_progress_parent_keeps_lock_child_claim():
+    """解除顶层 progress 父行（清贡献者）→ 单独认领的 lock 子行不受影响。"""
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_PROGRESS, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        await s.commit()
+        parent_rid, child_rid = parent.id, child.id
+    # 子行单独认领（父=progress 原本就允许；新语义下父=lock 也允许）
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, child_rid, claimant)
+        await s.commit()
+    # 父行进贡献使 status=claimed（release 仅接受 claimed/done；open 行 409 是既有行为）
+    async with async_session_factory() as s:
+        await sheet_repo.contribute_row(s, sid, parent_rid, claimant, 3)
+        await s.commit()
+    # 解除 progress 父行 → 子行认领保留
+    async with async_session_factory() as s:
+        await sheet_repo.release_row(s, sid, parent_rid)
+        await s.commit()
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        assert rows_by_id[child_rid].status == "claimed"
+        assert rows_by_id[child_rid].claimant_uuid == claimant
 
 
 # ---------- D2：浮点 need_qty Decimal 精确计算 ----------
@@ -2243,3 +2473,267 @@ async def test_collect_participant_uuids_includes_sub_row_claimants():
         result = await sheet_repo.collect_participant_uuids(s, sid)
     # Assert：父子两 claimant 都在（子行不被遗漏），owner 也在
     assert result == {owner, claimant_a, claimant_b}
+
+
+# ---------- 父行终态冻结（issue #80 语义闭环）----------
+
+async def _seed_sheet_with_done_parent():
+    """构造「lock 父行已备齐 + lock/progress 两个子行」的最小场景。
+
+    父行 need=10，claimant 认领并交齐 → done；lock 子行随认领级联 claimed，
+    progress 子行保持 open（progress 无认领语义）。
+    返回 (sid, parent_rid, lock_child_rid, prog_child_rid, owner, claimant)。
+    """
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        lock_child = await sheet_repo.create_row(
+            s, sid, "子L", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        prog_child = await sheet_repo.create_row(
+            s, sid, "子P", need_qty=0, mode=sheet_repo.MODE_PROGRESS, sort_order=1,
+            registry_id="minecraft:dirt", parent_row_id=parent.id, qty_per_unit=2
+        )
+        await s.commit()
+        ids = (sid, parent.id, lock_child.id, prog_child.id)
+    # 认领父行并交齐 → done（lock 子行级联 claimed）
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, ids[0], ids[1], claimant)
+        await sheet_repo.set_row_delivery(s, ids[0], ids[1], 10)
+        await s.commit()
+    sid, parent_rid, lock_rid, prog_rid = ids
+    return sid, parent_rid, lock_rid, prog_rid, owner, claimant
+
+
+@pytest.mark.asyncio
+async def test_parent_done_freezes_child_collab_writes():
+    """父行备齐后：子行 claim/release/delivery/reject/progress/contribute/setsub
+    全部 409「父行已备齐，子行已锁定」（守卫先于行自身状态检查）。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act + Assert：七个写入口逐一撞冻结守卫
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.claim_row(s, sid, lock_rid, claimant)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.release_row(s, sid, lock_rid)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.set_row_delivery(s, sid, lock_rid, 5)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.reject_row(s, sid, lock_rid)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.set_row_progress(s, sid, prog_rid, 3)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.contribute_row(s, sid, prog_rid, claimant, 1)
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.update_row(s, sid, lock_rid, item_name="改名")
+
+
+@pytest.mark.asyncio
+async def test_parent_done_reject_unfreezes_children():
+    """父行 done 被打回（reject → claimed）→ 子行自动解冻，无需任何解冻事务。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act：打回父行（done → claimed）
+    async with async_session_factory() as s:
+        await sheet_repo.reject_row(s, sid, parent_rid)
+        await s.commit()
+    # Assert：子行恢复可操作（lock 子行随级联认领是 claimed → 可解除）
+    async with async_session_factory() as s:
+        row = await sheet_repo.release_row(s, sid, lock_rid)
+        await s.commit()
+        assert row.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_parent_done_need_increase_unfreezes_children():
+    """父行 done 后 owner 调大 need → 既有 done→claimed 转换 → 子行解冻可写。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act：need 10 → 20（delivered=10 < 20 → done→claimed）
+    async with async_session_factory() as s:
+        parent = await sheet_repo.update_row(s, sid, parent_rid, need_qty=20)
+        await s.commit()
+    # Assert：父行离开终态，子行可写（setsub 此前被冻结）
+    assert parent.status == "claimed"
+    async with async_session_factory() as s:
+        row = await sheet_repo.update_row(s, sid, lock_rid, item_name="改名")
+        await s.commit()
+        assert row.item_name == "改名"
+
+
+@pytest.mark.asyncio
+async def test_parent_claimed_does_not_freeze_children():
+    """父行仅 claimed（进行中）→ 子行照常可操作（冻结只挂终态，#80 回归保护）。"""
+    # Arrange：父行认领未交齐（claimed），lock 子行级联 claimed，另建 open 子行
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        await s.commit()
+        parent_rid, child_rid = parent.id, child.id
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)  # 父+子均 claimed
+        await s.commit()
+    # Act + Assert：claimed 父行下子行解除成功（守卫只拦 done）
+    async with async_session_factory() as s:
+        row = await sheet_repo.release_row(s, sid, child_rid)
+        await s.commit()
+        assert row.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_create_row_under_done_parent_rejected():
+    """addsub 到 done 父行 → 409「父行已备齐，不能添加子行」（不产只读死行）。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act + Assert
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐，不能添加子行"):
+            await sheet_repo.create_row(
+                s, sid, "新子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=2,
+                registry_id="minecraft:sand", parent_row_id=parent_rid, qty_per_unit=1
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_row_reparent_frozen_by_done_parent():
+    """reparent 两端守卫：挂入 done 父行 409；从 done 父行移走子行（破坏快照）409。"""
+    # Arrange：父1（done）带子行；父2（open 顶层、无子）备好作 reparent 目标
+    sid, parent1_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    async with async_session_factory() as s:
+        parent2 = await sheet_repo.create_row(
+            s, sid, "父2", need_qty=5, mode=sheet_repo.MODE_LOCK, sort_order=9
+        )
+        await s.commit()
+        parent2_rid = parent2.id
+    # Act + Assert：顶层行挂入 done 父1 → 拒
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="目标父行已备齐"):
+            await sheet_repo.update_row(
+                s, sid, parent2_rid,
+                parent_row_id=parent1_rid, registry_id="minecraft:iron",
+                qty_per_unit=1,
+            )
+    # done 父1 的子行移走（挂到父2）→ 拒
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.update_row(s, sid, lock_rid, parent_row_id=parent2_rid)
+
+
+@pytest.mark.asyncio
+async def test_parent_done_need_cascade_still_recomputes_children():
+    """CR MEDIUM-2 取舍（文档化现状）：父行保持 done 时，owner 上调 need 触发的
+    级联重算仍更新子行 need/状态（派生一致性 need=ceil(qty×父need) 优先于快照
+    纯度）。构造父 delivered 超额（30/10）+ need 上调到 25 → 仍 30≥25 保持 done
+    不解冻；子行（已 done 20/20）need 级联到 50 → done→claimed 降级。
+    玩家写入口仍全拦；owner 打回父行即恢复。"""
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=2
+        )
+        await s.commit()
+        parent_rid, child_rid = parent.id, child.id
+    # 认领父行（子行级联 claimed）→ 子行交齐 done → 父行超额交齐 done
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)
+        await sheet_repo.set_row_delivery(s, sid, child_rid, 20)   # 20/20 → done
+        await sheet_repo.set_row_delivery(s, sid, parent_rid, 30)  # 30/10 → done（超额）
+        await s.commit()
+    # owner 上调父 need 10→25：父 30≥25 保持 done；子行级联重算
+    async with async_session_factory() as s:
+        parent = await sheet_repo.update_row(s, sid, parent_rid, need_qty=25)
+        await s.commit()
+    # 断言：父行仍 done（未解冻）；子行 need=ceil(2×25)=50 且 done→claimed
+    assert parent.status == "done"
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        assert rows_by_id[child_rid].need_qty == 50
+        assert rows_by_id[child_rid].status == "claimed"
+        # 子行玩家写入口仍被冻结守卫拦
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.release_row(s, sid, child_rid)
+
+
+@pytest.mark.asyncio
+async def test_parent_done_blocks_delete_row():
+    """父行备齐后删除子行 → 409「父行已备齐，子行已锁定」（快照定格，想删先打回）。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act + Assert：冻结期删除被拒
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.delete_row(s, sid, lock_rid)
+    # 打回父行解冻 → 删除成功
+    async with async_session_factory() as s:
+        await sheet_repo.reject_row(s, sid, parent_rid)
+        count = await sheet_repo.delete_row(s, sid, lock_rid)
+        await s.commit()
+        assert count == 1
+    # 删 done 顶层父行本身不拦（owner 显式清理整条目）：重新交齐后删父行成功
+    async with async_session_factory() as s:
+        await sheet_repo.set_row_delivery(s, sid, parent_rid, 20)
+        await s.commit()
+    async with async_session_factory() as s:
+        count = await sheet_repo.delete_row(s, sid, parent_rid)
+        await s.commit()
+        assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_submit_skips_children_of_done_parent():
+    """batch_submit：父行 done 的子行整行 skip（reason 透传游戏端回执），不报错不中断。"""
+    # Arrange：父 done + 子（级联 claimed，认领者=提交者，背包足量——满足一切
+    # 交付条件，仅因父行终态被 skip）
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act
+    async with async_session_factory() as s:
+        result = await sheet_repo.batch_submit(
+            s, sid,
+            items_map={"minecraft:stone": 999},
+            player_uuid=claimant,
+            account_uuids={claimant},
+        )
+    # Assert：子行 skipped + 冻结 reason；父行自身走既有「已备齐」skip
+    child_outcomes = [o for o in result.outcomes if o.row_id == lock_rid]
+    assert len(child_outcomes) == 1
+    assert child_outcomes[0].action == "skipped"
+    assert child_outcomes[0].reason == "父行已备齐，子行已锁定"
+    # is_claimant 必须为 True（提交者=认领者）：False 会被 MCDR skip_is_noise
+    # 折叠成「与您无关」，玩家认领的行从回执静默消失
+    assert child_outcomes[0].is_claimant is True
+    assert result.totals.skipped >= 1

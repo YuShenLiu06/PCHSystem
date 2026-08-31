@@ -26,14 +26,12 @@ import { useSheetStore } from '../stores/sheet'
 import { usePolling } from './usePolling'
 import {
   MODE_LOCK,
-  MODE_PROGRESS,
   type NewSubRowDraft,
   type RowDraft,
   type TreeNode,
   buildTreeRows,
   draftFromRow,
-  findParentMode,
-  isSubRow,
+  isFrozenByParent,
   newSubRowDraft,
   rowEqual,
 } from '../views/sheets/sheetHelpers'
@@ -71,9 +69,10 @@ export interface UseSheetDetailHandle {
   treeRows: ComputedRef<TreeNode[]>
   // 行/身份判定（依赖 sheet/auth）
   isClaimant: (row: RowDetail) => boolean
-  parentMode: (row: RowDetail) => number | undefined
   canClaimRow: (row: RowDetail) => boolean
   canReleaseRow: (row: RowDetail) => boolean
+  /** 父行终态冻结判定（issue #80）：父行 done → 子行协作操作禁用（仅可见性，R-9） */
+  isRowFrozen: (row: RowDetail) => boolean
   // sheet 局部错误助手（shell 的 onDeleteSheet 复用，仍在 sheet feature 内——非跨 feature 泄漏）
   sheetErrorMessage: (e: unknown) => string
   // handlers
@@ -188,23 +187,25 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     return !!row.claimant_uuid && uuids.includes(row.claimant_uuid)
   }
 
-  // 获取父行模式（子行专用）
-  function parentMode(row: RowDetail): number | undefined {
-    return findParentMode(row, sheet.value?.rows ?? [])
+  // 父行终态冻结（issue #80 语义闭环）：父行备齐 → 子行协作操作全部隐藏。
+  // R-9：仅可见性，真实拒绝在后端 `_assert_parent_not_done` 409。
+  function isRowFrozen(row: RowDetail): boolean {
+    return sheet.value ? isFrozenByParent(row, sheet.value.rows) : false
   }
 
-  // 子行认领条件：仅当父行=progress 时可单独认领
+  // 认领条件：lock + open + 已登录 + 父行非终态（issue #80：子行可单独认领）
   function canClaimRow(row: RowDetail): boolean {
-    if (row.mode !== MODE_LOCK || row.status !== 'open' || !auth.player) return false
-    if (isSubRow(row)) return parentMode(row) === MODE_PROGRESS
-    return true
+    return (
+      row.mode === MODE_LOCK &&
+      row.status === 'open' &&
+      !!auth.player &&
+      !isRowFrozen(row)
+    )
   }
 
-  // 子行解除条件：仅当父行=progress 时可单独解除
+  // 解除条件：lock 行 + 父行非终态（认领者/管理者细分由按钮侧 isClaimant/canEdit 把关）
   function canReleaseRow(row: RowDetail): boolean {
-    if (row.mode !== MODE_LOCK) return false
-    if (isSubRow(row)) return parentMode(row) === MODE_PROGRESS
-    return true
+    return row.mode === MODE_LOCK && !isRowFrozen(row)
   }
 
   function is409(e: unknown): boolean {
@@ -500,8 +501,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
         rowDrafts.value[created.id] = draftFromRow(created)
       }
 
-      // 重置表单：显式 lock（有意忽略父行 mode，与原始默认一致——避免父=progress 时残留 progress）
-      newSubRow.value[parentId] = newSubRowDraft(MODE_LOCK)
+      // 重置表单：跟随父行 mode（与初始填充 newSubRowDraft(r.mode) 一致，见 applyRefreshedSheet）
+      const parentRow = sheet.value?.rows.find((r) => r.id === parentId)
+      newSubRow.value[parentId] = newSubRowDraft(parentRow ? parentRow.mode : MODE_LOCK)
       // 关闭 popover（成功后）：trigger=click 不会自动关，显式置 false
       subRowPopoverVisible.value[parentId] = false
       ElMessage.success('已添加子物品')
@@ -704,9 +706,9 @@ export function useSheetDetail(opts: UseSheetDetailOptions): UseSheetDetailHandl
     isReadOnly,
     treeRows,
     isClaimant,
-    parentMode,
     canClaimRow,
     canReleaseRow,
+    isRowFrozen,
     sheetErrorMessage,
     onAdvance,
     onSaveTitle,

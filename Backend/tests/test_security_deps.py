@@ -1,8 +1,19 @@
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.deps import require_service_token
-from app.core.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _restore_service_token():
+    """_app 会改 deps._settings 原对象的 token；逐测试还原初值，
+    避免残留值污染后续测试文件（同 _svc_token 裸赋值泄漏根因）。"""
+    import app.api.deps as deps
+
+    original = deps._settings.mcdr_service_token
+    yield
+    deps._settings.mcdr_service_token = original
 
 
 def _app(token: str) -> FastAPI:
@@ -12,9 +23,8 @@ def _app(token: str) -> FastAPI:
     async def probe(_=Depends(require_service_token)) -> dict:
         return {"ok": True}
 
-    # 注入测试 token
+    # 注入测试 token（改原对象属性，不替换 deps._settings 指针）
     import app.api.deps as deps
-    deps._settings = get_settings()
     deps._settings.mcdr_service_token = token
     return app
 

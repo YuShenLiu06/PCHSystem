@@ -18,12 +18,15 @@ from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.models.user import Player
 from tests.conftest import seed_player_with_account
+from app.models.sheet import Sheet
+from app.repositories import sheet_repo
 
 
 @pytest.fixture(autouse=True)
 def _svc_token(monkeypatch):
-    deps._settings = get_settings()
-    deps._settings.mcdr_service_token = "svc"
+    # monkeypatch 登记：改原对象属性而非替换 deps._settings 指针（裸赋值 teardown 无法还原，
+    # 污染后续测试文件的 service-token 校验——全量批跑顺序性 401 根因）
+    monkeypatch.setattr(deps._settings, "mcdr_service_token", "svc")
 
 
 async def _make_player(name: str = "alice", role: str = "user") -> tuple[uuid.UUID, str]:
@@ -1903,29 +1906,30 @@ async def test_upsert_row_sub_item_qty_per_unit_must_be_positive(client):
 
 @pytest.mark.asyncio
 async def test_sub_item_can_be_claimed_lock_mode(client):
-    """子物品：lock 子行在父=progress 时可单独认领（父=lock 时随父行级联，不得单独认领）。"""
+    """issue #80：父=lock 下 lock 子行可单独认领（守卫已移除；
+    父=progress 场景由 test_sub_item_can_be_contributed_progress_mode 等覆盖）。"""
     owner, bearer = await _make_player()
     sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
-    # 建父行（progress）—— lock 子行仅当父=progress 时可单独认领
+    # 建父行（lock）—— 原守卫在此父模式下拒绝子行单独认领，现应成功
     resp = await client.put(
         f"/sheets/{sid}/rows",
-        json={"item_name": "父", "need_qty": 10, "mode": 1, "sort_order": 0},
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
         headers=_auth(bearer),
     )
     parent_rid = resp.json()["id"]
-    # 建子行（显式 lock；父=progress 下允许 lock 子行）
+    # 建子行（mode 缺省继承父 lock）
     resp = await client.put(
         f"/sheets/{sid}/rows",
         json={
             "parent_row_id": parent_rid,
             "registry_id": "minecraft:stone",
             "qty_per_unit": 2,
-            "mode": 0,
         },
         headers=_auth(bearer),
     )
     child_rid = resp.json()["id"]
-    # 其他玩家认领子行
+    assert resp.json()["mode"] == 0
+    # 其他玩家单独认领子行
     other, other_bearer = await _make_player()
     resp = await client.post(
         f"/sheets/{sid}/rows/{child_rid}/claim",
@@ -1935,6 +1939,111 @@ async def test_sub_item_can_be_claimed_lock_mode(client):
     data = resp.json()
     assert data["status"] == "claimed"
     assert data["claimant_uuid"] == str(other)
+    # 父行不受影响（仍 open）
+    resp = await client.get(f"/sheets/{sid}", headers=_auth(bearer))
+    rows = {r["id"]: r for r in resp.json()["rows"]}
+    assert rows[parent_rid]["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_sub_item_can_be_released_under_lock_parent(client):
+    """issue #80：父=lock 下子行可单独解除认领（守卫已移除）。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    child_rid = resp.json()["id"]
+    other, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{child_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    # 单独解除子行
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{child_rid}/release",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "open"
+    assert data["claimant_uuid"] is None
+
+
+@pytest.mark.asyncio
+async def test_sub_item_created_after_parent_claim_inherits_claimant(client):
+    """issue #80：父行认领后新建子行 → 子行落库 claimed + 继承父行认领者。"""
+    owner, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    # 其他玩家认领父行
+    other, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{parent_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    # 认领后新建子行 → 继承认领者（不再产生 open 死行）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:stone",
+            "qty_per_unit": 2,
+        },
+        headers=_auth(bearer),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "claimed"
+    assert data["claimant_uuid"] == str(other)
+    assert data["delivered_qty"] == 0
+
+
+@pytest.mark.asyncio
+async def test_claim_already_claimed_row_409_detail_passthrough(client):
+    """G5：SheetRowConflict 的具体原因透传到 HTTP 409 detail（不再统一吞为 "row conflict"）。"""
+    _, bearer = await _make_player()
+    sid = (await client.post("/sheets", json={"title": "S"}, headers=_auth(bearer))).json()["id"]
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"item_name": "父", "need_qty": 10, "mode": 0, "sort_order": 0},
+        headers=_auth(bearer),
+    )
+    parent_rid = resp.json()["id"]
+    _, other_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{parent_rid}/claim",
+        headers=_auth(other_bearer),
+    )
+    assert resp.status_code == 200
+    # 第二位玩家认领同一行 → 409 且 detail 含具体冲突原因（状态冲突）
+    _, third_bearer = await _make_player()
+    resp = await client.post(
+        f"/sheets/{sid}/rows/{parent_rid}/claim",
+        headers=_auth(third_bearer),
+    )
+    assert resp.status_code == 409
+    # repo 行级冲突消息中文化（G5：detail 直达 MCDR 玩家回执）
+    assert resp.json()["detail"] == "无法认领：行状态为 claimed"
 
 
 @pytest.mark.asyncio
@@ -2133,3 +2242,55 @@ async def test_delete_archived_sheet_returns_409(client, tmp_path, monkeypatch):
     # Act：archived 后删表 → 409（非 500）
     resp = await client.delete(f"/sheets/{sid}", headers=_auth(bearer))
     assert resp.status_code == 409
+
+
+# ---------- 父行终态冻结（issue #80，CR HIGH-1：行 CRUD 端点 409 透传）----------
+
+@pytest.mark.asyncio
+async def test_rows_api_freeze_409_passthrough(client):
+    """行 CRUD 端点（PUT/DELETE /rows）对冻结守卫 SheetRowConflict 的 409 透传
+    （CR HIGH-1：此前穿透 500）。覆盖 addsub / setsub 编辑 / delsub 三路径。"""
+    # Arrange：repo 层造「父行 done + 冻结子行」；API 层只验证 HTTP 翻译
+    owner_uuid, owner = await _make_player("alice")
+    claimant = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=claimant, current_name="bob"))
+        sheet = await sheet_repo.create_sheet(s, owner_uuid, "S")
+        parent = await sheet_repo.create_row(
+            s, sheet.id, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sheet.id, "子L", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        await sheet_repo.claim_row(s, sheet.id, parent.id, claimant)
+        await sheet_repo.set_row_delivery(s, sheet.id, parent.id, 10)
+        await s.commit()
+        sid, parent_rid, child_rid = sheet.id, parent.id, child.id
+
+    # Act + Assert 1：addsub 到 done 父行 → 409（此前 500）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "item_name": "新子", "need_qty": 0, "mode": 0, "sort_order": 2,
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:sand", "qty_per_unit": 1,
+        },
+        headers=_auth(owner),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "父行已备齐，不能添加子行"
+
+    # Act + Assert 2：setsub 编辑冻结子行 → 409
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": child_rid, "item_name": "改名", "need_qty": 5},
+        headers=_auth(owner),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "父行已备齐，子行已锁定"
+
+    # Act + Assert 3：delsub 删冻结子行 → 409
+    resp = await client.delete(f"/sheets/{sid}/rows/{child_rid}", headers=_auth(owner))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "父行已备齐，子行已锁定"

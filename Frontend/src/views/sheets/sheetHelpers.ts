@@ -79,7 +79,8 @@ export function draftFromRow(row: RowDetail): RowDraft {
 /**
  * 创建新增子物品表单默认值
  *
- * mode 继承父行：父行=lock 时子行只能 lock；父行=progress 时子行默认 progress（可手动切 lock）。
+ * mode 缺省继承父行（issue #80 起 mode 不再级联，显式选择即生效）：
+ * 父行=lock 默认 lock；父行=progress 默认 progress；均可手动切换。
  */
 export function newSubRowDraft(parentMode: number): NewSubRowDraft {
   return {
@@ -122,20 +123,21 @@ export function buildTreeRows(rows: RowDetail[]): TreeNode[] {
 }
 
 /**
- * 查找父行的 mode
- *
- * 子行专用：返回父行的 mode，若父行不存在或 row 本身是顶层行则返回 undefined。
- */
-export function findParentMode(row: RowDetail, rows: RowDetail[]): number | undefined {
-  if (row.parent_row_id == null) return undefined
-  return rows.find((r) => r.id === row.parent_row_id)?.mode
-}
-
-/**
  * 判断是否为子行
  */
 export function isSubRow(row: RowDetail): boolean {
   return row.parent_row_id !== null
+}
+
+/**
+ * 父行终态冻结判定（issue #80 语义闭环）
+ *
+ * 父行已备齐（done）→ 子行协作操作全部禁用（与后端 `_assert_parent_not_done`
+ * 守卫同语义，R-9 前端仅控可见性）。顶层行恒 false。
+ */
+export function isFrozenByParent(row: RowDetail, rows: RowDetail[]): boolean {
+  if (row.parent_row_id == null) return false
+  return rows.find((r) => r.id === row.parent_row_id)?.status === 'done'
 }
 
 /**

@@ -24,7 +24,7 @@ from app.core.db import get_session
 from app.models.sheet import Sheet, SheetRow
 from app.models.user import Player
 from app.repositories import sheet_repo, web_account_repo
-from app.repositories.sheet_repo import SheetArchived
+from app.repositories.sheet_repo import SheetArchived, SheetRowConflict
 from app.schemas.sheet import RowDetail, RowUpsertRequest
 
 router = APIRouter(prefix="")
@@ -319,6 +319,12 @@ async def _merge_rows(
 
     # 子物品 reparent：source 的子行挂到 target；registry_id 撞 target 子行则删 source 的
     all_rows = await sheet_repo.list_rows(session, sheet.id)
+    # 父行终态冻结（issue #80 语义闭环）：merge 会把 source 的子行挂给 target——
+    # target 若已备齐（done）则拒（对齐 update_row 的 reparent 守卫，防绕过）。
+    if any(child.parent_row_id == source.id for child, _ in all_rows):
+        target_row = await session.get(SheetRow, target_id)
+        if target_row is not None and target_row.status == sheet_repo.STATUS_DONE:
+            raise SheetRowConflict("目标父行已备齐，不能挂为子行")
     target_child_registries = {
         r.registry_id for r, _ in all_rows
         if r.parent_row_id == target_id and r.registry_id
@@ -444,6 +450,10 @@ async def upsert_row(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "项目已归档，只读"
         )
+    except SheetRowConflict as exc:
+        # 冻结守卫等行级冲突透传中文原因（父行已备齐系列；对齐 collab.py G5）
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(
@@ -498,3 +508,7 @@ async def delete_row(
     except SheetArchived:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "项目已归档，只读")
+    except SheetRowConflict as exc:
+        # 冻结守卫透传（删子行且父行 done →「父行已备齐，子行已锁定」）
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

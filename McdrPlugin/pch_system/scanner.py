@@ -128,17 +128,22 @@ def read_held_item(api, player: str) -> Optional[tuple]:
 
 REASON_NO_ITEM = "背包没有此物"   # progress 行未提交此物（后端 _batch_decide_progress）
 REASON_READY = "已备齐"           # lock done / progress done 或 delivered>=need
+REASON_NEED_CLAIM = "需先认领"    # lock open 行无人认领（issue #80：行动指引，不折叠）
 
 
 def skip_is_noise(*, mode: int, is_claimant: bool, reason: str) -> bool:
     """skip 行是否与本人当前无关 → 回执折叠（不逐行展示）。
 
-    - lock 行非本人认领（``is_claimant=False``，含「需先认领」「已被他人认领」）→ 折叠；
+    - lock 行「需先认领」（open 无人认领）→ **不折叠**（issue #80：这是行动指引——
+      告诉玩家该行可认领后交付，折叠为「与您无关」正是子物品「无法提交也无提示」的观感来源）；
+    - lock 行已被他人认领（``is_claimant=False`` 且非需先认领）→ 折叠；
     - progress 行未携带（``reason == REASON_NO_ITEM``）→ 折叠；
     其余跳过（本人认领的 lock 未完成、progress 已备齐 / 无需求 / 「行状态变化」「行已删除」
     等后端新增 reason）逐行展示——这些是玩家本次可操作或需感知的项。
     """
     if mode == 0:
+        if reason == REASON_NEED_CLAIM:
+            return False
         return not is_claimant
     return reason == REASON_NO_ITEM
 

@@ -53,9 +53,9 @@ const {
   isReadOnly,
   treeRows,
   isClaimant,
-  parentMode,
   canClaimRow,
   canReleaseRow,
+  isRowFrozen,
   sheetErrorMessage,
   onAdvance,
   onSaveTitle,
@@ -443,11 +443,11 @@ watch(sheetId, () => {
           </template>
         </el-table-column>
 
-        <!-- 模式列：顶层行可切换；子行仅父=progress时可切换 -->
+        <!-- 模式列：可编辑行均可切换（issue #80：子行独立选模式，父行切换不再级联子行） -->
         <el-table-column label="模式" :width="columnWidths['模式'] ?? 80">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && !isReadOnly && editingRowId === row.id && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -484,27 +484,29 @@ watch(sheetId, () => {
         <!-- 状态列：el-tag，open 灰/claimed 蓝/done 绿 -->
         <el-table-column label="状态" :width="columnWidths['状态'] ?? 80" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status as 'open' | 'claimed' | 'done')" size="small">
+            <el-tag
+              v-if="!isRowFrozen(row)"
+              :type="statusTagType(row.status as 'open' | 'claimed' | 'done')"
+              size="small"
+            >
               {{ statusLabel(row.status as 'open' | 'claimed' | 'done') }}
             </el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">已锁定</el-tag>
           </template>
         </el-table-column>
 
-        <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 168">
+        <!-- 交付进度列：lock/progress 均显 delivered/need（issue #80：lock 子行可见「完毕」进度） -->
+        <el-table-column label="交付进度" :width="columnWidths['交付进度'] ?? 168">
           <template #default="{ row }">
-            <template v-if="row.mode === MODE_PROGRESS">
-              <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
-              <div class="pch-delivery">
-                <span class="pch-delivery__nums">
-                  <QtyValue :value="row.delivered_qty" />
-                  <span class="pch-delivery__sep">/</span>
-                  <QtyValue :value="row.need_qty" muted />
-                </span>
-                <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
-              </div>
-            </template>
-            <span v-else class="pch-dash">—</span>
+            <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
+            <div class="pch-delivery">
+              <span class="pch-delivery__nums">
+                <QtyValue :value="row.delivered_qty" />
+                <span class="pch-delivery__sep">/</span>
+                <QtyValue :value="row.need_qty" muted />
+              </span>
+              <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
+            </div>
           </template>
         </el-table-column>
 
@@ -534,12 +536,12 @@ watch(sheetId, () => {
                   <el-button size="small" @click="onCancelEdit(row)">取消</el-button>
                 </template>
                 <template v-else>
-                  <el-button size="small" @click="onStartEdit(row)">编辑</el-button>
-                  <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
+                  <el-button v-if="!isRowFrozen(row)" size="small" @click="onStartEdit(row)">编辑</el-button>
+                  <el-button v-if="!isRowFrozen(row)" size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
                 </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
                 <el-popover
-                  v-if="!isSubRow(row)"
+                  v-if="!isSubRow(row) && row.status !== 'done'"
                   v-model:visible="subRowPopoverVisible[row.id]"
                   placement="right"
                   width="400"
@@ -581,7 +583,7 @@ watch(sheetId, () => {
                     </div>
                     <el-select v-model="newSubRow[row.id].mode" size="small" :teleported="false">
                       <el-option :value="0" label="锁定" />
-                      <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
+                      <el-option :value="1" label="进度" />
                     </el-select>
                     <div style="display: flex; gap: 8px; align-items: center;">
                       <span class="pch-note">排序：</span>
@@ -600,12 +602,13 @@ watch(sheetId, () => {
 
               <!-- 玩家协作按钮 -->
               <el-button v-if="canClaimRow(row)" size="small" type="primary" @click="onClaim(row)">认领</el-button>
-              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
+              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player && !isRowFrozen(row)" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !isRowFrozen(row)" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
               <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit && canReleaseRow(row)" size="small" @click="onRelease(row)">放弃</el-button>
               <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
-              <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_PROGRESS && !isRowFrozen(row)" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done' && !isRowFrozen(row)" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <span v-if="isRowFrozen(row)" class="frozen-hint">父行已备齐，子行已锁定</span>
             </template>
             <span v-else class="pch-dash">—</span>
           </template>
@@ -744,11 +747,11 @@ watch(sheetId, () => {
           </template>
         </el-table-column>
 
-        <!-- 模式列：顶层行可切换；子行仅父=progress时可切换 -->
+        <!-- 模式列：可编辑行均可切换（issue #80：子行独立选模式，父行切换不再级联子行） -->
         <el-table-column label="模式" :width="columnWidths['模式'] ?? 80">
           <template #default="{ row }">
             <el-select
-              v-if="canEdit && !isReadOnly && editingRowId === row.id && (!isSubRow(row) || parentMode(row) === MODE_PROGRESS)"
+              v-if="canEdit && !isReadOnly && editingRowId === row.id"
               v-model="rowDrafts[row.id].mode"
               size="small"
             >
@@ -785,27 +788,29 @@ watch(sheetId, () => {
         <!-- 状态列：el-tag，open 灰/claimed 蓝/done 绿 -->
         <el-table-column label="状态" :width="columnWidths['状态'] ?? 80" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status as 'open' | 'claimed' | 'done')" size="small">
+            <el-tag
+              v-if="!isRowFrozen(row)"
+              :type="statusTagType(row.status as 'open' | 'claimed' | 'done')"
+              size="small"
+            >
               {{ statusLabel(row.status as 'open' | 'claimed' | 'done') }}
             </el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">已锁定</el-tag>
           </template>
         </el-table-column>
 
-        <!-- 交付进度列：仅 progress 模式显 -->
-        <el-table-column v-if="sheet.rows.some((r) => r.mode === MODE_PROGRESS)" label="交付进度" :width="columnWidths['交付进度'] ?? 168">
+        <!-- 交付进度列：lock/progress 均显 delivered/need（issue #80：lock 子行可见「完毕」进度） -->
+        <el-table-column label="交付进度" :width="columnWidths['交付进度'] ?? 168">
           <template #default="{ row }">
-            <template v-if="row.mode === MODE_PROGRESS">
-              <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
-              <div class="pch-delivery">
-                <span class="pch-delivery__nums">
-                  <QtyValue :value="row.delivered_qty" />
-                  <span class="pch-delivery__sep">/</span>
-                  <QtyValue :value="row.need_qty" muted />
-                </span>
-                <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
-              </div>
-            </template>
-            <span v-else class="pch-dash">—</span>
+            <!-- 刻度锚在「组」边界（玩家按组搬箱），≤32 组可见刻度 -->
+            <div class="pch-delivery">
+              <span class="pch-delivery__nums">
+                <QtyValue :value="row.delivered_qty" />
+                <span class="pch-delivery__sep">/</span>
+                <QtyValue :value="row.need_qty" muted />
+              </span>
+              <StackProgress :delivered="row.delivered_qty" :need="row.need_qty" />
+            </div>
           </template>
         </el-table-column>
 
@@ -835,12 +840,12 @@ watch(sheetId, () => {
                   <el-button size="small" @click="onCancelEdit(row)">取消</el-button>
                 </template>
                 <template v-else>
-                  <el-button size="small" @click="onStartEdit(row)">编辑</el-button>
-                  <el-button size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
+                  <el-button v-if="!isRowFrozen(row)" size="small" @click="onStartEdit(row)">编辑</el-button>
+                  <el-button v-if="!isRowFrozen(row)" size="small" type="danger" @click="isSubRow(row) ? onDeleteSubRow(row) : onDeleteRow(row)">删除</el-button>
                 </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
                 <el-popover
-                  v-if="!isSubRow(row)"
+                  v-if="!isSubRow(row) && row.status !== 'done'"
                   v-model:visible="subRowPopoverVisible[row.id]"
                   placement="right"
                   width="400"
@@ -882,7 +887,7 @@ watch(sheetId, () => {
                     </div>
                     <el-select v-model="newSubRow[row.id].mode" size="small" :teleported="false">
                       <el-option :value="0" label="锁定" />
-                      <el-option :value="1" label="进度" :disabled="row.mode === MODE_LOCK" />
+                      <el-option :value="1" label="进度" />
                     </el-select>
                     <div style="display: flex; gap: 8px; align-items: center;">
                       <span class="pch-note">排序：</span>
@@ -901,12 +906,13 @@ watch(sheetId, () => {
 
               <!-- 玩家协作按钮 -->
               <el-button v-if="canClaimRow(row)" size="small" type="primary" @click="onClaim(row)">认领</el-button>
-              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed'" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
+              <el-button v-if="row.mode === MODE_PROGRESS && row.status !== 'done' && auth.player && !isRowFrozen(row)" size="small" type="primary" @click="onContribute(row)">上交材料</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !isRowFrozen(row)" size="small" type="success" @click="onSetDelivery(row)">备齐</el-button>
               <el-button v-if="row.mode === MODE_LOCK && isClaimant(row) && row.status === 'claimed' && !canEdit && canReleaseRow(row)" size="small" @click="onRelease(row)">放弃</el-button>
               <el-button v-if="canEdit && row.mode === MODE_LOCK && (row.status === 'claimed' || row.status === 'done') && canReleaseRow(row)" size="small" @click="onRelease(row)">解除锁定</el-button>
-              <el-button v-if="canEdit && row.mode === MODE_PROGRESS" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
-              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done'" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <el-button v-if="canEdit && row.mode === MODE_PROGRESS && !isRowFrozen(row)" size="small" type="warning" @click="onAdjustProgress(row)">调整进度</el-button>
+              <el-button v-if="row.mode === MODE_LOCK && (isClaimant(row) || canEdit) && row.status === 'done' && !isRowFrozen(row)" size="small" type="warning" @click="onReject(row)">打回</el-button>
+              <span v-if="isRowFrozen(row)" class="frozen-hint">父行已备齐，子行已锁定</span>
             </template>
             <span v-else class="pch-dash">—</span>
           </template>
@@ -961,6 +967,10 @@ watch(sheetId, () => {
 
 .pch-delivery__sep {
   color: var(--pch-text-muted);
+  opacity: 0.6;
+}
+.frozen-hint {
+  font-size: 12px;
   opacity: 0.6;
 }
 </style>

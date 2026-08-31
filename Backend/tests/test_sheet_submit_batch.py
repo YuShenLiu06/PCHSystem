@@ -30,8 +30,9 @@ from tests.conftest import seed_player_with_account
 @pytest.fixture(autouse=True)
 def _svc_token(monkeypatch):
     """注入 service-token=svc 到 deps._settings（镜像 test_sheets_api.py 范式）。"""
-    deps._settings = get_settings()
-    deps._settings.mcdr_service_token = "svc"
+    # monkeypatch 登记：改原对象属性而非替换 deps._settings 指针（裸赋值 teardown 无法还原，
+    # 污染后续测试文件的 service-token 校验——全量批跑顺序性 401 根因）
+    monkeypatch.setattr(deps._settings, "mcdr_service_token", "svc")
 
 
 _BEARER_CACHE: dict[uuid.UUID, str] = {}
@@ -798,3 +799,119 @@ async def test_mixed_batch_deliver_contribute_skip_atomic(client):
     # carol 的行不受 bob 提交影响（仍是 claimed + delivered=0）
     assert rows_by_id[row_lock_other["id"]]["claimant_uuid"] == str(carol_uuid)
     assert rows_by_id[row_lock_other["id"]]["delivered_qty"] == 0
+
+
+# =====================================================================
+# 9. 子物品行（issue #80：父 claimed 后新建子行继承认领者 → 可提交）
+# =====================================================================
+
+async def _upsert_sub_row(
+    client, headers, sid: int, parent_rid: int, *,
+    registry_id: str = "minecraft:stone",
+    qty_per_unit: float = 2,
+    mode: int | None = None,
+) -> dict:
+    """建子物品行（mode 缺省继承父行；父行 need=10 → 子 need=ceil(qty×10)）。"""
+    body: dict = {
+        "parent_row_id": parent_rid,
+        "registry_id": registry_id,
+        "qty_per_unit": qty_per_unit,
+    }
+    if mode is not None:
+        body["mode"] = mode
+    resp = await client.put(f"/sheets/{sid}/rows", json=body, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_sub_row_created_after_parent_claim_is_submittable(client):
+    """issue #80 核心：父行认领后新建的子行继承认领者 → 本人 submit-batch 交付成功。"""
+    # Arrange：owner 建表 + lock 父行（need=10），bob 认领父行，再建子行（qty=2 → need=20）
+    owner_uuid, _ = await _make_player("alice")
+    bob_uuid, _ = await _make_player("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner_uuid))
+    parent = await _upsert_row(
+        client, _jwt_headers(owner_uuid), sid,
+        item_name="父", registry_id=None, need=10, mode=0,
+    )
+    await _claim(client, _jwt_headers(bob_uuid), sid, parent["id"])
+    child = await _upsert_sub_row(
+        client, _jwt_headers(owner_uuid), sid, parent["id"], qty_per_unit=2
+    )
+    # 继承认领者（issue #80 新语义）
+    assert child["status"] == "claimed"
+    assert child["claimant_uuid"] == str(bob_uuid)
+
+    # Act：bob 批量提交子行材料 20 个
+    resp = await _submit_batch(
+        client, _jwt_headers(bob_uuid), sid, _items(("minecraft:stone", 20)),
+    )
+
+    # Assert：子行 delivered 完成
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["totals"] == {"delivered": 1, "contributed": 0, "skipped": 0}
+    o = _outcome_by_row(body["outcomes"], child["id"])
+    assert o["action"] == "delivered"
+    assert o["qty"] == 20
+    assert o["is_claimant"] is True
+    detail = (await client.get(f"/sheets/{sid}", headers=_jwt_headers(owner_uuid))).json()
+    child_db = next(r for r in detail["rows"] if r["id"] == child["id"])
+    assert child_db["status"] == "done"
+    assert child_db["delivered_qty"] == 20
+
+
+@pytest.mark.asyncio
+async def test_sub_row_claimed_by_other_skips_as_claimed_by_other(client):
+    """子行被他人单独认领 → 本人提交 skip「已被他人认领」。"""
+    owner_uuid, _ = await _make_player("alice")
+    bob_uuid, _ = await _make_player("bob")
+    carol_uuid, _ = await _make_player("carol")
+    sid = await _create_sheet(client, _jwt_headers(owner_uuid))
+    parent = await _upsert_row(
+        client, _jwt_headers(owner_uuid), sid,
+        item_name="父", registry_id=None, need=10, mode=0,
+    )
+    child = await _upsert_sub_row(
+        client, _jwt_headers(owner_uuid), sid, parent["id"], qty_per_unit=2
+    )
+    # carol 单独认领子行（守卫移除后合法）
+    await _claim(client, _jwt_headers(carol_uuid), sid, child["id"])
+
+    # Act：bob 提交 → skip
+    resp = await _submit_batch(
+        client, _jwt_headers(bob_uuid), sid, _items(("minecraft:stone", 20)),
+    )
+
+    assert resp.status_code == 200, resp.text
+    o = _outcome_by_row(resp.json()["outcomes"], child["id"])
+    assert o["action"] == "skipped"
+    assert o["reason"] == "已被他人认领"
+    assert o["is_claimant"] is False
+
+
+@pytest.mark.asyncio
+async def test_sub_row_open_skips_as_need_claim(client):
+    """open 子行（父行 open，无人认领）→ 提交 skip「需先认领」。"""
+    owner_uuid, _ = await _make_player("alice")
+    bob_uuid, _ = await _make_player("bob")
+    sid = await _create_sheet(client, _jwt_headers(owner_uuid))
+    parent = await _upsert_row(
+        client, _jwt_headers(owner_uuid), sid,
+        item_name="父", registry_id=None, need=10, mode=0,
+    )
+    child = await _upsert_sub_row(
+        client, _jwt_headers(owner_uuid), sid, parent["id"], qty_per_unit=2
+    )
+    assert child["status"] == "open"
+
+    # Act：bob 提交 → skip
+    resp = await _submit_batch(
+        client, _jwt_headers(bob_uuid), sid, _items(("minecraft:stone", 20)),
+    )
+
+    assert resp.status_code == 200, resp.text
+    o = _outcome_by_row(resp.json()["outcomes"], child["id"])
+    assert o["action"] == "skipped"
+    assert o["reason"] == "需先认领"

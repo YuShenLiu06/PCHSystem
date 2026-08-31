@@ -8,7 +8,6 @@ import uuid
 import pytest
 
 import app.api.deps as deps
-from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.jwt import create_access_token
 from app.models.user import Player, WebAccount
@@ -22,8 +21,9 @@ from app.core.security import hash_password
 @pytest.fixture(autouse=True)
 def _svc_token(monkeypatch):
     """注入测试 service-token（与 test_auth_api.py 一致）。"""
-    deps._settings = get_settings()
-    deps._settings.mcdr_service_token = "svc"
+    # monkeypatch 登记：改原对象属性而非替换 deps._settings 指针（裸赋值 teardown 无法还原，
+    # 污染后续测试文件的 service-token 校验——全量批跑顺序性 401 根因）
+    monkeypatch.setattr(deps._settings, "mcdr_service_token", "svc")
 
 
 def _svc_headers() -> dict:
