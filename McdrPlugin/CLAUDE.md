@@ -225,9 +225,9 @@ MCDR 调 `http://pchsystem-backend-1:8000`（容器网络）。改 backend 后�
 
 ---
 
-*最后更新：2026-08-31（issue #79 RCON 探针 + CR 修复：版本 bump 0.10.3、速查表补 RCON 配置附录）*
+*最后更新：2026-08-31（issue #79 RCON 探针 + CR 修复：速查表补 RCON 配置附录；版本 bump 移交发版提交）*
 
-*增量（2026-08-30，issue #79 RCON 探针，随 v0.10.3 发布）：`health.py` 新增第 5 探针——`RconStatus` dataclass + `probe_rcon(server)`（`is_rcon_running()` False 短路判「未运行」不发查询；True 再 `rcon_query("list")` 一次，None 回包 = 已连接但查询失败疑密码不一致；口径对齐 chest_scanner_lib 的 no_rcon 判定，S-1 已核实 `ServerInterface.is_rcon_running`/`rcon_query`）；`classify` 加尾参 `rcon`（缺省 None 不产出 finding，向后兼容），rcon finding 恒排最后、独立于后端可达性；`run_console_check` 与 `commands._status` 均接线（两者已在 `@new_thread`，RS-6）。新常量 `RCON_DOC_URL` + `_COMP_LABEL` 加 `rcon`。测试：`ProbeRconTest`（5）+ `ClassifyTest` RCON 增补（5），全量 470 passed。架构文档 §3.11 同步五探针。CR 修复（2026-08-31）：`mcdreforged.plugin.json` bump 0.10.3（v0.10.2 已发且不含本特性）、速查表新增「RCON 配置速查」附录兑现 `RCON_DOC_URL`。*
+*增量（2026-08-30，issue #79 RCON 探针，随 v0.10.3 发布）：`health.py` 新增第 5 探针——`RconStatus` dataclass + `probe_rcon(server)`（`is_rcon_running()` False 短路判「未运行」不发查询；True 再 `rcon_query("list")` 一次，None 回包 = 已连接但查询失败疑密码不一致；口径对齐 chest_scanner_lib 的 no_rcon 判定，S-1 已核实 `ServerInterface.is_rcon_running`/`rcon_query`）；`classify` 加尾参 `rcon`（缺省 None 不产出 finding，向后兼容），rcon finding 恒排最后、独立于后端可达性；`run_console_check` 与 `commands._status` 均接线（两者已在 `@new_thread`，RS-6）。新常量 `RCON_DOC_URL` + `_COMP_LABEL` 加 `rcon`。测试：`ProbeRconTest`（5）+ `ClassifyTest` RCON 增补（5），全量 470 passed。架构文档 §3.11 同步五探针。CR 修复（2026-08-31）：速查表新增「RCON 配置速查」附录兑现 `RCON_DOC_URL`；版本簿记（plugin.json bump 0.10.3，v0.10.2 已发且不含本特性）留待 v0.10.3 发版提交执行——feature PR 内 bump 会命中 CI 五源判定之「version diff」提前触发 release 意图门禁。*
 
 *增量（2026-08-15，v0.10.0 箱子扫描剥离）：删除 `pch_system/chest_scanner.py`（425 行）与 `tests/test_chest_scanner.py`（489 行），实现归 [`chest_scanner_lib`](https://github.com/YuShenLiu06/mcdr-chest-scanner)（`>=1.0.1`，官方插件目录收录；含准星射线 + 双联合并 + SNBT 解析，错误码与 `_CHEST_ERR_MSG` 逐一对应）。`_submitchest_impl` 改 `server.get_plugin_instance("chest_scanner_lib")` 取库调用（dependencies 已声明、加载期 DependencyWalker 校验，None 仅防御回执）。`mcdreforged.plugin.json` 加依赖 `chest_scanner_lib >=1.0.1`、version 0.10.0；`requirements.txt` 删 `hjson`（只剩 requests）。安装链路 pim 化：install.sh 检测缺失自动 `pim download`+`pipi`；update.sh 新增 `--upgrade-plugins`；TestServer 构建期 pim 安装三依赖插件并移除 git 内 .mcdr 二进制。新增 `SubmitchestWiringTest`（4 用例：准星/坐标接线、库缺失防御、错误码映射）。*
 
