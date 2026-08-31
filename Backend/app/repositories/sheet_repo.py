@@ -1529,11 +1529,26 @@ async def aggregate_contributor_totals(
 
 
 async def delete_row(session: AsyncSession, sheet_id: int, row_id: int) -> int:
+    """删行。父行终态冻结（issue #80 语义闭环）：删子行且父行 done → 409
+    「父行已备齐，子行已锁定」（快照定格，想删先打回父行）。删 done 顶层
+    父行本身不拦——owner 显式清理整条目，CASCADE 连带删子行是整体移除。
+    """
     await _assert_writable(session, sheet_id)
-    stmt = delete(SheetRow).where(
-        SheetRow.sheet_id == sheet_id, SheetRow.id == row_id
+    row = (
+        await session.execute(
+            select(SheetRow).where(
+                SheetRow.sheet_id == sheet_id, SheetRow.id == row_id
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return 0
+    await _assert_parent_not_done(session, row)
+    result = await session.execute(
+        delete(SheetRow).where(
+            SheetRow.sheet_id == sheet_id, SheetRow.id == row_id
+        )
     )
-    result = await session.execute(stmt)
     return result.rowcount or 0
 
 

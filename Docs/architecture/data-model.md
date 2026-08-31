@@ -393,7 +393,7 @@ erDiagram
 - **模式缺省继承（issue #80 起）**：子行 `mode` 未显式指定时缺省继承父行（父 lock→lock、父 progress→progress）；**显式指定即生效**（父 lock 下子行可选 progress，反之亦然）。**父行 mode 变化不级联改子行 mode**（原「级联只紧不松」D7 已废除）——mode 是每行独立属性，父行切换只级联重算子行 `need_qty`
 - **单位用量级联**：子行 `need_qty = ceil(qty_per_unit × 父行 need_qty)`（派生整数，向上取整，非用户输入）。触发重算三点：① 新建子行（`create_row`）；② 子行 `qty_per_unit` / `parent_row_id`（reparent）变更；③ **父行 need_qty 变更→级联所有子行重算**。repo 用 `Decimal(str(qty_per_unit)) × parent.need_qty` 精确取整，规避 float 直接相乘的 `ceil(0.07×100)=8` 偏差
 - **级联删除**：删父行自动删所有子行（ON DELETE CASCADE）
-- **父行终态冻结（issue #80 语义闭环）**：父行 `status=done`（备齐）后，子行全部协作写被拒（claim/release/delivery/contribute/reject/progress/`update_row`/reparent → 409「父行已备齐，子行已锁定」；往 done 父行新建子行 → 409）。**动态判定**（`_assert_parent_not_done` 守卫，不写子行状态）：父行打回或 need 上调（既有 done→claimed 转换）即自动解冻；存量「父 done + 子行 open」免迁移自愈。owner `delsub` 不受限
+- **父行终态冻结（issue #80 语义闭环）**：父行 `status=done`（备齐）后，子行全部协作写被拒（claim/release/delivery/contribute/reject/progress/`update_row`/reparent → 409「父行已备齐，子行已锁定」；往 done 父行新建子行 → 409）。**动态判定**（`_assert_parent_not_done` 守卫，不写子行状态）：父行打回或 need 上调（既有 done→claimed 转换）即自动解冻；存量「父 done + 子行 open」免迁移自愈。`delsub` 同拦（删 done 顶层父行本身不拦——CASCADE 整体移除）
 - **状态机复用（子行可独立协作，issue #80 起）**：子行复用整条 `sheet_rows` 状态机（lock/progress、claim/deliver/contribute），传子 `row_id` 即可，**无子行守卫**——任意状态下子行均可单独 claim/release（原「父行=lock 时子行不得单独认领/解除」守卫已废除；存量死行子行——父行 claimed 后创建、永远 open 的子行——由此自愈，无需数据迁移）。**级联规则**：
   - **认领级联（保留）**：认领顶层 lock 父行 = 同事务认领其所有 open lock 子行（同 claimant）。
   - **新建继承（新增）**：父行 lock 且已认领（claimed/done）时新建 lock 子行 → 直接落库 `status=claimed, claimant_uuid=父行认领者, delivered_qty=0`（与认领级联互补：认领前建的子行→级联认领；认领后建的子行→创建即继承）。子行显式 mode=progress 不继承（progress 无认领语义）。

@@ -2644,6 +2644,33 @@ async def test_update_row_reparent_frozen_by_done_parent():
 
 
 @pytest.mark.asyncio
+async def test_parent_done_blocks_delete_row():
+    """父行备齐后删除子行 → 409「父行已备齐，子行已锁定」（快照定格，想删先打回）。"""
+    # Arrange
+    sid, parent_rid, lock_rid, prog_rid, owner, claimant = (
+        await _seed_sheet_with_done_parent()
+    )
+    # Act + Assert：冻结期删除被拒
+    async with async_session_factory() as s:
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.delete_row(s, sid, lock_rid)
+    # 打回父行解冻 → 删除成功
+    async with async_session_factory() as s:
+        await sheet_repo.reject_row(s, sid, parent_rid)
+        count = await sheet_repo.delete_row(s, sid, lock_rid)
+        await s.commit()
+        assert count == 1
+    # 删 done 顶层父行本身不拦（owner 显式清理整条目）：重新交齐后删父行成功
+    async with async_session_factory() as s:
+        await sheet_repo.set_row_delivery(s, sid, parent_rid, 20)
+        await s.commit()
+    async with async_session_factory() as s:
+        count = await sheet_repo.delete_row(s, sid, parent_rid)
+        await s.commit()
+        assert count == 1
+
+
+@pytest.mark.asyncio
 async def test_batch_submit_skips_children_of_done_parent():
     """batch_submit：父行 done 的子行整行 skip（reason 透传游戏端回执），不报错不中断。"""
     # Arrange：父 done + 子（级联 claimed，认领者=提交者，背包足量——满足一切
