@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- _暂无_
+- **后端（construction）**：`join_construction` 并发兜底分支引用了未 import 的 `IntegrityError`——同一玩家并发加入施工撞 `uq_participants_active` 唯一约束时本应走 SAVEPOINT 兜底重试，实际 NameError→500；现仅补 import 修正名字解析（`construction_repo.py`，零行为变化）。
 
 ---
 
