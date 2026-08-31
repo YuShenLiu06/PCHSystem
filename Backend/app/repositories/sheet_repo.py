@@ -1116,6 +1116,12 @@ async def batch_submit(
                     reason="父行已备齐，子行已锁定",
                     delivered_qty=row.delivered_qty,
                     need_qty=row.need_qty,
+                    # 认领者视角不折叠：玩家自己认领的冻结子行须在回执可见
+                    # （is_claimant=False 会被 MCDR skip_is_noise 折叠成「与您无关」）
+                    is_claimant=(
+                        row.claimant_uuid is not None
+                        and row.claimant_uuid in account_uuids
+                    ),
                 )
             )
             totals.skipped += 1

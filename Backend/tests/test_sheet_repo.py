@@ -2644,6 +2644,48 @@ async def test_update_row_reparent_frozen_by_done_parent():
 
 
 @pytest.mark.asyncio
+async def test_parent_done_need_cascade_still_recomputes_children():
+    """CR MEDIUM-2 取舍（文档化现状）：父行保持 done 时，owner 上调 need 触发的
+    级联重算仍更新子行 need/状态（派生一致性 need=ceil(qty×父need) 优先于快照
+    纯度）。构造父 delivered 超额（30/10）+ need 上调到 25 → 仍 30≥25 保持 done
+    不解冻；子行（已 done 20/20）need 级联到 50 → done→claimed 降级。
+    玩家写入口仍全拦；owner 打回父行即恢复。"""
+    owner = await _seed_player()
+    claimant = await _seed_player("bob")
+    async with async_session_factory() as s:
+        sid = (await sheet_repo.create_sheet(s, owner, "S")).id
+        parent = await sheet_repo.create_row(
+            s, sid, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sid, "子", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=2
+        )
+        await s.commit()
+        parent_rid, child_rid = parent.id, child.id
+    # 认领父行（子行级联 claimed）→ 子行交齐 done → 父行超额交齐 done
+    async with async_session_factory() as s:
+        await sheet_repo.claim_row(s, sid, parent_rid, claimant)
+        await sheet_repo.set_row_delivery(s, sid, child_rid, 20)   # 20/20 → done
+        await sheet_repo.set_row_delivery(s, sid, parent_rid, 30)  # 30/10 → done（超额）
+        await s.commit()
+    # owner 上调父 need 10→25：父 30≥25 保持 done；子行级联重算
+    async with async_session_factory() as s:
+        parent = await sheet_repo.update_row(s, sid, parent_rid, need_qty=25)
+        await s.commit()
+    # 断言：父行仍 done（未解冻）；子行 need=ceil(2×25)=50 且 done→claimed
+    assert parent.status == "done"
+    async with async_session_factory() as s:
+        rows = await sheet_repo.list_rows(s, sid)
+        rows_by_id = {r.id: r for r, _ in rows}
+        assert rows_by_id[child_rid].need_qty == 50
+        assert rows_by_id[child_rid].status == "claimed"
+        # 子行玩家写入口仍被冻结守卫拦
+        with pytest.raises(SheetRowConflict, match="父行已备齐"):
+            await sheet_repo.release_row(s, sid, child_rid)
+
+
+@pytest.mark.asyncio
 async def test_parent_done_blocks_delete_row():
     """父行备齐后删除子行 → 409「父行已备齐，子行已锁定」（快照定格，想删先打回）。"""
     # Arrange
@@ -2691,4 +2733,7 @@ async def test_batch_submit_skips_children_of_done_parent():
     assert len(child_outcomes) == 1
     assert child_outcomes[0].action == "skipped"
     assert child_outcomes[0].reason == "父行已备齐，子行已锁定"
+    # is_claimant 必须为 True（提交者=认领者）：False 会被 MCDR skip_is_noise
+    # 折叠成「与您无关」，玩家认领的行从回执静默消失
+    assert child_outcomes[0].is_claimant is True
     assert result.totals.skipped >= 1

@@ -85,7 +85,7 @@ reason 全集：lock→`需先认领` / `已被他人认领` / `已备齐` / `�
 - **继承认领者后可直接交付**：父行 lock 且已认领时新建的 lock 子行落库即 `claimed` + 继承父行认领者（同账号）——该玩家 `submit` 携带对应 `registry_id` 即 `delivered`，不再产生「父认领后新建子行永远 open → 永远 skip」死行（详见 [`sheets.md`](./sheets.md) §5.3 级联规则）。
 - **子行被他人认领** → skip `已被他人认领`；**open 子行**（如父行尚未认领时先建、或显式 progress 转换前）→ skip `需先认领`。
 - **MCDR 侧**：「需先认领」skip **不再折叠**为「与您无关」（`scanner.py::skip_is_noise` 对该 reason 放行）——玩家能看到「XX 需先认领」指引并直接 `!!PCH sheet claim <row_id>`；其余 skip 折叠规则不变。
-- **协作端点 409 detail 透传**：单独 claim/release 子行冲突时，后端 `detail` 为中文原因（如「行已被认领」），MCDR `_resolve` 直达玩家回执（兜底「状态非法」）。
+- **协作端点 409 detail 透传**：单独 claim/release 子行冲突时，后端 `detail` 为中文原因（如「无法认领：行状态为 claimed」），MCDR `_resolve` 直达玩家回执（兜底「状态非法」）。
 
 ## 示例（Python `requests`）
 

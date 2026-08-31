@@ -541,7 +541,7 @@ watch(sheetId, () => {
                 </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
                 <el-popover
-                  v-if="!isSubRow(row)"
+                  v-if="!isSubRow(row) && row.status !== 'done'"
                   v-model:visible="subRowPopoverVisible[row.id]"
                   placement="right"
                   width="400"
@@ -845,7 +845,7 @@ watch(sheetId, () => {
                 </template>
                 <!-- 父行：添加子物品按钮（Popover） -->
                 <el-popover
-                  v-if="!isSubRow(row)"
+                  v-if="!isSubRow(row) && row.status !== 'done'"
                   v-model:visible="subRowPopoverVisible[row.id]"
                   placement="right"
                   width="400"

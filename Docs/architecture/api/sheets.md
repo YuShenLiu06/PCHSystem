@@ -236,8 +236,8 @@ stateDiagram-v2
 > - **解除级联收窄**：解除顶层 lock 父行只解除 `claimant=父行认领者` 的 lock 子行；他人认领的子行保留。
 > - **mode 不级联**：父行 mode 变化只级联重算子行 `need_qty`，不改子行 mode。
 > - **无 done 传导**：子行全部 done 不自动置父行 done。
-> - **父行终态冻结**：父行 `done`（备齐）后子行全部协作写被拒（claim/delivery/contribute/release/reject/progress/改行/reparent 均 409「父行已备齐，子行已锁定」；`PUT /rows` 往 done 父行下建子行 → 409「父行已备齐，不能添加子行」；`submit-batch` 对其子行整行 skip，reason 同 409 文案）。**动态判定**：不写子行状态——父行被打回（reject）或 need 上调（done→claimed 既有转换）即自动解冻，存量「父 done + 子行 open」免迁移自愈。`DELETE /rows/{row_id}`（delsub）对冻结子行**同样 409**（快照定格，想删先打回父行）；删 done 顶层父行本身不拦（owner 显式清理整条目，CASCADE 连带删子行是整体移除）。
-> - **409 原因透传**：行状态冲突的 409 `detail` 为后端中文原因（如「行已被认领」「该行不是锁定模式」），直达玩家回执。不变量（单层 / 模式缺省继承 / 级联重算 / 删父 CASCADE）见 §3。
+> - **父行终态冻结**：父行 `done`（备齐）后子行全部协作写被拒（claim/delivery/contribute/release/reject/progress/改行/reparent 均 409「父行已备齐，子行已锁定」；`PUT /rows` 往 done 父行下建子行 → 409「父行已备齐，不能添加子行」；`submit-batch` 对其子行整行 skip，reason 同 409 文案）。**动态判定**：不写子行状态——父行被打回（reject）或 need 上调（done→claimed 既有转换）即自动解冻，存量「父 done + 子行 open」免迁移自愈。**级联重算例外**：父行保持 done 时（delivered 超额、need 上调后仍 ≥need），owner 调父行 need 触发的级联重算仍会更新子行 `need_qty` 并重算状态（可能 done→claimed）——派生一致性（need=ceil(qty×父need)）优先于快照纯度，玩家写入口仍全拦，owner 打回父行即恢复。`DELETE /rows/{row_id}`（delsub）对冻结子行**同样 409**（快照定格，想删先打回父行）；删 done 顶层父行本身不拦（owner 显式清理整条目，CASCADE 连带删子行是整体移除）。
+> - **409 原因透传**：行状态冲突的 409 `detail` 为后端中文原因（如「无法认领：行状态为 claimed」「进度行无需认领，请直接上交」），直达玩家回执。不变量（单层 / 模式缺省继承 / 级联重算 / 删父 CASCADE）见 §3。
 
 ### 5.4 全量 CSV 导出
 

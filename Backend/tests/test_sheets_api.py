@@ -18,6 +18,8 @@ from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.models.user import Player
 from tests.conftest import seed_player_with_account
+from app.models.sheet import Sheet
+from app.repositories import sheet_repo
 
 
 @pytest.fixture(autouse=True)
@@ -2240,3 +2242,55 @@ async def test_delete_archived_sheet_returns_409(client, tmp_path, monkeypatch):
     # Act：archived 后删表 → 409（非 500）
     resp = await client.delete(f"/sheets/{sid}", headers=_auth(bearer))
     assert resp.status_code == 409
+
+
+# ---------- 父行终态冻结（issue #80，CR HIGH-1：行 CRUD 端点 409 透传）----------
+
+@pytest.mark.asyncio
+async def test_rows_api_freeze_409_passthrough(client):
+    """行 CRUD 端点（PUT/DELETE /rows）对冻结守卫 SheetRowConflict 的 409 透传
+    （CR HIGH-1：此前穿透 500）。覆盖 addsub / setsub 编辑 / delsub 三路径。"""
+    # Arrange：repo 层造「父行 done + 冻结子行」；API 层只验证 HTTP 翻译
+    owner_uuid, owner = await _make_player("alice")
+    claimant = uuid.uuid4()
+    async with async_session_factory() as s:
+        s.add(Player(uuid=claimant, current_name="bob"))
+        sheet = await sheet_repo.create_sheet(s, owner_uuid, "S")
+        parent = await sheet_repo.create_row(
+            s, sheet.id, "父", need_qty=10, mode=sheet_repo.MODE_LOCK, sort_order=0
+        )
+        child = await sheet_repo.create_row(
+            s, sheet.id, "子L", need_qty=0, mode=sheet_repo.MODE_LOCK, sort_order=0,
+            registry_id="minecraft:stone", parent_row_id=parent.id, qty_per_unit=1
+        )
+        await sheet_repo.claim_row(s, sheet.id, parent.id, claimant)
+        await sheet_repo.set_row_delivery(s, sheet.id, parent.id, 10)
+        await s.commit()
+        sid, parent_rid, child_rid = sheet.id, parent.id, child.id
+
+    # Act + Assert 1：addsub 到 done 父行 → 409（此前 500）
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={
+            "item_name": "新子", "need_qty": 0, "mode": 0, "sort_order": 2,
+            "parent_row_id": parent_rid,
+            "registry_id": "minecraft:sand", "qty_per_unit": 1,
+        },
+        headers=_auth(owner),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "父行已备齐，不能添加子行"
+
+    # Act + Assert 2：setsub 编辑冻结子行 → 409
+    resp = await client.put(
+        f"/sheets/{sid}/rows",
+        json={"row_id": child_rid, "item_name": "改名", "need_qty": 5},
+        headers=_auth(owner),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "父行已备齐，子行已锁定"
+
+    # Act + Assert 3：delsub 删冻结子行 → 409
+    resp = await client.delete(f"/sheets/{sid}/rows/{child_rid}", headers=_auth(owner))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "父行已备齐，子行已锁定"
