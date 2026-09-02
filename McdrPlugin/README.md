@@ -35,8 +35,8 @@
     <td align="center"><b>施工贡献统计</b></td>
   </tr>
   <tr>
-    <td><img alt="游戏内材料清单" src="docs/img/sheet-mc.png"></td>
-    <td><img alt="施工贡献图表" src="docs/img/construction.png"></td>
+    <td><img alt="游戏内材料清单" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-mc.png"></td>
+    <td><img alt="施工贡献图表" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/construction.png"></td>
   </tr>
 </table>
 
@@ -109,24 +109,24 @@
     <td align="center"><b>游戏内 · 一键扫背包提交</b></td>
   </tr>
   <tr>
-    <td><img alt="游戏内登录" src="docs/img/login.gif"></td>
-    <td><img alt="一键扫背包提交" src="docs/img/submit.gif"></td>
+    <td><img alt="游戏内登录" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/login.gif"></td>
+    <td><img alt="一键扫背包提交" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/submit.gif"></td>
   </tr>
   <tr>
     <td align="center"><b>游戏内 · 可点击快捷命令</b></td>
     <td align="center"><b>游戏内 · 手持读取 registry-id</b></td>
   </tr>
   <tr>
-    <td><img alt="可点击快捷命令" src="docs/img/commad-mc.gif"></td>
-    <td><img alt="手持读取 registry-id" src="docs/img/display-id-registyr.gif"></td>
+    <td><img alt="可点击快捷命令" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/commad-mc.gif"></td>
+    <td><img alt="手持读取 registry-id" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/display-id-registyr.gif"></td>
   </tr>
   <tr>
     <td align="center"><b>游戏内 · 智能数量换算</b></td>
     <td align="center"><b>通知投递</b></td>
   </tr>
   <tr>
-    <td><img alt="数量换算" src="docs/img/sheet-mc-amounts.png"></td>
-    <td><img alt="通知投递" src="docs/img/notify-1.png"></td>
+    <td><img alt="数量换算" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-mc-amounts.png"></td>
+    <td><img alt="通知投递" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/notify-1.png"></td>
   </tr>
 </table>
 
@@ -138,16 +138,16 @@
     <td align="center"><b>通知投递</b></td>
   </tr>
   <tr>
-    <td><img alt="项目归档与贡献占比" src="docs/img/archived.png"></td>
-    <td><img alt="通知投递" src="docs/img/notify-2.png"></td>
+    <td><img alt="项目归档与贡献占比" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/archived.png"></td>
+    <td><img alt="通知投递" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/notify-2.png"></td>
   </tr>
   <tr>
     <td align="center"><b>通知投递</b></td>
     <td align="center"><b>游戏内 · 提交回执</b></td>
   </tr>
   <tr>
-    <td><img alt="通知投递" src="docs/img/notify-3.png"></td>
-    <td><img alt="一键提交回执" src="docs/img/sheet-mc-submit.png"></td>
+    <td><img alt="通知投递" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/notify-3.png"></td>
+    <td><img alt="一键提交回执" src="https://raw.githubusercontent.com/YuShenLiu06/PCHSystem/refs/heads/main/McdrPlugin/docs/img/sheet-mc-submit.png"></td>
   </tr>
 </table>
 </details>
