@@ -14,10 +14,12 @@
 此处方向守卫只拦编程错误 → 上层 500）；金额一律 ``Decimal``，内部统一
 quantize 到 0.01（Numeric(18,2) 精度）。
 """
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scoring import (
@@ -30,6 +32,8 @@ from app.models.scoring import (
     ScoreLedger,
 )
 from app.repositories import score_repo
+
+_logger = logging.getLogger(__name__)
 
 #: reason → 记账方向（+1 入账 / −1 出账）。delta 符号必须与之一致。
 LEDGER_REASON_SIGN: dict[str, int] = {
@@ -147,3 +151,179 @@ async def write_ledger(
         note=note,
     )
     return WriteLedgerResult(entry=entry, replayed=False)
+
+
+# ---------------------------------------------------------------------------
+# 结算编排（settle）——归档 post-commit best-effort
+# ---------------------------------------------------------------------------
+
+# 结算参数默认值（system.settings 无值时回退；公式依据见 scoring-settlement.md §4.1）
+_DEFAULT_TOTAL_SCORE_POOL = Decimal("1000.00")
+_DEFAULT_LEADER_K = Decimal("0.10")
+_DEFAULT_ALPHA = Decimal("0.00")  # 时间贡献暂未接入，α=0
+_DEFAULT_BETA = Decimal("1.00")   # 纯材料占比
+
+
+def _to_decimal(value: object, default: Decimal) -> Decimal:
+    """DB JSONB 值 → Decimal（防御性：已是 Decimal 直接返回，float 用 str 中转防精度丢失）。"""
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+async def _get_scoring_params(session: AsyncSession) -> dict[str, Decimal]:
+    """从 system.settings 读结算参数（DB 无值回退默认常量）。
+
+    键：scoring.total_score_pool / scoring.leader_k / scoring.alpha / scoring.beta。
+    """
+    from app.models.system import SystemSetting
+
+    keys = [
+        "scoring.total_score_pool",
+        "scoring.leader_k",
+        "scoring.alpha",
+        "scoring.beta",
+    ]
+    rows = (
+        await session.execute(
+            select(SystemSetting.key, SystemSetting.value).where(
+                SystemSetting.key.in_(keys)
+            )
+        )
+    ).all()
+    db_values = {r.key: r.value for r in rows}
+    return {
+        "total_score_pool": _to_decimal(
+            db_values.get("scoring.total_score_pool"), _DEFAULT_TOTAL_SCORE_POOL
+        ),
+        "leader_k": _to_decimal(
+            db_values.get("scoring.leader_k"), _DEFAULT_LEADER_K
+        ),
+        "alpha": _to_decimal(
+            db_values.get("scoring.alpha"), _DEFAULT_ALPHA
+        ),
+        "beta": _to_decimal(
+            db_values.get("scoring.beta"), _DEFAULT_BETA
+        ),
+    }
+
+
+async def settle(
+    session: AsyncSession,
+    sheet_id: int,
+    *,
+    owner_account_id: int | None,
+    contributor_totals: list[tuple[int, str, int]],
+    placement_totals: list[tuple[int, str, int]],
+) -> int:
+    """归档积分终算（settle 编排）。
+
+    幂等：查询 (sheet_id, reason='settle') 已有流水 → 跳过（归档终态只读，
+    正常不会重算；异常重试安全）。
+
+    编排顺序（对齐 scoring-settlement.md §4.1）：
+    1. collect（独立）
+    2. build_a（独立，与 collect 并行但此处串行）
+    3. leader_bonus（依赖 1+2 的实际产出 entries，注入而非自行重算——
+       避免硬编码 α/β 忽略用户配置）
+
+    参数：
+    - session：独立 session（归档已 commit，settle 在新事务内执行）。
+    - sheet_id：归档目标 sheet。
+    - owner_account_id：负责人 WebAccount ID（从 Sheet.owner_uuid 解析）。
+    - contributor_totals：收集贡献聚合，来自 sheet_repo.aggregate_contributor_totals
+      经 archive service 转换为 [(account_id, display_name, qty)]。
+    - placement_totals：施工贡献聚合，来自 construction_repo.aggregate_placement_totals
+      转换为 [(account_id, display_name, net_qty)]。
+
+    返回：写入的 ledger 条数（0 = 幂等跳过或无贡献）。
+    """
+    # 幂等检查：已有 settle 流水 → 跳过
+    existing = (
+        await session.execute(
+            select(ScoreLedger.id)
+            .where(
+                ScoreLedger.sheet_id == sheet_id,
+                ScoreLedger.reason == REASON_SETTLE,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        _logger.info(
+            "settle: sheet=%s already settled (ledger id=%s), skipping", sheet_id, existing
+        )
+        return 0
+
+    # 读结算参数
+    params = await _get_scoring_params(session)
+
+    # 构建上下文（tuple 保证不可变，对齐 SettlementContext frozen 契约）
+    from app.services.score_calculators import (
+        BuildAScoreCalculator,
+        CollectScoreCalculator,
+        LeaderBonusCalculator,
+        SettlementContext,
+    )
+
+    ctx = SettlementContext(
+        sheet_id=sheet_id,
+        total_score_pool=params["total_score_pool"],
+        contributor_totals=tuple(contributor_totals),
+        placement_totals=tuple(placement_totals),
+        leader_account_id=owner_account_id,
+        leader_k=params["leader_k"],
+    )
+
+    # ① collect + ② build_a（独立，各自产出 entries）
+    collect_calc = CollectScoreCalculator()
+    build_a_calc = BuildAScoreCalculator(params["alpha"], params["beta"])
+    collect_entries = collect_calc.calculate(ctx)
+    build_a_entries = build_a_calc.calculate(ctx)
+    _logger.info(
+        "settle: sheet=%s collect=%d build_a=%d entries",
+        sheet_id, len(collect_entries), len(build_a_entries),
+    )
+
+    # ③ leader_bonus（依赖上游实际 entries，注入而非自行重算）
+    upstream = collect_entries + build_a_entries
+    leader_calc = LeaderBonusCalculator(params["leader_k"], upstream)
+    leader_entries = leader_calc.calculate(ctx)
+    _logger.info(
+        "settle: sheet=%s leader_bonus=%d entries", sheet_id, len(leader_entries),
+    )
+
+    all_entries = collect_entries + build_a_entries + leader_entries
+    if not all_entries:
+        _logger.info("settle: sheet=%s no entries to write (no contributions)", sheet_id)
+        return 0
+
+    # 逐条写流水（每条独立 acquire lock + 计算 balance_after；唯一写入口，R-2）
+    count = 0
+    for entry in all_entries:
+        try:
+            result = await write_ledger(
+                session,
+                account_id=entry.account_id,
+                delta=entry.delta,
+                reason=entry.reason,
+                sheet_id=sheet_id,
+                note=entry.note,
+            )
+            count += 1
+            if result.replayed:
+                _logger.warning(
+                    "settle: sheet=%s account=%s reason=%s unexpected replay",
+                    sheet_id, entry.account_id, entry.reason,
+                )
+        except Exception:
+            _logger.exception(
+                "settle: sheet=%s account=%s reason=%s write failed, "
+                "continuing with remaining entries",
+                sheet_id, entry.account_id, entry.reason,
+            )
+
+    _logger.info("settle: sheet=%s wrote %d/%d entries", sheet_id, count, len(all_entries))
+    return count

@@ -35,7 +35,12 @@ from app.models.sheet import (
     Sheet,
 )
 from app.models.user import Player
-from app.repositories import construction_repo, sheet_repo, web_account_repo
+from app.repositories import (
+    construction_repo,
+    player_repo,
+    sheet_repo,
+    web_account_repo,
+)
 from app.repositories.sheet_repo import SheetArchived
 from app.services import notification_service
 from app.services.archive import publisher, writer
@@ -203,10 +208,52 @@ async def archive_sheet(
             },
         )
         await session.commit()
-        # TODO(scoring): 归档成功（已 commit）后接施工积分终算——best-effort，不阻塞归档：
-        #   totals = await construction_repo.aggregate_placement_totals(session, sheet_id)
-        #   await score_service.settle(sheet_id, placement_totals=totals)  # BuildAScoreCalculator
-        # 详见 Docs/architecture/api/construction.md §7 + flows/scoring-settlement.md §2/§4。
+        # 归档成功（已 commit）后接积分终算——best-effort，不阻塞归档。
+        # settle 用独立 session（归档事务已 commit，settle 在新事务内执行）。
+        # 失败仅记日志，绝不回滚归档结果。
+        try:
+            from app.core.db import async_session_factory
+            from app.services import score_service
+
+            async with async_session_factory() as settle_session:
+                # 解析 owner 的 web_account_id（负责人增发用）
+                owner = await player_repo.get_by_uuid(settle_session, sheet.owner_uuid)
+                owner_account_id: int | None = (
+                    owner.web_account_id if owner is not None else None
+                )
+
+                # 收集贡献：UUID → account_id 转换（settle 按 account 归属，R-5）
+                settle_contributors: list[tuple[int, str, int]] = []
+                for rep_uuid, display_name, qty in contributor_totals:
+                    p = await player_repo.get_by_uuid(settle_session, rep_uuid)
+                    if p is not None and p.web_account_id is not None:
+                        settle_contributors.append(
+                            (p.web_account_id, display_name, qty)
+                        )
+
+                # 施工贡献（construction_repo 已按 account_id 聚合）
+                placement_totals_raw = (
+                    await construction_repo.aggregate_placement_totals(
+                        settle_session, sheet_id
+                    )
+                )
+                settle_placements = [
+                    (pt.account_id, pt.display_name, pt.net_qty)
+                    for pt in placement_totals_raw
+                ]
+
+                async with settle_session.begin():
+                    await score_service.settle(
+                        settle_session,
+                        sheet_id,
+                        owner_account_id=owner_account_id,
+                        contributor_totals=settle_contributors,
+                        placement_totals=settle_placements,
+                    )
+        except Exception:
+            _logger.exception(
+                "settle raised unexpectedly for sheet %s (archive unaffected)", sheet_id
+            )
         # post-commit：把产物推送到 wiki git 仓（默认 off；best-effort，绝不影响归档结果）。
         # publisher 内部已 best-effort（失败仅通知 owner），这里再兜一层防御：任何意外上抛都吞掉。
         try:
