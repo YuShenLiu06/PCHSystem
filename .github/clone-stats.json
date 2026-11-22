@@ -1,7 +1,7 @@
 {
-  "clones": 3376,
-  "uniques": 1521,
-  "updated_at": "2026-11-21",
+  "clones": 3390,
+  "uniques": 1531,
+  "updated_at": "2026-11-22",
   "base_offset": {
     "clones": 962,
     "uniques": 258,
@@ -479,6 +479,10 @@
     "2026-11-19": {
       "clones": 9,
       "uniques": 8
+    },
+    "2026-11-20": {
+      "clones": 14,
+      "uniques": 10
     }
   }
 }
